@@ -268,8 +268,8 @@
             <Icon name="link" size="sm" class="shrink-0 text-gray-400" />
             <span class="min-w-0 flex-1">
               <span class="block break-words text-sm font-medium">{{ shop.name }}</span>
-              <span class="block truncate text-xs text-gray-500 dark:text-dark-400" :title="shop.url">
-                {{ shopDomain(shop.url) }}
+              <span class="block break-all text-xs text-gray-500 dark:text-dark-400">
+                {{ shop.url }}
               </span>
             </span>
             <Icon name="externalLink" size="sm" class="shrink-0 text-gray-400" />
@@ -457,14 +457,6 @@ function clearShopMessages() {
 
 function shopHref(value: string): string {
   return sanitizeUrl(value)
-}
-
-function shopDomain(value: string): string {
-  try {
-    return new URL(value).hostname
-  } catch {
-    return value
-  }
 }
 
 async function handleShopSubmit() {
