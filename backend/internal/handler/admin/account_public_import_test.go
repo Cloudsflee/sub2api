@@ -196,11 +196,21 @@ func TestImportCodexSessionsSkipExistingDoesNotOverwrite(t *testing.T) {
 	require.Empty(t, svc.updatedAccounts)
 }
 
-func TestValidatePublicAccountImportContentsRequiresJSON(t *testing.T) {
-	_, err := validatePublicAccountImportContents([]string{"not-json"})
-	require.ErrorContains(t, err, "invalid")
-
-	valid, err := validatePublicAccountImportContents([]string{`{"access_token":"test","expires_at":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`})
+func TestValidatePublicAccountImportContentsMatchesAdminParser(t *testing.T) {
+	content := "\uFEFF  " + `{"access_token":"first"}` + "\n" + `{"access_token":"second","expires_at":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
+	valid, err := validatePublicAccountImportContents([]string{content})
 	require.NoError(t, err)
 	require.Len(t, valid, 1)
+	require.NotContains(t, valid[0], "\uFEFF")
+
+	entries, err := parseCodexSessionImportEntries(CodexSessionImportRequest{Contents: valid})
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+
+	rawToken, err := validatePublicAccountImportContents([]string{"raw-access-token"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"raw-access-token"}, rawToken)
+
+	_, err = validatePublicAccountImportContents([]string{"\uFEFF  "})
+	require.ErrorContains(t, err, "empty")
 }

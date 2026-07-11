@@ -424,12 +424,8 @@ async function handleSubmit() {
   try {
     const contents: string[] = []
     for (const file of files.value) {
-      const content = await file.text()
-      try {
-        JSON.parse(content)
-      } catch {
-        throw new Error(t('publicAccountImport.invalidJson', { name: file.name }))
-      }
+      const content = (await file.text()).replace(/^\uFEFF/, '').trim()
+      if (!content) throw new Error(t('publicAccountImport.emptyFile', { name: file.name }))
       contents.push(content)
     }
 

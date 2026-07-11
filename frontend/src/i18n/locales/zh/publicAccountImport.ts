@@ -23,6 +23,7 @@ export default {
     selectFilesError: '请选择 JSON 文件',
     selectGroupsError: '请至少选择一个分组',
     invalidJson: '文件 {name} 不是有效的 JSON',
+    emptyFile: '文件 {name} 内容为空',
     jsonOnly: '只能上传 .json 文件',
     fileTooLarge: '文件 {name} 超过大小限制',
     tooManyFiles: '一次最多上传 {count} 个文件',

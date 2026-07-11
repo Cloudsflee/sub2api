@@ -23,6 +23,7 @@ export default {
     selectFilesError: 'Select at least one JSON file',
     selectGroupsError: 'Select at least one group',
     invalidJson: '{name} is not valid JSON',
+    emptyFile: '{name} is empty',
     jsonOnly: 'Only .json files are accepted',
     fileTooLarge: '{name} exceeds the file size limit',
     tooManyFiles: 'A maximum of {count} files can be uploaded at once',

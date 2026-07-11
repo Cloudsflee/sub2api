@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -302,15 +301,13 @@ func validatePublicAccountImportContents(contents []string) ([]string, error) {
 	normalized := make([]string, 0, len(contents))
 	totalBytes := 0
 	for index, content := range contents {
-		trimmed := strings.TrimSpace(content)
+		trimmed := strings.TrimSpace(strings.TrimPrefix(content, "\uFEFF"))
+		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "\uFEFF"))
 		if trimmed == "" {
-			return nil, fmt.Errorf("JSON file %d is empty", index+1)
+			return nil, fmt.Errorf("import file %d is empty", index+1)
 		}
 		if len(trimmed) > publicAccountImportMaxFileBytes {
-			return nil, fmt.Errorf("JSON file %d is too large", index+1)
-		}
-		if !json.Valid([]byte(trimmed)) {
-			return nil, fmt.Errorf("JSON file %d is invalid", index+1)
+			return nil, fmt.Errorf("import file %d is too large", index+1)
 		}
 		totalBytes += len(trimmed)
 		if totalBytes > publicAccountImportMaxContentBytes {
