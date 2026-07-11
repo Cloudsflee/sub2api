@@ -56,6 +56,71 @@ func TestParseCodexSessionImportEntriesSupportsRawTokenJSONAndArray(t *testing.T
 	}
 }
 
+func TestParseCodexSessionImportEntriesSupportsAdminDataExport(t *testing.T) {
+	accessToken := buildCodexAccessToken(t, "workspace-admin-export", "user-admin-export", time.Now().Add(time.Hour))
+	payload := map[string]any{
+		"type":        "sub2api-data",
+		"version":     1,
+		"exported_at": time.Now().UTC().Format(time.RFC3339),
+		"proxies":     []any{},
+		"accounts": []any{
+			map[string]any{
+				"name":     "Admin export account",
+				"platform": service.PlatformOpenAI,
+				"type":     service.AccountTypeOAuth,
+				"credentials": map[string]any{
+					"access_token":       accessToken,
+					"refresh_token":      "refresh-from-admin-export",
+					"chatgpt_account_id": "workspace-from-credentials",
+					"plan_type":          "plus",
+					"custom_credential":  "preserved",
+				},
+				"extra": map[string]any{
+					"custom_extra": "preserved",
+				},
+			},
+		},
+	}
+	content, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal admin export: %v", err)
+	}
+
+	entries, err := parseCodexSessionImportEntries(CodexSessionImportRequest{Content: string(content)})
+	if err != nil {
+		t.Fatalf("parseCodexSessionImportEntries error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(entries))
+	}
+
+	item, err := normalizeCodexImportEntry(entries[0])
+	if err != nil {
+		t.Fatalf("normalize admin export account error = %v", err)
+	}
+	if item.Name != "Admin export account" {
+		t.Fatalf("name = %q, want Admin export account", item.Name)
+	}
+	if item.AccessToken != accessToken {
+		t.Fatalf("access token was not read from credentials")
+	}
+	if item.RefreshToken != "refresh-from-admin-export" {
+		t.Fatalf("refresh token = %q", item.RefreshToken)
+	}
+	if item.AccountID != "workspace-from-credentials" {
+		t.Fatalf("account id = %q", item.AccountID)
+	}
+	if item.PlanType != "plus" {
+		t.Fatalf("plan type = %q", item.PlanType)
+	}
+	if item.Credentials["custom_credential"] != "preserved" {
+		t.Fatalf("custom credential was not preserved")
+	}
+	if item.Extra["custom_extra"] != "preserved" {
+		t.Fatalf("custom extra was not preserved")
+	}
+}
+
 func TestParseCodexSessionImportEntriesFallsBackToLineModeForMixedJSONAndToken(t *testing.T) {
 	req := CodexSessionImportRequest{
 		Content: "{\"accessToken\":\"json-line-token\"}\nraw-line-token",
