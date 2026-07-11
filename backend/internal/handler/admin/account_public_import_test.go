@@ -44,6 +44,24 @@ func TestListPublicAccountImportGroupsFiltersAllowlist(t *testing.T) {
 	require.Equal(t, []PublicAccountImportGroup{{ID: 5, Name: "K12"}, {ID: 9, Name: "BUGTEAM"}}, payload.Data.Groups)
 }
 
+func TestListPublicAccountImportGroupsAutoSyncsActiveOpenAIGroups(t *testing.T) {
+	t.Setenv(publicAccountImportEnabledEnv, "true")
+	t.Setenv(publicAccountImportGroupIDsEnv, "*")
+
+	svc := newStubAdminService()
+	svc.groups = []service.Group{
+		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 12, Name: "inactive", Platform: service.PlatformOpenAI, Status: service.StatusDisabled},
+		{ID: 14, Name: "wrong-platform", Platform: service.PlatformAnthropic, Status: service.StatusActive},
+	}
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	groups, err := h.listPublicAccountImportGroups(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, []PublicAccountImportGroup{{ID: 5, Name: "K12"}, {ID: 9, Name: "BUGTEAM"}}, groups)
+}
+
 func TestPublicImportCodexSessionsBindsMultipleAllowedGroups(t *testing.T) {
 	t.Setenv(publicAccountImportEnabledEnv, "true")
 	t.Setenv(publicAccountImportGroupIDsEnv, "5,9")

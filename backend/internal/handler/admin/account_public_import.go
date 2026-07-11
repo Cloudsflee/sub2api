@@ -148,8 +148,8 @@ func publicAccountImportEnabled() bool {
 
 func publicAccountImportAllowedGroupIDs() (map[int64]struct{}, error) {
 	raw := strings.TrimSpace(os.Getenv(publicAccountImportGroupIDsEnv))
-	if raw == "" {
-		return nil, errors.New("public account import group allowlist is empty")
+	if raw == "" || raw == "*" {
+		return nil, nil
 	}
 
 	allowed := make(map[int64]struct{})
@@ -183,8 +183,10 @@ func (h *AccountHandler) listPublicAccountImportGroups(ctx context.Context) ([]P
 
 	result := make([]PublicAccountImportGroup, 0, len(groups))
 	for _, group := range groups {
-		if _, ok := allowed[group.ID]; !ok {
-			continue
+		if allowed != nil {
+			if _, ok := allowed[group.ID]; !ok {
+				continue
+			}
 		}
 		if group.Status != service.StatusActive || group.Platform != service.PlatformOpenAI {
 			continue

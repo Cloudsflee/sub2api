@@ -86,7 +86,7 @@ services:
 
       # Anonymous Codex account JSON import portal
       - PUBLIC_ACCOUNT_IMPORT_ENABLED=${PUBLIC_ACCOUNT_IMPORT_ENABLED:-false}
-      - PUBLIC_ACCOUNT_IMPORT_GROUP_IDS=${PUBLIC_ACCOUNT_IMPORT_GROUP_IDS:-}
+      - PUBLIC_ACCOUNT_IMPORT_GROUP_IDS=${PUBLIC_ACCOUNT_IMPORT_GROUP_IDS:-*}
 
       # =======================================================================
       # JWT Configuration
