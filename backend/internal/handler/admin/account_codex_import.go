@@ -37,6 +37,7 @@ type CodexSessionImportRequest struct {
 	CredentialExtras        map[string]any `json:"credential_extras"`
 	Extra                   map[string]any `json:"extra"`
 	UpdateExisting          *bool          `json:"update_existing"`
+	SkipExisting            *bool          `json:"skip_existing,omitempty"`
 	SkipDefaultGroupBind    *bool          `json:"skip_default_group_bind"`
 	ConfirmMixedChannelRisk *bool          `json:"confirm_mixed_channel_risk"`
 }
@@ -163,6 +164,7 @@ func (h *AccountHandler) importCodexSessions(ctx context.Context, req CodexSessi
 	if req.UpdateExisting != nil {
 		updateExisting = *req.UpdateExisting
 	}
+	skipExisting := req.SkipExisting != nil && *req.SkipExisting
 	concurrency := 3
 	if req.Concurrency != nil {
 		concurrency = *req.Concurrency
@@ -314,6 +316,22 @@ func (h *AccountHandler) importCodexSessions(ctx context.Context, req CodexSessi
 				Name:      accountName,
 				Action:    "updated",
 				AccountID: accountID,
+			})
+			continue
+		}
+		if existing != nil && skipExisting {
+			message := "账号已存在，已跳过"
+			result.Skipped++
+			result.Items = append(result.Items, CodexSessionImportItem{
+				Index:   entry.Index,
+				Name:    accountName,
+				Action:  "skipped",
+				Message: message,
+			})
+			result.Warnings = append(result.Warnings, CodexSessionImportMessage{
+				Index:   entry.Index,
+				Name:    accountName,
+				Message: message,
 			})
 			continue
 		}

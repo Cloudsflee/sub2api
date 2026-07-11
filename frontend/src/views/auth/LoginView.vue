@@ -170,6 +170,16 @@
           />
         </div>
       </form>
+
+      <div class="border-t border-gray-200 pt-5 text-center dark:border-dark-700">
+        <router-link
+          to="/account-import"
+          class="inline-flex items-center gap-2 text-sm font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+        >
+          <Icon name="upload" size="sm" />
+          {{ t('publicAccountImport.title') }}
+        </router-link>
+      </div>
     </div>
 
     <!-- Footer -->
