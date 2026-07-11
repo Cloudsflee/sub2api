@@ -213,4 +213,12 @@ func TestValidatePublicAccountImportContentsMatchesAdminParser(t *testing.T) {
 
 	_, err = validatePublicAccountImportContents([]string{"\uFEFF  "})
 	require.ErrorContains(t, err, "empty")
+
+	manyFiles := make([]string, 50)
+	for index := range manyFiles {
+		manyFiles[index] = `{"access_token":"test"}`
+	}
+	validated, err := validatePublicAccountImportContents(manyFiles)
+	require.NoError(t, err)
+	require.Len(t, validated, len(manyFiles))
 }

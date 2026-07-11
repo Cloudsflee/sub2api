@@ -296,7 +296,6 @@ import {
 } from '@/api/publicAccountImport'
 import { sanitizeUrl } from '@/utils/url'
 
-const MAX_FILES = 20
 const MAX_FILE_BYTES = 512 * 1024
 
 const { t } = useI18n()
@@ -380,10 +379,6 @@ function handleDrop(event: DragEvent) {
 function setFiles(source: FileList | null | undefined) {
   const incoming = Array.from(source || [])
   if (!incoming.length) return
-  if (incoming.length > MAX_FILES) {
-    errorMessage.value = t('publicAccountImport.tooManyFiles', { count: MAX_FILES })
-    return
-  }
   const invalid = incoming.find((file) => !file.name.toLowerCase().endsWith('.json'))
   if (invalid) {
     errorMessage.value = t('publicAccountImport.jsonOnly')

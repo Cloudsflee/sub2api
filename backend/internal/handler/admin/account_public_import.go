@@ -18,10 +18,8 @@ const (
 	publicAccountImportEnabledEnv         = "PUBLIC_ACCOUNT_IMPORT_ENABLED"
 	publicAccountImportGroupIDsEnv        = "PUBLIC_ACCOUNT_IMPORT_GROUP_IDS"
 	publicAccountImportMaxRequestBytes    = 3 << 20
-	publicAccountImportMaxFiles           = 20
 	publicAccountImportMaxFileBytes       = 512 << 10
 	publicAccountImportMaxContentBytes    = 2 << 20
-	publicAccountImportMaxAccounts        = 100
 	publicAccountImportMaxSelectedGroups  = 20
 	publicAccountImportDefaultConcurrency = 3
 	publicAccountImportK12Priority        = 1
@@ -129,11 +127,6 @@ func (h *AccountHandler) PublicImportCodexSessions(c *gin.Context) {
 		response.BadRequest(c, "No importable accounts were found")
 		return
 	}
-	if len(entries) > publicAccountImportMaxAccounts {
-		response.BadRequest(c, fmt.Sprintf("A maximum of %d accounts can be imported at once", publicAccountImportMaxAccounts))
-		return
-	}
-
 	executeAdminIdempotentJSON(c, "public.accounts.import_codex_session", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		result, importErr := h.importCodexSessions(ctx, importReq, entries)
 		if importErr != nil {
@@ -294,10 +287,6 @@ func validatePublicAccountImportContents(contents []string) ([]string, error) {
 	if len(contents) == 0 {
 		return nil, errors.New("at least one JSON file is required")
 	}
-	if len(contents) > publicAccountImportMaxFiles {
-		return nil, fmt.Errorf("a maximum of %d JSON files can be uploaded at once", publicAccountImportMaxFiles)
-	}
-
 	normalized := make([]string, 0, len(contents))
 	totalBytes := 0
 	for index, content := range contents {
