@@ -183,20 +183,116 @@
           </button>
         </div>
       </form>
+
+      <section class="mt-10">
+        <div class="flex items-center justify-between gap-4">
+          <h2 class="text-lg font-semibold">{{ t('publicAccountImport.shopsTitle') }}</h2>
+          <span class="text-xs text-gray-500 dark:text-dark-400">
+            {{ t('publicAccountImport.shopsCount', { count: shops.length }) }}
+          </span>
+        </div>
+
+        <form
+          class="mt-4 grid gap-4 border-y border-gray-200 py-5 dark:border-dark-700 sm:grid-cols-2 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)_auto] lg:items-end"
+          @submit.prevent="handleShopSubmit"
+        >
+          <div class="min-w-0">
+            <label for="public-shop-name" class="input-label">
+              {{ t('publicAccountImport.shopNameLabel') }}
+            </label>
+            <input
+              id="public-shop-name"
+              v-model="shopName"
+              type="text"
+              class="input"
+              maxlength="80"
+              autocomplete="organization"
+              :placeholder="t('publicAccountImport.shopNamePlaceholder')"
+              :disabled="submittingShop"
+              @input="clearShopMessages"
+            />
+          </div>
+
+          <div class="min-w-0">
+            <label for="public-shop-url" class="input-label">
+              {{ t('publicAccountImport.shopUrlLabel') }}
+            </label>
+            <input
+              id="public-shop-url"
+              v-model="shopUrl"
+              type="url"
+              class="input"
+              maxlength="2048"
+              inputmode="url"
+              autocomplete="url"
+              :placeholder="t('publicAccountImport.shopUrlPlaceholder')"
+              :disabled="submittingShop"
+              @input="clearShopMessages"
+            />
+          </div>
+
+          <button
+            type="submit"
+            class="btn btn-primary h-10 whitespace-nowrap sm:col-span-2 lg:col-span-1"
+            :disabled="submittingShop || !shopName.trim() || !shopUrl.trim()"
+          >
+            <span v-if="submittingShop" class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"></span>
+            <Icon v-else name="plus" size="sm" class="mr-2" />
+            {{ submittingShop ? t('publicAccountImport.submittingShop') : t('publicAccountImport.submitShop') }}
+          </button>
+        </form>
+
+        <div v-if="shopErrorMessage" class="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+          {{ shopErrorMessage }}
+        </div>
+        <div v-else-if="shopNoticeMessage" class="border-b border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
+          {{ shopNoticeMessage }}
+        </div>
+
+        <div v-if="loadingShops" class="py-8 text-center text-sm text-gray-500 dark:text-dark-400">
+          {{ t('publicAccountImport.loadingShops') }}
+        </div>
+        <div v-else-if="shops.length === 0" class="py-8 text-center text-sm text-gray-500 dark:text-dark-400">
+          {{ t('publicAccountImport.noShops') }}
+        </div>
+        <div v-else class="divide-y divide-gray-200 border-b border-gray-200 dark:divide-dark-700 dark:border-dark-700">
+          <a
+            v-for="shop in shops"
+            :key="shop.id"
+            :href="shopHref(shop.url)"
+            target="_blank"
+            rel="noopener noreferrer nofollow ugc"
+            class="flex min-h-16 items-center gap-3 px-1 py-3 text-gray-800 transition-colors hover:bg-gray-100 hover:text-primary-700 dark:text-dark-100 dark:hover:bg-dark-800 dark:hover:text-primary-300 sm:px-3"
+            :title="t('publicAccountImport.visitShop')"
+          >
+            <Icon name="link" size="sm" class="shrink-0 text-gray-400" />
+            <span class="min-w-0 flex-1">
+              <span class="block break-words text-sm font-medium">{{ shop.name }}</span>
+              <span class="block truncate text-xs text-gray-500 dark:text-dark-400" :title="shop.url">
+                {{ shopDomain(shop.url) }}
+              </span>
+            </span>
+            <Icon name="externalLink" size="sm" class="shrink-0 text-gray-400" />
+          </a>
+        </div>
+      </section>
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import {
   getPublicAccountImportGroups,
+  getPublicAccountImportShops,
   submitPublicAccountImport,
+  submitPublicAccountImportShop,
   type PublicAccountImportGroup,
   type PublicAccountImportResult,
+  type PublicAccountImportShop,
 } from '@/api/publicAccountImport'
 import { sanitizeUrl } from '@/utils/url'
 
@@ -215,6 +311,14 @@ const dragDepth = ref(0)
 const errorMessage = ref('')
 const result = ref<PublicAccountImportResult | null>(null)
 const idempotencyKey = ref(createIdempotencyKey())
+const shops = ref<PublicAccountImportShop[]>([])
+const loadingShops = ref(true)
+const submittingShop = ref(false)
+const shopName = ref('')
+const shopUrl = ref('')
+const shopErrorMessage = ref('')
+const shopNoticeMessage = ref('')
+let shopRefreshTimer: number | undefined
 
 const dragActive = computed(() => dragDepth.value > 0)
 const siteName = computed(() => appStore.siteName || 'Sub2API')
@@ -222,6 +326,8 @@ const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '/logo.png', { 
 
 onMounted(async () => {
   void appStore.fetchPublicSettings()
+  void loadPublicShops(true)
+  shopRefreshTimer = window.setInterval(() => void loadPublicShops(false), 30_000)
   try {
     groups.value = await getPublicAccountImportGroups()
   } catch (error: any) {
@@ -229,6 +335,10 @@ onMounted(async () => {
   } finally {
     loadingGroups.value = false
   }
+})
+
+onBeforeUnmount(() => {
+  if (shopRefreshTimer !== undefined) window.clearInterval(shopRefreshTimer)
 })
 
 watch(selectedGroupIds, resetSubmissionState, { deep: true })
@@ -332,6 +442,66 @@ async function handleSubmit() {
     errorMessage.value = error?.message || t('publicAccountImport.importFailed')
   } finally {
     submitting.value = false
+  }
+}
+
+async function loadPublicShops(showLoading: boolean) {
+  if (showLoading) loadingShops.value = true
+  try {
+    shops.value = await getPublicAccountImportShops()
+    if (showLoading) shopErrorMessage.value = ''
+  } catch (error: any) {
+    if (showLoading) {
+      shopErrorMessage.value = error?.message || t('publicAccountImport.shopLoadFailed')
+    }
+  } finally {
+    if (showLoading) loadingShops.value = false
+  }
+}
+
+function clearShopMessages() {
+  shopErrorMessage.value = ''
+  shopNoticeMessage.value = ''
+}
+
+function shopHref(value: string): string {
+  return sanitizeUrl(value)
+}
+
+function shopDomain(value: string): string {
+  try {
+    return new URL(value).hostname
+  } catch {
+    return value
+  }
+}
+
+async function handleShopSubmit() {
+  const name = shopName.value.trim()
+  const url = shopUrl.value.trim()
+  if (!name) {
+    shopErrorMessage.value = t('publicAccountImport.shopNameRequired')
+    return
+  }
+  if (!url) {
+    shopErrorMessage.value = t('publicAccountImport.shopUrlRequired')
+    return
+  }
+
+  submittingShop.value = true
+  clearShopMessages()
+  try {
+    const submission = await submitPublicAccountImportShop({ name, url })
+    shops.value = [submission.shop, ...shops.value.filter((shop) => shop.id !== submission.shop.id)]
+    shopName.value = ''
+    shopUrl.value = ''
+    shopNoticeMessage.value = submission.created
+      ? t('publicAccountImport.shopAdded')
+      : t('publicAccountImport.shopAlreadyExists')
+  } catch (error: any) {
+    shopErrorMessage.value = error?.message || t('publicAccountImport.shopSubmitFailed')
+  } finally {
+    submittingShop.value = false
   }
 }
 </script>

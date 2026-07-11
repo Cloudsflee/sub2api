@@ -33,6 +33,23 @@ export interface PublicAccountImportPayload {
   group_ids: number[]
 }
 
+export interface PublicAccountImportShop {
+  id: string
+  name: string
+  url: string
+  created_at: string
+}
+
+export interface PublicAccountImportShopSubmission {
+  shop: PublicAccountImportShop
+  created: boolean
+}
+
+export interface PublicAccountImportShopPayload {
+  name: string
+  url: string
+}
+
 export async function getPublicAccountImportGroups(): Promise<PublicAccountImportGroup[]> {
   const { data } = await apiClient.get<{ groups: PublicAccountImportGroup[] }>(
     '/public/account-import/groups'
@@ -48,6 +65,23 @@ export async function submitPublicAccountImport(
     '/public/account-import',
     payload,
     { headers: { 'Idempotency-Key': idempotencyKey } }
+  )
+  return data
+}
+
+export async function getPublicAccountImportShops(): Promise<PublicAccountImportShop[]> {
+  const { data } = await apiClient.get<{ shops: PublicAccountImportShop[] }>(
+    '/public/account-import/shops'
+  )
+  return data.shops || []
+}
+
+export async function submitPublicAccountImportShop(
+  payload: PublicAccountImportShopPayload
+): Promise<PublicAccountImportShopSubmission> {
+  const { data } = await apiClient.post<PublicAccountImportShopSubmission>(
+    '/public/account-import/shops',
+    payload
   )
   return data
 }
