@@ -105,7 +105,7 @@ func TestPublicImportCodexSessionsBindsMultipleAllowedGroups(t *testing.T) {
 	require.Len(t, svc.createdAccounts, 1)
 	require.Equal(t, []int64{5, 9, 6}, svc.createdAccounts[0].GroupIDs)
 	require.Equal(t, publicAccountImportDefaultConcurrency, svc.createdAccounts[0].Concurrency)
-	require.Equal(t, publicAccountImportK12Priority, svc.createdAccounts[0].Priority)
+	require.Equal(t, publicAccountImportDefaultPriority, svc.createdAccounts[0].Priority)
 	require.True(t, svc.createdAccounts[0].SkipDefaultGroupBind)
 }
 
@@ -119,6 +119,7 @@ func TestResolvePublicAccountImportGroupsAddsAllAndSetsPriority(t *testing.T) {
 		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 10, Name: "k12-ourselves", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 11, Name: "OTHER", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 	}
 	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -128,11 +129,12 @@ func TestResolvePublicAccountImportGroupsAddsAllAndSetsPriority(t *testing.T) {
 		wantGroupIDs []int64
 		wantPriority int
 	}{
-		{name: "K12 is priority 1", selected: []int64{5}, wantGroupIDs: []int64{5, 6}, wantPriority: 1},
+		{name: "OTHER is priority 1", selected: []int64{11}, wantGroupIDs: []int64{11, 6}, wantPriority: 1},
 		{name: "FREE is priority 3", selected: []int64{4}, wantGroupIDs: []int64{4, 6}, wantPriority: 3},
+		{name: "K12 is priority 2", selected: []int64{5}, wantGroupIDs: []int64{5, 6}, wantPriority: 2},
 		{name: "other groups are priority 2", selected: []int64{9}, wantGroupIDs: []int64{9, 6}, wantPriority: 2},
-		{name: "K12 name must match exactly", selected: []int64{10}, wantGroupIDs: []int64{10, 6}, wantPriority: 2},
-		{name: "multiple groups use the smallest priority", selected: []int64{9, 4, 5}, wantGroupIDs: []int64{4, 5, 9, 6}, wantPriority: 1},
+		{name: "similar names remain priority 2", selected: []int64{10}, wantGroupIDs: []int64{10, 6}, wantPriority: 2},
+		{name: "multiple groups use the smallest priority", selected: []int64{9, 4, 11}, wantGroupIDs: []int64{4, 9, 11, 6}, wantPriority: 1},
 	}
 
 	for _, tt := range tests {

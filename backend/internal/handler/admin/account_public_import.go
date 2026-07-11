@@ -22,7 +22,7 @@ const (
 	publicAccountImportMaxContentBytes    = 2 << 20
 	publicAccountImportMaxSelectedGroups  = 20
 	publicAccountImportDefaultConcurrency = 3
-	publicAccountImportK12Priority        = 1
+	publicAccountImportOtherPriority      = 1
 	publicAccountImportDefaultPriority    = 2
 	publicAccountImportFreePriority       = 3
 )
@@ -274,8 +274,8 @@ func isPublicAccountImportAllGroup(name string) bool {
 
 func publicAccountImportGroupPriority(name string) int {
 	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "K12":
-		return publicAccountImportK12Priority
+	case "OTHER":
+		return publicAccountImportOtherPriority
 	case "FREE":
 		return publicAccountImportFreePriority
 	default:

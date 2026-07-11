@@ -1,7 +1,7 @@
 export default {
   publicAccountImport: {
     title: '账号导入',
-    subtitle: '上传 Codex 账号 JSON；账号会绑定到所选分组并自动加入 ALL。调度优先级：K12 为 1、FREE 为 3、其他分组为 2；并发默认 3。',
+    subtitle: '上传 Codex 账号 JSON；账号会绑定到所选分组并自动加入 ALL。调度优先级：OTHER 为 1、FREE 为 3、其他分组为 2；并发默认 3。',
     adminLogin: '管理员登录',
     filesLabel: '账号文件',
     fileLimit: '支持多选 JSON 文件',
