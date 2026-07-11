@@ -51,6 +51,7 @@ func TestListPublicAccountImportGroupsAutoSyncsActiveOpenAIGroups(t *testing.T) 
 	svc := newStubAdminService()
 	svc.groups = []service.Group{
 		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 12, Name: "inactive", Platform: service.PlatformOpenAI, Status: service.StatusDisabled},
 		{ID: 14, Name: "wrong-platform", Platform: service.PlatformAnthropic, Status: service.StatusActive},
@@ -70,6 +71,7 @@ func TestPublicImportCodexSessionsBindsMultipleAllowedGroups(t *testing.T) {
 	svc.accounts = nil
 	svc.groups = []service.Group{
 		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 	}
 	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
@@ -101,8 +103,46 @@ func TestPublicImportCodexSessionsBindsMultipleAllowedGroups(t *testing.T) {
 	require.Equal(t, 1, payload.Data.Created)
 	require.Zero(t, payload.Data.Failed)
 	require.Len(t, svc.createdAccounts, 1)
-	require.Equal(t, []int64{5, 9}, svc.createdAccounts[0].GroupIDs)
+	require.Equal(t, []int64{5, 9, 6}, svc.createdAccounts[0].GroupIDs)
+	require.Equal(t, publicAccountImportDefaultConcurrency, svc.createdAccounts[0].Concurrency)
+	require.Equal(t, publicAccountImportK12Priority, svc.createdAccounts[0].Priority)
 	require.True(t, svc.createdAccounts[0].SkipDefaultGroupBind)
+}
+
+func TestResolvePublicAccountImportGroupsAddsAllAndSetsPriority(t *testing.T) {
+	t.Setenv(publicAccountImportGroupIDsEnv, "*")
+
+	svc := newStubAdminService()
+	svc.groups = []service.Group{
+		{ID: 4, Name: "FREE", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 10, Name: "k12-ourselves", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+	}
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	tests := []struct {
+		name         string
+		selected     []int64
+		wantGroupIDs []int64
+		wantPriority int
+	}{
+		{name: "K12 is priority 1", selected: []int64{5}, wantGroupIDs: []int64{5, 6}, wantPriority: 1},
+		{name: "FREE is priority 3", selected: []int64{4}, wantGroupIDs: []int64{4, 6}, wantPriority: 3},
+		{name: "other groups are priority 2", selected: []int64{9}, wantGroupIDs: []int64{9, 6}, wantPriority: 2},
+		{name: "K12 name must match exactly", selected: []int64{10}, wantGroupIDs: []int64{10, 6}, wantPriority: 2},
+		{name: "multiple groups use the smallest priority", selected: []int64{9, 4, 5}, wantGroupIDs: []int64{4, 5, 9, 6}, wantPriority: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			groupIDs, priority, err := h.resolvePublicAccountImportGroups(t.Context(), tt.selected)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantGroupIDs, groupIDs)
+			require.Equal(t, tt.wantPriority, priority)
+		})
+	}
 }
 
 func TestPublicImportCodexSessionsRejectsGroupOutsideAllowlist(t *testing.T) {

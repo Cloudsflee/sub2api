@@ -1,7 +1,7 @@
 export default {
   publicAccountImport: {
     title: 'Account Import',
-    subtitle: 'Upload Codex account JSON files and bind the accounts to selected groups.',
+    subtitle: 'Upload Codex account JSON files. Accounts join the selected groups and ALL automatically. Scheduling priority: K12 = 1, FREE = 3, all other groups = 2; default concurrency = 3.',
     adminLogin: 'Admin sign in',
     filesLabel: 'Account files',
     fileLimit: 'Up to 20 JSON files',

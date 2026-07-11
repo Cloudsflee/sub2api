@@ -16,14 +16,18 @@ import (
 )
 
 const (
-	publicAccountImportEnabledEnv        = "PUBLIC_ACCOUNT_IMPORT_ENABLED"
-	publicAccountImportGroupIDsEnv       = "PUBLIC_ACCOUNT_IMPORT_GROUP_IDS"
-	publicAccountImportMaxRequestBytes   = 3 << 20
-	publicAccountImportMaxFiles          = 20
-	publicAccountImportMaxFileBytes      = 512 << 10
-	publicAccountImportMaxContentBytes   = 2 << 20
-	publicAccountImportMaxAccounts       = 100
-	publicAccountImportMaxSelectedGroups = 20
+	publicAccountImportEnabledEnv         = "PUBLIC_ACCOUNT_IMPORT_ENABLED"
+	publicAccountImportGroupIDsEnv        = "PUBLIC_ACCOUNT_IMPORT_GROUP_IDS"
+	publicAccountImportMaxRequestBytes    = 3 << 20
+	publicAccountImportMaxFiles           = 20
+	publicAccountImportMaxFileBytes       = 512 << 10
+	publicAccountImportMaxContentBytes    = 2 << 20
+	publicAccountImportMaxAccounts        = 100
+	publicAccountImportMaxSelectedGroups  = 20
+	publicAccountImportDefaultConcurrency = 3
+	publicAccountImportK12Priority        = 1
+	publicAccountImportDefaultPriority    = 2
+	publicAccountImportFreePriority       = 3
 )
 
 type PublicAccountImportGroup struct {
@@ -90,7 +94,7 @@ func (h *AccountHandler) PublicImportCodexSessions(c *gin.Context) {
 		return
 	}
 
-	groupIDs, err := h.validatePublicAccountImportGroupIDs(c.Request.Context(), req.GroupIDs)
+	groupIDs, priority, err := h.resolvePublicAccountImportGroups(c.Request.Context(), req.GroupIDs)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
@@ -106,9 +110,12 @@ func (h *AccountHandler) PublicImportCodexSessions(c *gin.Context) {
 	skipExisting := true
 	skipDefaultGroupBind := true
 	confirmMixedChannelRisk := false
+	concurrency := publicAccountImportDefaultConcurrency
 	importReq := CodexSessionImportRequest{
 		Contents:                contents,
 		GroupIDs:                groupIDs,
+		Concurrency:             &concurrency,
+		Priority:                &priority,
 		UpdateExisting:          &updateExisting,
 		SkipExisting:            &skipExisting,
 		SkipDefaultGroupBind:    &skipDefaultGroupBind,
@@ -176,54 +183,112 @@ func (h *AccountHandler) listPublicAccountImportGroups(ctx context.Context) ([]P
 		return nil, err
 	}
 
-	groups, _, err := h.adminService.ListGroups(ctx, 1, 1000, service.PlatformOpenAI, service.StatusActive, "", nil, "sort_order", "asc")
+	groups, err := h.listActiveOpenAIAccountGroups(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	result := make([]PublicAccountImportGroup, 0, len(groups))
 	for _, group := range groups {
+		if isPublicAccountImportAllGroup(group.Name) {
+			continue
+		}
 		if allowed != nil {
 			if _, ok := allowed[group.ID]; !ok {
 				continue
 			}
-		}
-		if group.Status != service.StatusActive || group.Platform != service.PlatformOpenAI {
-			continue
 		}
 		result = append(result, PublicAccountImportGroup{ID: group.ID, Name: group.Name})
 	}
 	return result, nil
 }
 
-func (h *AccountHandler) validatePublicAccountImportGroupIDs(ctx context.Context, groupIDs []int64) ([]int64, error) {
+func (h *AccountHandler) listActiveOpenAIAccountGroups(ctx context.Context) ([]service.Group, error) {
+	groups, _, err := h.adminService.ListGroups(ctx, 1, 1000, service.PlatformOpenAI, service.StatusActive, "", nil, "sort_order", "asc")
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]service.Group, 0, len(groups))
+	for _, group := range groups {
+		if group.Status == service.StatusActive && group.Platform == service.PlatformOpenAI {
+			result = append(result, group)
+		}
+	}
+	return result, nil
+}
+
+func (h *AccountHandler) resolvePublicAccountImportGroups(ctx context.Context, groupIDs []int64) ([]int64, int, error) {
 	if len(groupIDs) == 0 {
-		return nil, errors.New("at least one group must be selected")
+		return nil, 0, errors.New("at least one group must be selected")
 	}
 	if len(groupIDs) > publicAccountImportMaxSelectedGroups {
-		return nil, fmt.Errorf("a maximum of %d groups can be selected", publicAccountImportMaxSelectedGroups)
+		return nil, 0, fmt.Errorf("a maximum of %d groups can be selected", publicAccountImportMaxSelectedGroups)
 	}
 	for _, id := range groupIDs {
 		if id <= 0 {
-			return nil, errors.New("group_ids contains an invalid group id")
+			return nil, 0, errors.New("group_ids contains an invalid group id")
 		}
 	}
 
 	normalized := normalizeInt64IDList(groupIDs)
-	groups, err := h.listPublicAccountImportGroups(ctx)
+	allowed, err := publicAccountImportAllowedGroupIDs()
 	if err != nil {
-		return nil, errors.New("failed to validate selected groups")
+		return nil, 0, errors.New("failed to validate selected groups")
 	}
-	available := make(map[int64]struct{}, len(groups))
+	groups, err := h.listActiveOpenAIAccountGroups(ctx)
+	if err != nil {
+		return nil, 0, errors.New("failed to validate selected groups")
+	}
+
+	available := make(map[int64]service.Group, len(groups))
+	var allGroupID int64
 	for _, group := range groups {
-		available[group.ID] = struct{}{}
+		if isPublicAccountImportAllGroup(group.Name) {
+			if allGroupID == 0 {
+				allGroupID = group.ID
+			}
+			continue
+		}
+		if allowed != nil {
+			if _, ok := allowed[group.ID]; !ok {
+				continue
+			}
+		}
+		available[group.ID] = group
 	}
-	for _, id := range normalized {
-		if _, ok := available[id]; !ok {
-			return nil, fmt.Errorf("group %d is not available for public import", id)
+
+	priority := 0
+	for index, id := range normalized {
+		group, ok := available[id]
+		if !ok {
+			return nil, 0, fmt.Errorf("group %d is not available for public import", id)
+		}
+		groupPriority := publicAccountImportGroupPriority(group.Name)
+		if index == 0 || groupPriority < priority {
+			priority = groupPriority
 		}
 	}
-	return normalized, nil
+	if allGroupID == 0 {
+		return nil, 0, errors.New("the ALL group is not available for public import")
+	}
+
+	return append(normalized, allGroupID), priority, nil
+}
+
+func isPublicAccountImportAllGroup(name string) bool {
+	return strings.EqualFold(strings.TrimSpace(name), "ALL")
+}
+
+func publicAccountImportGroupPriority(name string) int {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "K12":
+		return publicAccountImportK12Priority
+	case "FREE":
+		return publicAccountImportFreePriority
+	default:
+		return publicAccountImportDefaultPriority
+	}
 }
 
 func validatePublicAccountImportContents(contents []string) ([]string, error) {
