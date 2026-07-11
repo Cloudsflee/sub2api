@@ -25,6 +25,7 @@ const (
 	publicAccountImportOtherPriority      = 1
 	publicAccountImportDefaultPriority    = 2
 	publicAccountImportFreePriority       = 3
+	publicAccountImportPlusPriority       = 4
 )
 
 type PublicAccountImportGroup struct {
@@ -278,6 +279,8 @@ func publicAccountImportGroupPriority(name string) int {
 		return publicAccountImportOtherPriority
 	case "FREE":
 		return publicAccountImportFreePriority
+	case "PLUS":
+		return publicAccountImportPlusPriority
 	default:
 		return publicAccountImportDefaultPriority
 	}

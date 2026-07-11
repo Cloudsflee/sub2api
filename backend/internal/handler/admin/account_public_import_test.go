@@ -114,6 +114,7 @@ func TestResolvePublicAccountImportGroupsAddsAllAndSetsPriority(t *testing.T) {
 
 	svc := newStubAdminService()
 	svc.groups = []service.Group{
+		{ID: 2, Name: "PLUS", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 4, Name: "FREE", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
@@ -131,10 +132,12 @@ func TestResolvePublicAccountImportGroupsAddsAllAndSetsPriority(t *testing.T) {
 	}{
 		{name: "OTHER is priority 1", selected: []int64{11}, wantGroupIDs: []int64{11, 6}, wantPriority: 1},
 		{name: "FREE is priority 3", selected: []int64{4}, wantGroupIDs: []int64{4, 6}, wantPriority: 3},
+		{name: "PLUS is priority 4", selected: []int64{2}, wantGroupIDs: []int64{2, 6}, wantPriority: 4},
 		{name: "K12 is priority 2", selected: []int64{5}, wantGroupIDs: []int64{5, 6}, wantPriority: 2},
 		{name: "other groups are priority 2", selected: []int64{9}, wantGroupIDs: []int64{9, 6}, wantPriority: 2},
 		{name: "similar names remain priority 2", selected: []int64{10}, wantGroupIDs: []int64{10, 6}, wantPriority: 2},
 		{name: "multiple groups use the smallest priority", selected: []int64{9, 4, 11}, wantGroupIDs: []int64{4, 9, 11, 6}, wantPriority: 1},
+		{name: "FREE wins over PLUS when both are selected", selected: []int64{4, 2}, wantGroupIDs: []int64{2, 4, 6}, wantPriority: 3},
 	}
 
 	for _, tt := range tests {
