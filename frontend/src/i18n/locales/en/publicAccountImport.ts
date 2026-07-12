@@ -43,6 +43,8 @@ export default {
     productsSyncing: '{count} shops are still syncing',
     productSearchLabel: 'Search products',
     productSearchPlaceholder: 'Search by product, shop, or category',
+    priceDescending: 'Price: high to low',
+    priceAscending: 'Price: low to high',
     loadingProducts: 'Loading products…',
     noProducts: 'No available products match your search',
     productLoadFailed: 'Failed to load the product catalog',

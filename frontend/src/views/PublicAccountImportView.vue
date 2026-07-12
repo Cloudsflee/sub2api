@@ -328,6 +328,30 @@
               class="input"
               :placeholder="t('publicAccountImport.productSearchPlaceholder')"
             />
+            <div class="mt-2 grid grid-cols-2 overflow-hidden rounded-md border border-gray-200 dark:border-dark-700">
+              <button
+                type="button"
+                class="px-3 py-2 text-xs font-medium transition-colors"
+                :class="productPriceOrder === 'desc'
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-dark-900 dark:text-dark-300 dark:hover:bg-dark-800'"
+                :aria-pressed="productPriceOrder === 'desc'"
+                @click="productPriceOrder = 'desc'"
+              >
+                {{ t('publicAccountImport.priceDescending') }}
+              </button>
+              <button
+                type="button"
+                class="border-l border-gray-200 px-3 py-2 text-xs font-medium transition-colors dark:border-dark-700"
+                :class="productPriceOrder === 'asc'
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-dark-900 dark:text-dark-300 dark:hover:bg-dark-800'"
+                :aria-pressed="productPriceOrder === 'asc'"
+                @click="productPriceOrder = 'asc'"
+              >
+                {{ t('publicAccountImport.priceAscending') }}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -443,6 +467,7 @@ const loadingProducts = ref(true)
 const productErrorMessage = ref('')
 const pendingProductShops = ref(0)
 const productSearch = ref('')
+const productPriceOrder = ref<'desc' | 'asc'>('desc')
 const productPage = ref(1)
 let shopRefreshTimer: number | undefined
 let productRefreshTimer: number | undefined
@@ -468,7 +493,10 @@ const filteredProducts = computed(() => {
     ? available.filter((product) => [product.name, product.shop_name, product.category, product.goods_type]
         .some((value) => value?.toLocaleLowerCase().includes(keyword)))
     : available
-  return [...matched].sort((a, b) => b.price - a.price || a.name.localeCompare(b.name))
+  return [...matched].sort((a, b) => {
+    const priceDifference = productPriceOrder.value === 'desc' ? b.price - a.price : a.price - b.price
+    return priceDifference || a.name.localeCompare(b.name)
+  })
 })
 const productPageCount = computed(() => Math.max(1, Math.ceil(filteredProducts.value.length / CATALOG_PAGE_SIZE)))
 const pagedProducts = computed(() => {
@@ -502,6 +530,7 @@ onBeforeUnmount(() => {
 
 watch(selectedGroupIds, resetSubmissionState, { deep: true })
 watch(productSearch, () => { productPage.value = 1 })
+watch(productPriceOrder, () => { productPage.value = 1 })
 watch(shopPageCount, (count) => { shopPage.value = Math.min(shopPage.value, count) })
 watch(productPageCount, (count) => { productPage.value = Math.min(productPage.value, count) })
 

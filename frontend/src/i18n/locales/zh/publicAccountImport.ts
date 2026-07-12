@@ -43,6 +43,8 @@ export default {
     productsSyncing: '还有 {count} 个店铺正在同步',
     productSearchLabel: '搜索商品',
     productSearchPlaceholder: '搜索商品名、店铺或分类',
+    priceDescending: '价格从高到低',
+    priceAscending: '价格从低到高',
     loadingProducts: '正在加载商品…',
     noProducts: '暂无符合条件的在售商品',
     productLoadFailed: '商品目录加载失败',
