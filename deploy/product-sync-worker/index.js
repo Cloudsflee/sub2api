@@ -81,7 +81,12 @@ async function syncJob(page, job) {
   let lastError
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      await page.goto(job.shop_url, { waitUntil: 'domcontentloaded', timeout: 45000 })
+      try {
+        await page.goto(job.shop_url, { waitUntil: 'domcontentloaded', timeout: 20000 })
+      } catch (error) {
+        if (error.name !== 'TimeoutError') throw error
+        console.log(`${new Date().toISOString()} navigation still loading for ${job.shop_name}; trying the API directly`)
+      }
       await sleep(attempt * 3000)
       const products = await collectProducts(page, job.token)
       const result = await backend('/api/v1/public/account-import/products/sync', {
