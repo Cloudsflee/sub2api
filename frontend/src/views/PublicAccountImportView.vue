@@ -46,6 +46,13 @@
         </button>
       </div>
 
+      <div
+        v-show="activeMainTab === 'import'"
+        class="mb-4 border-y border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+      >
+        {{ t('publicAccountImport.k12PurchaseNotice') }}
+      </div>
+
       <form
         v-show="activeMainTab === 'import'"
         class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-900"

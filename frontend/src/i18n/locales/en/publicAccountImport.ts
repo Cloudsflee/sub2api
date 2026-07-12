@@ -34,6 +34,7 @@ export default {
     shopUrlPlaceholder: 'https://',
     shopModule: 'Shops',
     importModule: 'Account import',
+    k12PurchaseNotice: 'K12 JSON is recommended. It usually costs CNY 1-2 and typically survives for about one day.',
     productModule: 'Products',
     previousPage: 'Previous',
     nextPage: 'Next',

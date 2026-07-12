@@ -34,6 +34,7 @@ export default {
     shopUrlPlaceholder: 'https://',
     shopModule: '店铺',
     importModule: '账号导入',
+    k12PurchaseNotice: '推荐购买 K12 的 JSON，通常 1-2 元，一般可存活一天。',
     productModule: '商品',
     previousPage: '上一页',
     nextPage: '下一页',
