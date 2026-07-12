@@ -1,0 +1,8 @@
+{
+  "name": "sub2api-product-sync-worker",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "puppeteer-core": "24.12.1"
+  }
+}

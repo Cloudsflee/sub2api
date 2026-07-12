@@ -49,6 +49,7 @@ export default {
     noProducts: '暂无符合条件的在售商品',
     productLoadFailed: '商品目录加载失败',
     productStock: '库存 {count}',
+    productUpdatedAt: '更新于 {time}',
     submitShop: '提交店铺',
     submittingShop: '正在提交…',
     loadingShops: '正在加载店铺…',

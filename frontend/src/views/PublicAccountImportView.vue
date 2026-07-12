@@ -386,6 +386,9 @@
               <div class="mt-1 truncate text-xs text-gray-500 dark:text-dark-400">
                 {{ product.shop_name }}<span v-if="product.category"> · {{ product.category }}</span>
               </div>
+              <div class="mt-1 text-xs text-gray-400 dark:text-dark-500" :title="product.updated_at">
+                {{ t('publicAccountImport.productUpdatedAt', { time: formatProductUpdatedAt(product.updated_at) }) }}
+              </div>
               <div class="mt-3 flex items-end justify-between gap-3">
                 <div>
                   <span class="text-lg font-bold text-red-600 dark:text-red-400">¥{{ formatPrice(product.price) }}</span>
@@ -660,6 +663,19 @@ async function loadPublicProducts(showLoading: boolean) {
 
 function formatPrice(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')
+}
+
+function formatProductUpdatedAt(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
 }
 
 async function syncNextPublicShop() {

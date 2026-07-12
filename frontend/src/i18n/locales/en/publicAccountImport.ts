@@ -49,6 +49,7 @@ export default {
     noProducts: 'No available products match your search',
     productLoadFailed: 'Failed to load the product catalog',
     productStock: '{count} in stock',
+    productUpdatedAt: 'Updated {time}',
     submitShop: 'Submit shop',
     submittingShop: 'Submitting…',
     loadingShops: 'Loading shops…',
