@@ -55,6 +55,34 @@ type PublicAccountImportProductsResponse struct {
 	RefreshSeconds int                          `json:"refresh_seconds"`
 }
 
+type PublicAccountImportProductSyncJob struct {
+	ShopID   string `json:"shop_id"`
+	ShopName string `json:"shop_name"`
+	ShopURL  string `json:"shop_url"`
+	Token    string `json:"token"`
+}
+
+type PublicAccountImportProductSyncJobResponse struct {
+	Job *PublicAccountImportProductSyncJob `json:"job"`
+}
+
+type PublicAccountImportProductSyncItem struct {
+	GoodsKey    string  `json:"goods_key"`
+	Name        string  `json:"name"`
+	URL         string  `json:"url"`
+	Image       string  `json:"image"`
+	Category    string  `json:"category"`
+	GoodsType   string  `json:"goods_type"`
+	Price       float64 `json:"price"`
+	MarketPrice float64 `json:"market_price"`
+	Stock       int     `json:"stock"`
+}
+
+type PublicAccountImportProductSyncRequest struct {
+	ShopID   string                               `json:"shop_id"`
+	Products []PublicAccountImportProductSyncItem `json:"products"`
+}
+
 type publicAccountImportProductShopCache struct {
 	ShopID      string                       `json:"shop_id"`
 	LastAttempt string                       `json:"last_attempt"`
@@ -108,6 +136,7 @@ var (
 	publicProductCache       = publicAccountImportProductStore{Version: publicAccountImportProductStoreVersion, Shops: map[string]publicAccountImportProductShopCache{}}
 	publicProductSyncOnce    sync.Once
 	publicProductHTTPClient  = &http.Client{Timeout: 12 * time.Second}
+	publicProductLastJobAt   time.Time
 )
 
 func (h *AccountHandler) ListPublicAccountImportProducts(c *gin.Context) {
@@ -115,8 +144,6 @@ func (h *AccountHandler) ListPublicAccountImportProducts(c *gin.Context) {
 		response.NotFound(c, "Public account import is disabled")
 		return
 	}
-	startPublicAccountImportProductSync()
-
 	shops, err := snapshotPublicAccountImportShops()
 	if err != nil {
 		response.InternalError(c, "Failed to load shop links")
@@ -155,6 +182,168 @@ func (h *AccountHandler) ListPublicAccountImportProducts(c *gin.Context) {
 		Products: products, ShopCount: len(shops), PendingShops: pending,
 		RefreshSeconds: int(publicAccountImportProductRefreshAge.Seconds()),
 	})
+}
+
+func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
+	if !publicAccountImportEnabled() {
+		response.NotFound(c, "Public account import is disabled")
+		return
+	}
+	shops, err := snapshotPublicAccountImportShops()
+	if err != nil {
+		response.InternalError(c, "Failed to load shop links")
+		return
+	}
+
+	publicProductCacheMu.Lock()
+	defer publicProductCacheMu.Unlock()
+	if err := loadPublicProductCacheLocked(); err != nil {
+		response.InternalError(c, "Failed to load product cache")
+		return
+	}
+	now := time.Now().UTC()
+	if now.Sub(publicProductLastJobAt) < publicAccountImportProductSyncInterval {
+		response.Success(c, PublicAccountImportProductSyncJobResponse{})
+		return
+	}
+	var selected *PublicAccountImportShop
+	var selectedAttempt time.Time
+	for i := range shops {
+		attempt, _ := time.Parse(time.RFC3339, publicProductCache.Shops[shops[i].ID].LastAttempt)
+		if !attempt.IsZero() && now.Sub(attempt) < publicAccountImportProductRefreshAge {
+			continue
+		}
+		if selected == nil || attempt.Before(selectedAttempt) {
+			shop := shops[i]
+			selected = &shop
+			selectedAttempt = attempt
+		}
+	}
+	if selected == nil {
+		response.Success(c, PublicAccountImportProductSyncJobResponse{})
+		return
+	}
+	token, err := publicAccountImportShopToken(selected.URL)
+	if err != nil {
+		cached := publicProductCache.Shops[selected.ID]
+		cached.ShopID = selected.ID
+		cached.LastAttempt = now.Format(time.RFC3339)
+		cached.Error = err.Error()
+		publicProductCache.Shops[selected.ID] = cached
+		_ = savePublicProductCacheLocked()
+		response.Success(c, PublicAccountImportProductSyncJobResponse{})
+		return
+	}
+	cached := publicProductCache.Shops[selected.ID]
+	cached.ShopID = selected.ID
+	cached.LastAttempt = now.Format(time.RFC3339)
+	publicProductCache.Shops[selected.ID] = cached
+	publicProductLastJobAt = now
+	_ = savePublicProductCacheLocked()
+	response.Success(c, PublicAccountImportProductSyncJobResponse{Job: &PublicAccountImportProductSyncJob{
+		ShopID: selected.ID, ShopName: selected.Name, ShopURL: selected.URL, Token: token,
+	}})
+}
+
+func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
+	if !publicAccountImportEnabled() {
+		response.NotFound(c, "Public account import is disabled")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, publicAccountImportProductMaxBody)
+	var req PublicAccountImportProductSyncRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid product sync request")
+		return
+	}
+	if len(req.Products) > 1000 {
+		response.BadRequest(c, "Product sync contains too many products")
+		return
+	}
+	shops, err := snapshotPublicAccountImportShops()
+	if err != nil {
+		response.InternalError(c, "Failed to load shop links")
+		return
+	}
+	var shop *PublicAccountImportShop
+	for i := range shops {
+		if shops[i].ID == req.ShopID {
+			candidate := shops[i]
+			shop = &candidate
+			break
+		}
+	}
+	if shop == nil {
+		response.BadRequest(c, "Shop is not available")
+		return
+	}
+	if _, err := publicAccountImportShopToken(shop.URL); err != nil {
+		response.BadRequest(c, "Shop is not supported")
+		return
+	}
+
+	updatedAt := time.Now().UTC().Format(time.RFC3339)
+	products := make([]PublicAccountImportProduct, 0, len(req.Products))
+	seen := make(map[string]struct{}, len(req.Products))
+	for _, item := range req.Products {
+		product, ok := normalizePublicProductSyncItem(*shop, item, updatedAt)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[product.ID]; exists {
+			continue
+		}
+		seen[product.ID] = struct{}{}
+		products = append(products, product)
+	}
+
+	publicProductCacheMu.Lock()
+	defer publicProductCacheMu.Unlock()
+	if err := loadPublicProductCacheLocked(); err != nil {
+		response.InternalError(c, "Failed to load product cache")
+		return
+	}
+	cached := publicProductCache.Shops[shop.ID]
+	cached.ShopID = shop.ID
+	cached.Error = ""
+	cached.UpdatedAt = updatedAt
+	cached.Products = products
+	publicProductCache.Shops[shop.ID] = cached
+	if err := savePublicProductCacheLocked(); err != nil {
+		response.InternalError(c, "Failed to save product cache")
+		return
+	}
+	response.Success(c, gin.H{"accepted": len(products)})
+}
+
+func normalizePublicProductSyncItem(shop PublicAccountImportShop, item PublicAccountImportProductSyncItem, updatedAt string) (PublicAccountImportProduct, bool) {
+	item.GoodsKey = strings.TrimSpace(item.GoodsKey)
+	item.Name = strings.TrimSpace(item.Name)
+	if item.GoodsKey == "" || len(item.GoodsKey) > 100 || item.Name == "" || len(item.Name) > 500 || item.Stock <= 0 || item.Price < 0 || item.Price > 1_000_000 || item.MarketPrice < 0 || item.MarketPrice > 1_000_000 {
+		return PublicAccountImportProduct{}, false
+	}
+	productURL, err := url.Parse(strings.TrimSpace(item.URL))
+	if err != nil || productURL.Scheme != "https" || !strings.EqualFold(productURL.Hostname(), "pay.ldxp.cn") || !strings.HasPrefix(productURL.Path, "/item/") {
+		return PublicAccountImportProduct{}, false
+	}
+	image := strings.TrimSpace(item.Image)
+	if image != "" {
+		imageURL, err := url.Parse(image)
+		allowedImageHost := err == nil && imageURL.Scheme == "https" && (strings.EqualFold(imageURL.Hostname(), "qn.ldxp.cn") || strings.EqualFold(imageURL.Hostname(), "www.ldxp.cn") || strings.EqualFold(imageURL.Hostname(), "pay.ldxp.cn"))
+		if !allowedImageHost {
+			image = ""
+		}
+	}
+	goodsType := strings.ToLower(strings.TrimSpace(item.GoodsType))
+	if goodsType != "card" && goodsType != "article" && goodsType != "resource" && goodsType != "equity" {
+		return PublicAccountImportProduct{}, false
+	}
+	return PublicAccountImportProduct{
+		ID: publicAccountImportProductID(shop.ID, item.GoodsKey), ShopID: shop.ID,
+		ShopName: shop.Name, ShopURL: shop.URL, Name: item.Name, URL: productURL.String(),
+		Image: image, Category: strings.TrimSpace(item.Category), GoodsType: goodsType,
+		Price: item.Price, MarketPrice: item.MarketPrice, Stock: item.Stock, UpdatedAt: updatedAt,
+	}, true
 }
 
 func startPublicAccountImportProductSync() {

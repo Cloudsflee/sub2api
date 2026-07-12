@@ -33,6 +33,7 @@ export default {
     shopUrlLabel: '店铺链接',
     shopUrlPlaceholder: 'https://',
     shopModule: '店铺',
+    importModule: '账号导入',
     productModule: '商品',
     previousPage: '上一页',
     nextPage: '下一页',

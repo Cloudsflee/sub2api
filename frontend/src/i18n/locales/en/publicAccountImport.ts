@@ -33,6 +33,7 @@ export default {
     shopUrlLabel: 'Shop URL',
     shopUrlPlaceholder: 'https://',
     shopModule: 'Shops',
+    importModule: 'Account import',
     productModule: 'Products',
     previousPage: 'Previous',
     nextPage: 'Next',

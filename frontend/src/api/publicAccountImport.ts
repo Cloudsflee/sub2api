@@ -73,6 +73,25 @@ export interface PublicAccountImportProductsResponse {
   refresh_seconds: number
 }
 
+export interface PublicAccountImportProductSyncJob {
+  shop_id: string
+  shop_name: string
+  shop_url: string
+  token: string
+}
+
+export interface PublicAccountImportProductSyncItem {
+  goods_key: string
+  name: string
+  url: string
+  image: string
+  category: string
+  goods_type: string
+  price: number
+  market_price: number
+  stock: number
+}
+
 export async function getPublicAccountImportGroups(): Promise<PublicAccountImportGroup[]> {
   const { data } = await apiClient.get<{ groups: PublicAccountImportGroup[] }>(
     '/public/account-import/groups'
@@ -119,4 +138,21 @@ export async function getPublicAccountImportProducts(): Promise<PublicAccountImp
     pending_shops: data.pending_shops || 0,
     refresh_seconds: data.refresh_seconds || 300,
   }
+}
+
+export async function getPublicAccountImportProductSyncJob(): Promise<PublicAccountImportProductSyncJob | null> {
+  const { data } = await apiClient.get<{ job?: PublicAccountImportProductSyncJob | null }>(
+    '/public/account-import/products/sync-job'
+  )
+  return data.job || null
+}
+
+export async function submitPublicAccountImportProductSync(
+  shopId: string,
+  products: PublicAccountImportProductSyncItem[]
+): Promise<void> {
+  await apiClient.post('/public/account-import/products/sync', {
+    shop_id: shopId,
+    products,
+  })
 }

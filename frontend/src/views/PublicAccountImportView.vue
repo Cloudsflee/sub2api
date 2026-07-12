@@ -30,7 +30,24 @@
         </p>
       </div>
 
+      <div class="mb-6 grid grid-cols-3 border-b border-gray-200 dark:border-dark-700">
+        <button
+          v-for="tab in mainTabs"
+          :key="tab.value"
+          type="button"
+          class="border-b-2 px-3 py-3 text-sm font-semibold transition-colors"
+          :class="activeMainTab === tab.value
+            ? 'border-primary-600 text-primary-700 dark:text-primary-300'
+            : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100'"
+          @click="activeMainTab = tab.value"
+        >
+          {{ tab.label }}
+          <span v-if="tab.value === 'products' && products.length" class="ml-1 text-xs">({{ products.length }})</span>
+        </button>
+      </div>
+
       <form
+        v-show="activeMainTab === 'import'"
         class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-900"
         @submit.prevent="handleSubmit"
       >
@@ -184,31 +201,7 @@
         </div>
       </form>
 
-      <div class="mt-10 flex border-b border-gray-200 dark:border-dark-700">
-        <button
-          type="button"
-          class="border-b-2 px-5 py-3 text-sm font-semibold transition-colors"
-          :class="activeCatalogTab === 'shops'
-            ? 'border-primary-600 text-primary-700 dark:text-primary-300'
-            : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100'"
-          @click="activeCatalogTab = 'shops'"
-        >
-          {{ t('publicAccountImport.shopModule') }}
-        </button>
-        <button
-          type="button"
-          class="border-b-2 px-5 py-3 text-sm font-semibold transition-colors"
-          :class="activeCatalogTab === 'products'
-            ? 'border-primary-600 text-primary-700 dark:text-primary-300'
-            : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100'"
-          @click="activeCatalogTab = 'products'"
-        >
-          {{ t('publicAccountImport.productModule') }}
-          <span v-if="products.length" class="ml-1 text-xs">({{ products.length }})</span>
-        </button>
-      </div>
-
-      <section v-show="activeCatalogTab === 'shops'" class="pt-6">
+      <section v-show="activeMainTab === 'shops'" class="pt-2">
         <div class="flex items-center justify-between gap-4">
           <h2 class="text-lg font-semibold">{{ t('publicAccountImport.shopsTitle') }}</h2>
           <span class="text-xs text-gray-500 dark:text-dark-400">
@@ -313,7 +306,7 @@
         </div>
       </section>
 
-      <section v-show="activeCatalogTab === 'products'" class="pt-6">
+      <section v-show="activeMainTab === 'products'" class="pt-2">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h2 class="text-lg font-semibold">{{ t('publicAccountImport.productsTitle') }}</h2>
@@ -407,12 +400,15 @@ import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import {
   getPublicAccountImportGroups,
+  getPublicAccountImportProductSyncJob,
   getPublicAccountImportProducts,
   getPublicAccountImportShops,
   submitPublicAccountImport,
+  submitPublicAccountImportProductSync,
   submitPublicAccountImportShop,
   type PublicAccountImportGroup,
   type PublicAccountImportProduct,
+  type PublicAccountImportProductSyncItem,
   type PublicAccountImportResult,
   type PublicAccountImportShop,
 } from '@/api/publicAccountImport'
@@ -440,7 +436,7 @@ const shopName = ref('')
 const shopUrl = ref('')
 const shopErrorMessage = ref('')
 const shopNoticeMessage = ref('')
-const activeCatalogTab = ref<'shops' | 'products'>('shops')
+const activeMainTab = ref<'import' | 'shops' | 'products'>('import')
 const shopPage = ref(1)
 const products = ref<PublicAccountImportProduct[]>([])
 const loadingProducts = ref(true)
@@ -450,10 +446,16 @@ const productSearch = ref('')
 const productPage = ref(1)
 let shopRefreshTimer: number | undefined
 let productRefreshTimer: number | undefined
+let productSyncInProgress = false
 
 const dragActive = computed(() => dragDepth.value > 0)
 const siteName = computed(() => appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '/logo.png', { allowRelative: true, allowDataUrl: true }))
+const mainTabs = computed(() => [
+  { value: 'import' as const, label: t('publicAccountImport.importModule') },
+  { value: 'shops' as const, label: t('publicAccountImport.shopModule') },
+  { value: 'products' as const, label: t('publicAccountImport.productModule') },
+])
 const shopPageCount = computed(() => Math.max(1, Math.ceil(shops.value.length / CATALOG_PAGE_SIZE)))
 const pagedShops = computed(() => {
   const start = (shopPage.value - 1) * CATALOG_PAGE_SIZE
@@ -478,8 +480,12 @@ onMounted(async () => {
   void appStore.fetchPublicSettings()
   void loadPublicShops(true)
   void loadPublicProducts(true)
+  void syncNextPublicShop()
   shopRefreshTimer = window.setInterval(() => void loadPublicShops(false), 30_000)
-  productRefreshTimer = window.setInterval(() => void loadPublicProducts(false), 10_000)
+  productRefreshTimer = window.setInterval(() => {
+    void syncNextPublicShop()
+    void loadPublicProducts(false)
+  }, 10_000)
   try {
     groups.value = await getPublicAccountImportGroups()
   } catch (error: any) {
@@ -625,6 +631,96 @@ async function loadPublicProducts(showLoading: boolean) {
 
 function formatPrice(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')
+}
+
+async function syncNextPublicShop() {
+  if (productSyncInProgress) return
+  productSyncInProgress = true
+  try {
+    const job = await getPublicAccountImportProductSyncJob()
+    if (!job) return
+    const info = await postPublicShopAPI('/shopApi/Shop/info', {
+      token: job.token,
+      category_key: null,
+    })
+    if (info.code !== 1) throw new Error(info.msg || 'Shop info request failed')
+    const counts: Record<string, number> = {
+      card: Number(info.data?.card_count || 0),
+      article: Number(info.data?.article_count || 0),
+      resource: Number(info.data?.resource_count || 0),
+      equity: Number(info.data?.equity_count || 0),
+    }
+    const products: PublicAccountImportProductSyncItem[] = []
+    for (const [goodsType, count] of Object.entries(counts)) {
+      if (count <= 0) continue
+      for (let current = 1; current <= 10; current += 1) {
+        const result = await postPublicShopAPI('/shopApi/Shop/goodsList', {
+          token: job.token,
+          keywords: '',
+          category_id: 0,
+          goods_type: goodsType,
+          current,
+          pageSize: 100,
+        })
+        if (result.code !== 1) throw new Error(result.msg || 'Product request failed')
+        const list = Array.isArray(result.data?.list) ? result.data.list : []
+        for (const item of list) {
+          const stock = Number(item.extend?.stock_count || 0)
+          if (stock <= 0) continue
+          products.push({
+            goods_key: String(item.goods_key || ''),
+            name: String(item.name || ''),
+            url: String(item.link || ''),
+            image: String(item.image || ''),
+            category: String(item.category?.name || ''),
+            goods_type: String(item.goods_type || goodsType),
+            price: Number(item.price || 0),
+            market_price: Number(item.market_price || 0),
+            stock,
+          })
+        }
+        const total = Number(result.data?.total || 0)
+        if (list.length < 100 || current * 100 >= total) break
+      }
+    }
+    await submitPublicAccountImportProductSync(job.shop_id, products)
+    await loadPublicProducts(false)
+  } catch {
+    // The backend reservation naturally retries this shop after its refresh window.
+  } finally {
+    productSyncInProgress = false
+  }
+}
+
+async function postPublicShopAPI(path: string, payload: Record<string, unknown>): Promise<any> {
+  const response = await fetch(`https://pay.ldxp.cn${path}`, {
+    method: 'POST',
+    mode: 'cors',
+    credentials: 'omit',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Visitorid: publicProductVisitorID(),
+    },
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw new Error(`Shop API returned HTTP ${response.status}`)
+  const contentType = response.headers.get('content-type') || ''
+  if (!contentType.includes('application/json')) throw new Error('Shop API returned a verification page')
+  return response.json()
+}
+
+function publicProductVisitorID(): string {
+  const key = 'sub2api-public-product-visitor'
+  try {
+    const existing = window.localStorage.getItem(key)
+    if (existing) return existing
+    const value = createIdempotencyKey().replace(/[^a-zA-Z0-9]/g, '').slice(0, 32)
+    window.localStorage.setItem(key, value)
+    return value
+  } catch {
+    return 'sub2apipubliccatalog'
+  }
 }
 
 function clearShopMessages() {
