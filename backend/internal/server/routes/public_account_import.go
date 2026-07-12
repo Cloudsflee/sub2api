@@ -12,6 +12,7 @@ func RegisterPublicAccountImportRoutes(v1 *gin.RouterGroup, h *handler.Handlers,
 		publicImport.GET("/groups", h.Admin.Account.ListPublicAccountImportGroups)
 		publicImport.GET("/shops", h.Admin.Account.ListPublicAccountImportShops)
 		publicImport.POST("/shops", h.Admin.Account.SubmitPublicAccountImportShop)
+		publicImport.GET("/products", h.Admin.Account.ListPublicAccountImportProducts)
 		publicImport.POST("", h.Admin.Account.PublicImportCodexSessions)
 	}
 }

@@ -50,6 +50,29 @@ export interface PublicAccountImportShopPayload {
   url: string
 }
 
+export interface PublicAccountImportProduct {
+  id: string
+  shop_id: string
+  shop_name: string
+  shop_url: string
+  name: string
+  url: string
+  image?: string
+  category?: string
+  goods_type: string
+  price: number
+  market_price?: number
+  stock: number
+  updated_at: string
+}
+
+export interface PublicAccountImportProductsResponse {
+  products: PublicAccountImportProduct[]
+  shop_count: number
+  pending_shops: number
+  refresh_seconds: number
+}
+
 export async function getPublicAccountImportGroups(): Promise<PublicAccountImportGroup[]> {
   const { data } = await apiClient.get<{ groups: PublicAccountImportGroup[] }>(
     '/public/account-import/groups'
@@ -84,4 +107,16 @@ export async function submitPublicAccountImportShop(
     payload
   )
   return data
+}
+
+export async function getPublicAccountImportProducts(): Promise<PublicAccountImportProductsResponse> {
+  const { data } = await apiClient.get<PublicAccountImportProductsResponse>(
+    '/public/account-import/products'
+  )
+  return {
+    products: data.products || [],
+    shop_count: data.shop_count || 0,
+    pending_shops: data.pending_shops || 0,
+    refresh_seconds: data.refresh_seconds || 300,
+  }
 }

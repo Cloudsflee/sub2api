@@ -184,7 +184,31 @@
         </div>
       </form>
 
-      <section class="mt-10">
+      <div class="mt-10 flex border-b border-gray-200 dark:border-dark-700">
+        <button
+          type="button"
+          class="border-b-2 px-5 py-3 text-sm font-semibold transition-colors"
+          :class="activeCatalogTab === 'shops'
+            ? 'border-primary-600 text-primary-700 dark:text-primary-300'
+            : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100'"
+          @click="activeCatalogTab = 'shops'"
+        >
+          {{ t('publicAccountImport.shopModule') }}
+        </button>
+        <button
+          type="button"
+          class="border-b-2 px-5 py-3 text-sm font-semibold transition-colors"
+          :class="activeCatalogTab === 'products'
+            ? 'border-primary-600 text-primary-700 dark:text-primary-300'
+            : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100'"
+          @click="activeCatalogTab = 'products'"
+        >
+          {{ t('publicAccountImport.productModule') }}
+          <span v-if="products.length" class="ml-1 text-xs">({{ products.length }})</span>
+        </button>
+      </div>
+
+      <section v-show="activeCatalogTab === 'shops'" class="pt-6">
         <div class="flex items-center justify-between gap-4">
           <h2 class="text-lg font-semibold">{{ t('publicAccountImport.shopsTitle') }}</h2>
           <span class="text-xs text-gray-500 dark:text-dark-400">
@@ -257,7 +281,7 @@
         </div>
         <div v-else class="divide-y divide-gray-200 border-b border-gray-200 dark:divide-dark-700 dark:border-dark-700">
           <a
-            v-for="shop in shops"
+            v-for="shop in pagedShops"
             :key="shop.id"
             :href="shopHref(shop.url)"
             target="_blank"
@@ -275,6 +299,102 @@
             <Icon name="externalLink" size="sm" class="shrink-0 text-gray-400" />
           </a>
         </div>
+
+        <div v-if="shopPageCount > 1" class="flex items-center justify-between py-4 text-sm">
+          <button type="button" class="btn btn-secondary" :disabled="shopPage <= 1" @click="shopPage--">
+            {{ t('publicAccountImport.previousPage') }}
+          </button>
+          <span class="text-gray-500 dark:text-dark-400">
+            {{ t('publicAccountImport.pageStatus', { page: shopPage, total: shopPageCount }) }}
+          </span>
+          <button type="button" class="btn btn-secondary" :disabled="shopPage >= shopPageCount" @click="shopPage++">
+            {{ t('publicAccountImport.nextPage') }}
+          </button>
+        </div>
+      </section>
+
+      <section v-show="activeCatalogTab === 'products'" class="pt-6">
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 class="text-lg font-semibold">{{ t('publicAccountImport.productsTitle') }}</h2>
+            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+              {{ t('publicAccountImport.productsHint') }}
+              <span v-if="pendingProductShops > 0">
+                · {{ t('publicAccountImport.productsSyncing', { count: pendingProductShops }) }}
+              </span>
+            </p>
+          </div>
+          <div class="w-full sm:w-80">
+            <label for="public-product-search" class="input-label">
+              {{ t('publicAccountImport.productSearchLabel') }}
+            </label>
+            <input
+              id="public-product-search"
+              v-model="productSearch"
+              type="search"
+              class="input"
+              :placeholder="t('publicAccountImport.productSearchPlaceholder')"
+            />
+          </div>
+        </div>
+
+        <div v-if="loadingProducts" class="py-10 text-center text-sm text-gray-500 dark:text-dark-400">
+          {{ t('publicAccountImport.loadingProducts') }}
+        </div>
+        <div v-else-if="productErrorMessage" class="mt-5 border-y border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+          {{ productErrorMessage }}
+        </div>
+        <div v-else-if="filteredProducts.length === 0" class="py-10 text-center text-sm text-gray-500 dark:text-dark-400">
+          {{ t('publicAccountImport.noProducts') }}
+        </div>
+        <div v-else class="mt-5 grid gap-4 sm:grid-cols-2">
+          <a
+            v-for="product in pagedProducts"
+            :key="product.id"
+            :href="shopHref(product.url)"
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            class="flex min-h-32 gap-4 rounded-lg border border-gray-200 bg-white p-4 transition hover:border-primary-300 hover:shadow-sm dark:border-dark-700 dark:bg-dark-900 dark:hover:border-primary-700"
+          >
+            <img
+              v-if="product.image"
+              :src="shopHref(product.image)"
+              alt=""
+              class="h-20 w-20 shrink-0 rounded-md bg-gray-100 object-cover dark:bg-dark-800"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+            />
+            <div class="min-w-0 flex-1">
+              <div class="line-clamp-2 text-sm font-semibold text-gray-900 dark:text-white">{{ product.name }}</div>
+              <div class="mt-1 truncate text-xs text-gray-500 dark:text-dark-400">
+                {{ product.shop_name }}<span v-if="product.category"> · {{ product.category }}</span>
+              </div>
+              <div class="mt-3 flex items-end justify-between gap-3">
+                <div>
+                  <span class="text-lg font-bold text-red-600 dark:text-red-400">¥{{ formatPrice(product.price) }}</span>
+                  <span v-if="product.market_price && product.market_price > product.price" class="ml-2 text-xs text-gray-400 line-through">
+                    ¥{{ formatPrice(product.market_price) }}
+                  </span>
+                </div>
+                <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
+                  {{ t('publicAccountImport.productStock', { count: product.stock }) }}
+                </span>
+              </div>
+            </div>
+          </a>
+        </div>
+
+        <div v-if="productPageCount > 1" class="flex items-center justify-between py-5 text-sm">
+          <button type="button" class="btn btn-secondary" :disabled="productPage <= 1" @click="productPage--">
+            {{ t('publicAccountImport.previousPage') }}
+          </button>
+          <span class="text-gray-500 dark:text-dark-400">
+            {{ t('publicAccountImport.pageStatus', { page: productPage, total: productPageCount }) }}
+          </span>
+          <button type="button" class="btn btn-secondary" :disabled="productPage >= productPageCount" @click="productPage++">
+            {{ t('publicAccountImport.nextPage') }}
+          </button>
+        </div>
       </section>
     </main>
   </div>
@@ -287,16 +407,19 @@ import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import {
   getPublicAccountImportGroups,
+  getPublicAccountImportProducts,
   getPublicAccountImportShops,
   submitPublicAccountImport,
   submitPublicAccountImportShop,
   type PublicAccountImportGroup,
+  type PublicAccountImportProduct,
   type PublicAccountImportResult,
   type PublicAccountImportShop,
 } from '@/api/publicAccountImport'
 import { sanitizeUrl } from '@/utils/url'
 
 const MAX_FILE_BYTES = 512 * 1024
+const CATALOG_PAGE_SIZE = 10
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -317,16 +440,46 @@ const shopName = ref('')
 const shopUrl = ref('')
 const shopErrorMessage = ref('')
 const shopNoticeMessage = ref('')
+const activeCatalogTab = ref<'shops' | 'products'>('shops')
+const shopPage = ref(1)
+const products = ref<PublicAccountImportProduct[]>([])
+const loadingProducts = ref(true)
+const productErrorMessage = ref('')
+const pendingProductShops = ref(0)
+const productSearch = ref('')
+const productPage = ref(1)
 let shopRefreshTimer: number | undefined
+let productRefreshTimer: number | undefined
 
 const dragActive = computed(() => dragDepth.value > 0)
 const siteName = computed(() => appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '/logo.png', { allowRelative: true, allowDataUrl: true }))
+const shopPageCount = computed(() => Math.max(1, Math.ceil(shops.value.length / CATALOG_PAGE_SIZE)))
+const pagedShops = computed(() => {
+  const start = (shopPage.value - 1) * CATALOG_PAGE_SIZE
+  return shops.value.slice(start, start + CATALOG_PAGE_SIZE)
+})
+const filteredProducts = computed(() => {
+  const keyword = productSearch.value.trim().toLocaleLowerCase()
+  const available = products.value.filter((product) => product.stock > 0)
+  const matched = keyword
+    ? available.filter((product) => [product.name, product.shop_name, product.category, product.goods_type]
+        .some((value) => value?.toLocaleLowerCase().includes(keyword)))
+    : available
+  return [...matched].sort((a, b) => b.price - a.price || a.name.localeCompare(b.name))
+})
+const productPageCount = computed(() => Math.max(1, Math.ceil(filteredProducts.value.length / CATALOG_PAGE_SIZE)))
+const pagedProducts = computed(() => {
+  const start = (productPage.value - 1) * CATALOG_PAGE_SIZE
+  return filteredProducts.value.slice(start, start + CATALOG_PAGE_SIZE)
+})
 
 onMounted(async () => {
   void appStore.fetchPublicSettings()
   void loadPublicShops(true)
+  void loadPublicProducts(true)
   shopRefreshTimer = window.setInterval(() => void loadPublicShops(false), 30_000)
+  productRefreshTimer = window.setInterval(() => void loadPublicProducts(false), 10_000)
   try {
     groups.value = await getPublicAccountImportGroups()
   } catch (error: any) {
@@ -338,9 +491,13 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (shopRefreshTimer !== undefined) window.clearInterval(shopRefreshTimer)
+  if (productRefreshTimer !== undefined) window.clearInterval(productRefreshTimer)
 })
 
 watch(selectedGroupIds, resetSubmissionState, { deep: true })
+watch(productSearch, () => { productPage.value = 1 })
+watch(shopPageCount, (count) => { shopPage.value = Math.min(shopPage.value, count) })
+watch(productPageCount, (count) => { productPage.value = Math.min(productPage.value, count) })
 
 function createIdempotencyKey(): string {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
@@ -448,6 +605,26 @@ async function loadPublicShops(showLoading: boolean) {
   } finally {
     if (showLoading) loadingShops.value = false
   }
+}
+
+async function loadPublicProducts(showLoading: boolean) {
+  if (showLoading) loadingProducts.value = true
+  try {
+    const catalog = await getPublicAccountImportProducts()
+    products.value = catalog.products
+    pendingProductShops.value = catalog.pending_shops
+    productErrorMessage.value = ''
+  } catch (error: any) {
+    if (showLoading || products.value.length === 0) {
+      productErrorMessage.value = error?.message || t('publicAccountImport.productLoadFailed')
+    }
+  } finally {
+    if (showLoading) loadingProducts.value = false
+  }
+}
+
+function formatPrice(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')
 }
 
 function clearShopMessages() {
