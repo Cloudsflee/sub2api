@@ -1,4 +1,5 @@
 const puppeteer = require('puppeteer-core')
+const fs = require('node:fs')
 
 const backendURL = process.env.BACKEND_URL || 'http://sub2api:8080'
 const pollMilliseconds = Number(process.env.POLL_MILLISECONDS || 10000)
@@ -104,6 +105,9 @@ async function syncJob(page, job) {
 }
 
 async function runBrowser() {
+  for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+    fs.rmSync(`/data/chrome-profile/${name}`, { force: true, recursive: true })
+  }
   const browser = await puppeteer.launch({
     executablePath: chromePath,
     headless: true,
