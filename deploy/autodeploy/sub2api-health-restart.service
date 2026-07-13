@@ -6,5 +6,5 @@ After=docker.service
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/sub2api-autodeploy
-ExecStart=/usr/local/sbin/sub2api-health-restart
+ExecStart=/usr/local/sbin/sub2api-health-restart.sh
 TimeoutStartSec=3min
