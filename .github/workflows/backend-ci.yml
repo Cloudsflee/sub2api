@@ -15,6 +15,10 @@ jobs:
       - name: Check deployment scripts
         run: |
           /bin/bash -n deploy/apple-container.sh
+          /bin/bash -n deploy/autodeploy/sub2api-autodeploy.sh
+          /bin/bash -n deploy/autodeploy/sub2api-health-restart.sh
+          /bin/bash -n deploy/autodeploy/install.sh
+          python3 -m py_compile deploy/autodeploy/configure-compose.py
           /bin/bash deploy/tests/apple-container-test.sh
 
   test:
@@ -76,3 +80,20 @@ jobs:
           version: v2.9
           args: --timeout=30m
           working-directory: backend
+
+  promote-custom-for-deployment:
+    name: Mark custom commit deployable
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/custom' &&
+      github.repository == 'Cloudsflee/sub2api'
+    needs: [shell, test, frontend, golangci-lint]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Fast-forward deployment ref
+        run: git push origin "${GITHUB_SHA}:refs/heads/deploy/custom"

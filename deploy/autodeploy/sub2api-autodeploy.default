@@ -1,0 +1,16 @@
+REPO_DIR=/opt/sub2api-custom-src
+BUILD_DIR=/opt/sub2api-release
+DEPLOY_DIR=/opt/sub2api
+COMPOSE_FILE=/opt/sub2api/docker-compose.yml
+REMOTE=origin
+SOURCE_BRANCH=custom
+DEPLOY_BRANCH=deploy/custom
+APP_IMAGE_REPOSITORY=sub2api-custom
+WORKER_IMAGE_REPOSITORY=sub2api-product-sync-worker
+HEALTH_URL=http://127.0.0.1:8080/health
+HEALTH_TIMEOUT_SECONDS=180
+WORKER_STABLE_SECONDS=15
+BACKUP_BEFORE_DEPLOY=true
+BACKUP_COMMAND=/usr/local/sbin/sub2api-backup.sh
+MANAGE_WORKER=true
+KEEP_IMAGES=4

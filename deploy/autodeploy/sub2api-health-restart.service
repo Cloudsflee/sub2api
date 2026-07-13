@@ -1,0 +1,10 @@
+[Unit]
+Description=Restart Sub2API when local health check fails
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/sub2api-autodeploy
+ExecStart=/usr/local/sbin/sub2api-health-restart
+TimeoutStartSec=3min
