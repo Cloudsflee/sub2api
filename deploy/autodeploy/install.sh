@@ -19,7 +19,7 @@ fi
 [[ $EUID -eq 0 ]] || { echo "run this installer as root" >&2; exit 1; }
 [[ -f "$COMPOSE_FILE" ]] || { echo "Compose file not found: $COMPOSE_FILE" >&2; exit 1; }
 
-for script in sub2api-autodeploy.sh sub2api-health-restart.sh install.sh; do
+for script in sub2api-autodeploy.sh sub2api-health-restart.sh sub2api-backup.sh install.sh; do
   bash -n "$SCRIPT_DIR/$script"
 done
 python3 -m py_compile "$SCRIPT_DIR/configure-compose.py"
@@ -32,6 +32,13 @@ if [[ -f /usr/local/sbin/sub2api-health-restart.sh ]] \
     "/usr/local/sbin/sub2api-health-restart.sh.pre-autodeploy-$STAMP"
 fi
 install -m 0755 "$SCRIPT_DIR/sub2api-health-restart.sh" /usr/local/sbin/sub2api-health-restart.sh
+
+if [[ -f /usr/local/sbin/sub2api-backup.sh ]] \
+  && ! cmp -s "$SCRIPT_DIR/sub2api-backup.sh" /usr/local/sbin/sub2api-backup.sh; then
+  cp -a /usr/local/sbin/sub2api-backup.sh \
+    "/usr/local/sbin/sub2api-backup.sh.pre-autodeploy-$STAMP"
+fi
+install -m 0755 "$SCRIPT_DIR/sub2api-backup.sh" /usr/local/sbin/sub2api-backup.sh
 
 install -m 0644 "$SCRIPT_DIR/sub2api-autodeploy.service" /etc/systemd/system/sub2api-autodeploy.service
 install -m 0644 "$SCRIPT_DIR/sub2api-autodeploy.timer" /etc/systemd/system/sub2api-autodeploy.timer

@@ -17,6 +17,7 @@ jobs:
           /bin/bash -n deploy/apple-container.sh
           /bin/bash -n deploy/autodeploy/sub2api-autodeploy.sh
           /bin/bash -n deploy/autodeploy/sub2api-health-restart.sh
+          /bin/bash -n deploy/autodeploy/sub2api-backup.sh
           /bin/bash -n deploy/autodeploy/install.sh
           python3 -m py_compile deploy/autodeploy/configure-compose.py
           /bin/bash deploy/tests/apple-container-test.sh

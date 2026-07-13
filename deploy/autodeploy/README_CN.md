@@ -70,3 +70,4 @@ DEPLOY_DIR=/opt/sub2api
 
 部署状态保存在 `/var/lib/sub2api-autodeploy/state.env`，详细构建日志保存在
 `/var/log/sub2api-autodeploy/`。生产 `.env` 只记录当前不可变镜像标签，不会进入 Git。
+备份保存在 `/opt/backups/sub2api/`；持续写入的运行日志不会进入恢复归档。
