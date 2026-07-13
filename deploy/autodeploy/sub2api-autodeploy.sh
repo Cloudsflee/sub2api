@@ -30,6 +30,9 @@ STATE_DIR=${STATE_DIR:-/var/lib/sub2api-autodeploy}
 STATE_FILE=${STATE_FILE:-$STATE_DIR/state.env}
 LOG_DIR=${LOG_DIR:-/var/log/sub2api-autodeploy}
 KEEP_IMAGES=${KEEP_IMAGES:-4}
+PRUNE_BUILD_CACHE=${PRUNE_BUILD_CACHE:-true}
+BUILD_CACHE_MAX_USED_SPACE=${BUILD_CACHE_MAX_USED_SPACE:-6gb}
+BUILD_CACHE_MIN_FREE_SPACE=${BUILD_CACHE_MIN_FREE_SPACE:-8gb}
 
 TARGET_COMMIT=
 APP_CANDIDATE=
@@ -233,6 +236,27 @@ prepare_release_worktree() {
     || die "release worktree is not at approved commit"
 }
 
+prune_build_cache() {
+  local output rc summary
+
+  is_true "$PRUNE_BUILD_CACHE" || return 0
+  log "pruning unused Docker build cache (max ${BUILD_CACHE_MAX_USED_SPACE}, min free ${BUILD_CACHE_MIN_FREE_SPACE})"
+  set +e
+  output=$(docker buildx prune --all --force \
+    --max-used-space "$BUILD_CACHE_MAX_USED_SPACE" \
+    --min-free-space "$BUILD_CACHE_MIN_FREE_SPACE" 2>&1)
+  rc=$?
+  set -e
+  if (( rc != 0 )); then
+    log "WARNING: Docker build cache prune failed (exit $rc)"
+    [[ -z "$output" ]] || printf '%s\n' "$output" >&2
+    return 0
+  fi
+
+  summary=${output##*$'\n'}
+  log "Docker build cache prune completed: ${summary:-no cache removed}"
+}
+
 run_docker_build() {
   local label=$1
   local logfile=$2
@@ -247,6 +271,7 @@ run_docker_build() {
   if (( rc != 0 )); then
     log "$label build failed (exit $rc); last 160 lines follow"
     tail -160 "$logfile" >&2 || true
+    prune_build_cache
     return "$rc"
   fi
 }
@@ -361,6 +386,19 @@ prune_old_images() {
   done < <(docker image ls "$repository" --format '{{.Repository}}:{{.Tag}}')
 }
 
+run_backup() {
+  local purpose=$1 rc
+
+  [[ -x "$BACKUP_COMMAND" ]] || die "backup command is not executable: $BACKUP_COMMAND"
+  log "creating $purpose backup"
+  if "$BACKUP_COMMAND"; then
+    return 0
+  else
+    rc=$?
+    die "$purpose backup failed (exit $rc)"
+  fi
+}
+
 deploy_approved_commit() {
   local deployed_commit deployed_image deployed_worker_image
   local previous_app previous_worker previous_commit
@@ -380,6 +418,7 @@ deploy_approved_commit() {
 
   prepare_release_worktree
   build_images
+  prune_build_cache
 
   previous_app=$(container_image "$APP_CONTAINER")
   previous_worker=$(container_image "$WORKER_CONTAINER")
@@ -390,9 +429,7 @@ deploy_approved_commit() {
   fi
 
   if is_true "$BACKUP_BEFORE_DEPLOY"; then
-    [[ -x "$BACKUP_COMMAND" ]] || die "backup command is not executable: $BACKUP_COMMAND"
-    log "creating pre-deployment backup"
-    "$BACKUP_COMMAND"
+    run_backup "pre-deployment"
   fi
 
   log "deploying application $APP_CANDIDATE"
@@ -439,9 +476,8 @@ manual_rollback() {
   current_worker=$(container_image "$WORKER_CONTAINER")
 
   [[ -n "$rollback_app" ]] || die "no previous application image recorded"
-  if is_true "$BACKUP_BEFORE_DEPLOY" && [[ -x "$BACKUP_COMMAND" ]]; then
-    log "creating pre-rollback backup"
-    "$BACKUP_COMMAND"
+  if is_true "$BACKUP_BEFORE_DEPLOY"; then
+    run_backup "pre-rollback"
   fi
 
   compose_up_service "$APP_SERVICE" "$rollback_app" "$rollback_worker"
@@ -518,6 +554,7 @@ fi
 if [[ "$MODE" == --build-only ]]; then
   prepare_release_worktree
   build_images
+  prune_build_cache
   log "CI-approved images are ready: $APP_CANDIDATE and $WORKER_CANDIDATE"
   exit 0
 fi

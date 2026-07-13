@@ -26,12 +26,13 @@ cd "$APP_DIR"
 docker exec sub2api-postgres sh -c \
   'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' >"$TEMP_DUMP"
 
-# Runtime logs are continuously appended and are not restoration inputs. Excluding
-# them keeps the archive consistent and prevents tar's "file changed" exit status.
+# Runtime logs and the product catalog cache are continuously updated and are not
+# restoration inputs. Excluding them keeps the archive consistent.
 tar \
   --ignore-failed-read \
   --warning=no-file-changed \
   --exclude='data/logs' \
+  --exclude='data/public-account-import-products.json' \
   -czf "$TEMP_FILES" \
   .env docker-compose.yml data
 

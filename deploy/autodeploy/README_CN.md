@@ -10,6 +10,7 @@
 6. 部署前执行数据库和配置备份。
 7. 仅重建应用和 Worker，不重启 PostgreSQL/Redis。
 8. 健康检查失败时自动恢复上一组镜像。
+9. 构建后限制 BuildKit 缓存体积，并为根文件系统保留安全余量。
 
 ## 安装
 
@@ -66,8 +67,12 @@ journalctl -u sub2api-autodeploy.service -f
 REPO_DIR=/opt/sub2api-custom-src
 BUILD_DIR=/opt/sub2api-release
 DEPLOY_DIR=/opt/sub2api
+PRUNE_BUILD_CACHE=true
+BUILD_CACHE_MAX_USED_SPACE=6gb
+BUILD_CACHE_MIN_FREE_SPACE=8gb
 ```
 
 部署状态保存在 `/var/lib/sub2api-autodeploy/state.env`，详细构建日志保存在
 `/var/log/sub2api-autodeploy/`。生产 `.env` 只记录当前不可变镜像标签，不会进入 Git。
 备份保存在 `/opt/backups/sub2api/`；持续写入的运行日志不会进入恢复归档。
+商品目录缓存同样不会进入恢复归档，恢复后由同步 Worker 自动重建。
