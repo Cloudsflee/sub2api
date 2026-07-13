@@ -91,7 +91,7 @@ wait_for_app() {
     if [[ "$status" == running && "$health" == healthy ]] && curl -fsS --max-time 8 "$HEALTH_URL" >/dev/null 2>&1; then
       return 0
     fi
-    if [[ "$status" == exited || "$status" == dead ]]; then
+    if [[ "$status" == exited || "$status" == dead || "$status" == restarting ]]; then
       log "application container entered state: $status"
       return 1
     fi
@@ -308,6 +308,23 @@ compose_up_service() {
   )
 }
 
+capture_container_diagnostics() {
+  local container=$1
+  local label=$2
+  local stamp destination
+  stamp=$(date +%Y%m%d-%H%M%S)
+  destination="$LOG_DIR/${label}-failure-$stamp.log"
+  {
+    echo "=== docker inspect ==="
+    docker inspect "$container" 2>&1 || true
+    echo "=== docker logs ==="
+    docker logs --tail 300 "$container" 2>&1 || true
+  } >"$destination"
+  chmod 640 "$destination"
+  log "captured failed container diagnostics: $destination"
+  tail -80 "$destination" >&2 || true
+}
+
 rollback_after_failure() {
   local previous_app=$1
   local previous_worker=$2
@@ -381,6 +398,7 @@ deploy_approved_commit() {
   log "deploying application $APP_CANDIDATE"
   if ! compose_up_service "$APP_SERVICE" "$APP_CANDIDATE" "$WORKER_CANDIDATE" || ! wait_for_app; then
     log "candidate application failed health verification"
+    capture_container_diagnostics "$APP_CONTAINER" application
     rollback_after_failure "$previous_app" "$previous_worker" || true
     die "deployment failed and application rollback was attempted"
   fi
@@ -389,6 +407,7 @@ deploy_approved_commit() {
     log "deploying worker $WORKER_CANDIDATE"
     if ! compose_up_service "$WORKER_SERVICE" "$APP_CANDIDATE" "$WORKER_CANDIDATE" || ! wait_for_worker; then
       log "candidate worker failed stability verification"
+      capture_container_diagnostics "$WORKER_CONTAINER" worker
       rollback_after_failure "$previous_app" "$previous_worker" || true
       die "deployment failed and rollback was attempted"
     fi
