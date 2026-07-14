@@ -110,7 +110,8 @@ TARGET=$(tr -d '\r\n' <"$PROCESSING_FILE")
 [[ "$TARGET" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
   || fail "invalid stable release tag: $TARGET"
 write_status processing "repository sync worker accepted $TARGET"
-[[ -d "$SYNC_REPO_DIR/.git" ]] || fail "sync repository not found: $SYNC_REPO_DIR"
+git -C "$SYNC_REPO_DIR" rev-parse --show-toplevel >/dev/null 2>&1 \
+  || fail "sync repository not found: $SYNC_REPO_DIR"
 [[ "$(git -C "$SYNC_REPO_DIR" branch --show-current)" == "$SOURCE_BRANCH" ]] \
   || fail "sync repository must be on $SOURCE_BRANCH"
 [[ -z "$(git -C "$SYNC_REPO_DIR" status --porcelain)" ]] \

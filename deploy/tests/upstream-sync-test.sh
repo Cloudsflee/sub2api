@@ -39,11 +39,9 @@ git -C "$SEED" commit -am release-154 >/dev/null
 git -C "$SEED" tag -a v0.1.154 -m v0.1.154
 git -C "$SEED" push upstream main refs/tags/v0.1.154 >/dev/null
 
-git clone "$ORIGIN" "$WORK" >/dev/null
-git -C "$WORK" switch custom >/dev/null
-git -C "$WORK" config user.name test
-git -C "$WORK" config user.email test@example.com
-git -C "$WORK" remote add upstream "$UPSTREAM"
+# Production uses a linked worktree, whose .git entry is a file rather than a
+# directory. Run the full sync suite against that layout.
+git -C "$SEED" worktree add "$WORK" custom >/dev/null
 mkdir -p "$DATA"
 
 run_sync() {

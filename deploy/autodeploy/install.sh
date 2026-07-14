@@ -19,7 +19,7 @@ fi
 
 [[ $EUID -eq 0 ]] || { echo "run this installer as root" >&2; exit 1; }
 [[ -f "$COMPOSE_FILE" ]] || { echo "Compose file not found: $COMPOSE_FILE" >&2; exit 1; }
-[[ -d "$SYNC_REPO_DIR/.git" ]] || {
+git -C "$SYNC_REPO_DIR" rev-parse --show-toplevel >/dev/null 2>&1 || {
   echo "Managed update repository not found: $SYNC_REPO_DIR" >&2
   echo "Clone Cloudsflee/sub2api there and check out custom before installing." >&2
   exit 1
