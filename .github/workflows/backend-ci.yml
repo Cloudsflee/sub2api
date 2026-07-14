@@ -30,6 +30,7 @@ jobs:
       - name: Test managed upstream sync
         run: |
           /bin/bash -n deploy/autodeploy/sub2api-upstream-sync.sh
+          /bin/bash deploy/tests/autodeploy-version-test.sh
           /bin/bash deploy/tests/upstream-sync-test.sh
 
   test:

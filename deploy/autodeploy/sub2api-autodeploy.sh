@@ -276,20 +276,33 @@ run_docker_build() {
   fi
 }
 
-resolve_official_version() {
-  local tag version
+resolve_reachable_tag_version() {
+  local prefix=$1
+  local pattern=$2
+  local ref version
 
-  tag=$(git -C "$BUILD_DIR" describe --tags --abbrev=0 \
-    --match 'upstream/v[0-9]*.[0-9]*.[0-9]*' "$TARGET_COMMIT" 2>/dev/null || true)
-  version=${tag#upstream/v}
+  while IFS= read -r ref; do
+    version=${ref#"$prefix"}
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+    if git -C "$BUILD_DIR" merge-base --is-ancestor "$ref^{commit}" "$TARGET_COMMIT"; then
+      printf '%s\n' "$version"
+      return 0
+    fi
+  done < <(git -C "$BUILD_DIR" for-each-ref \
+    --sort=-version:refname --format='%(refname:short)' "$pattern")
+  return 1
+}
+
+resolve_official_version() {
+  local version
+
+  version=$(resolve_reachable_tag_version 'upstream/v' 'refs/tags/upstream/v*' || true)
   if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     printf '%s\n' "$version"
     return
   fi
 
-  tag=$(git -C "$BUILD_DIR" describe --tags --abbrev=0 \
-    --match 'v[0-9]*.[0-9]*.[0-9]*' "$TARGET_COMMIT" 2>/dev/null || true)
-  version=${tag#v}
+  version=$(resolve_reachable_tag_version 'v' 'refs/tags/v*' || true)
   if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     version=$(tr -d '\r\n' <"$BUILD_DIR/backend/cmd/server/VERSION" 2>/dev/null || true)
   fi
@@ -516,6 +529,11 @@ manual_rollback() {
     "$current_commit" "$current_app" "$current_worker"
   log "rollback succeeded: ${rollback_commit:-unknown commit}"
 }
+
+if [[ ${SUB2API_AUTODEPLOY_LIBRARY_MODE:-false} == true ]]; then
+  [[ "${BASH_SOURCE[0]}" != "$0" ]] || die "library mode requires sourcing this script"
+  return 0
+fi
 
 case "$MODE" in
   --deploy|--force|--check|--build-only|--status|--rollback) ;;

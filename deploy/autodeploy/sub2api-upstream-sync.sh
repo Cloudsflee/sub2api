@@ -132,7 +132,7 @@ git -C "$SYNC_REPO_DIR" merge-base --is-ancestor "$origin_main" "$tag_commit" \
 
 log "updating fork tracking tag and $MAIN_BRANCH before custom integration"
 git -C "$SYNC_REPO_DIR" push "$ORIGIN_REMOTE" \
-  "refs/tags/$TARGET:refs/tags/${FORK_TAG_PREFIX}${TARGET}"
+  "$tag_commit:refs/tags/${FORK_TAG_PREFIX}${TARGET}"
 git -C "$SYNC_REPO_DIR" push "$ORIGIN_REMOTE" "$tag_commit:refs/heads/$MAIN_BRANCH"
 
 if git -C "$SYNC_REPO_DIR" merge-base --is-ancestor "$tag_commit" HEAD; then

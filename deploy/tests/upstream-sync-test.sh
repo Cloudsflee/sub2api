@@ -21,7 +21,7 @@ git -C "$SEED" config user.email test@example.com
 printf 'base\n' >"$SEED/app.txt"
 git -C "$SEED" add app.txt
 git -C "$SEED" commit -m base >/dev/null
-git -C "$SEED" tag v0.1.153
+git -C "$SEED" tag -a v0.1.153 -m v0.1.153
 git -C "$SEED" remote add upstream "$UPSTREAM"
 git -C "$SEED" remote add origin "$ORIGIN"
 git -C "$SEED" push upstream main refs/tags/v0.1.153 >/dev/null
@@ -36,7 +36,7 @@ git -C "$SEED" push origin custom >/dev/null
 git -C "$SEED" switch main >/dev/null
 printf 'release-154\n' >"$SEED/app.txt"
 git -C "$SEED" commit -am release-154 >/dev/null
-git -C "$SEED" tag v0.1.154
+git -C "$SEED" tag -a v0.1.154 -m v0.1.154
 git -C "$SEED" push upstream main refs/tags/v0.1.154 >/dev/null
 
 git clone "$ORIGIN" "$WORK" >/dev/null
@@ -62,8 +62,10 @@ tag_commit=$(git --git-dir="$UPSTREAM" rev-parse 'refs/tags/v0.1.154^{commit}')
 origin_main=$(git --git-dir="$ORIGIN" rev-parse refs/heads/main)
 origin_custom=$(git --git-dir="$ORIGIN" rev-parse refs/heads/custom)
 origin_tracking_tag=$(git --git-dir="$ORIGIN" rev-parse 'refs/tags/upstream/v0.1.154^{commit}')
+origin_tracking_type=$(git --git-dir="$ORIGIN" cat-file -t refs/tags/upstream/v0.1.154)
 [[ "$origin_main" == "$tag_commit" ]]
 [[ "$origin_tracking_tag" == "$tag_commit" ]]
+[[ "$origin_tracking_type" == commit ]]
 if git --git-dir="$ORIGIN" show-ref --verify --quiet refs/tags/v0.1.154; then
   echo 'official v0.1.154 tag unexpectedly pushed to fork' >&2
   exit 1
@@ -84,7 +86,7 @@ grep -Fx 'status=current' "$DATA/upstream-sync-status" >/dev/null
 git -C "$SEED" switch main >/dev/null
 printf 'release-155\n' >"$SEED/app.txt"
 git -C "$SEED" commit -am release-155 >/dev/null
-git -C "$SEED" tag v0.1.155
+git -C "$SEED" tag -a v0.1.155 -m v0.1.155
 git -C "$SEED" push upstream main refs/tags/v0.1.155 >/dev/null
 
 REJECT_MARKER=$TEST_ROOT/reject-custom-once
@@ -118,7 +120,9 @@ run_sync
 origin_custom=$(git --git-dir="$ORIGIN" rev-parse refs/heads/custom)
 tag_commit=$(git --git-dir="$UPSTREAM" rev-parse 'refs/tags/v0.1.155^{commit}')
 origin_tracking_tag=$(git --git-dir="$ORIGIN" rev-parse 'refs/tags/upstream/v0.1.155^{commit}')
+origin_tracking_type=$(git --git-dir="$ORIGIN" cat-file -t refs/tags/upstream/v0.1.155)
 [[ "$origin_tracking_tag" == "$tag_commit" ]]
+[[ "$origin_tracking_type" == commit ]]
 if git --git-dir="$ORIGIN" show-ref --verify --quiet refs/tags/v0.1.155; then
   echo 'official v0.1.155 tag unexpectedly pushed to fork' >&2
   exit 1
