@@ -24,6 +24,8 @@ const (
 	publicAccountImportProductStoreVersion = 1
 	publicAccountImportProductSyncInterval = 10 * time.Second
 	publicAccountImportProductRefreshAge   = 5 * time.Minute
+	publicAccountImportProductRetryAge     = 1 * time.Minute
+	publicAccountImportProductMaxCacheAge  = 15 * time.Minute
 	publicAccountImportProductMaxBody      = 8 << 20
 )
 
@@ -116,9 +118,10 @@ func (h *AccountHandler) ListPublicAccountImportProducts(c *gin.Context) {
 
 	products := make([]PublicAccountImportProduct, 0)
 	pending := 0
+	now := time.Now().UTC()
 	for _, shop := range shops {
 		cached, ok := store.Shops[shop.ID]
-		if !ok || cached.UpdatedAt == "" {
+		if !ok || !publicAccountImportProductCacheIsFresh(cached, now, publicAccountImportProductMaxCacheAge) {
 			pending++
 			continue
 		}
@@ -165,19 +168,7 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 		response.Success(c, PublicAccountImportProductSyncJobResponse{})
 		return
 	}
-	var selected *PublicAccountImportShop
-	var selectedAttempt time.Time
-	for i := range shops {
-		attempt, _ := time.Parse(time.RFC3339, publicProductCache.Shops[shops[i].ID].LastAttempt)
-		if !attempt.IsZero() && now.Sub(attempt) < publicAccountImportProductRefreshAge {
-			continue
-		}
-		if selected == nil || attempt.Before(selectedAttempt) {
-			shop := shops[i]
-			selected = &shop
-			selectedAttempt = attempt
-		}
-	}
+	selected := selectPublicAccountImportProductSyncShop(shops, publicProductCache, now)
 	if selected == nil {
 		response.Success(c, PublicAccountImportProductSyncJobResponse{})
 		return
@@ -324,6 +315,43 @@ func snapshotPublicAccountImportProductStore() (publicAccountImportProductStore,
 	var clone publicAccountImportProductStore
 	err = json.Unmarshal(data, &clone)
 	return clone, err
+}
+
+func publicAccountImportProductCacheIsFresh(cached publicAccountImportProductShopCache, now time.Time, maxAge time.Duration) bool {
+	updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt)
+	if updatedAt.IsZero() || updatedAt.After(now.Add(time.Minute)) {
+		return false
+	}
+	return now.Sub(updatedAt) <= maxAge
+}
+
+func selectPublicAccountImportProductSyncShop(shops []PublicAccountImportShop, store publicAccountImportProductStore, now time.Time) *PublicAccountImportShop {
+	var selected *PublicAccountImportShop
+	var selectedAttempt time.Time
+	for i := range shops {
+		cached := store.Shops[shops[i].ID]
+		if publicAccountImportProductCacheIsFresh(cached, now, publicAccountImportProductRefreshAge) {
+			continue
+		}
+		attempt := parsePublicAccountImportProductTimestamp(cached.LastAttempt)
+		if attempt.After(now.Add(time.Minute)) {
+			attempt = time.Time{}
+		}
+		if !attempt.IsZero() && now.Sub(attempt) < publicAccountImportProductRetryAge {
+			continue
+		}
+		if selected == nil || attempt.Before(selectedAttempt) {
+			shop := shops[i]
+			selected = &shop
+			selectedAttempt = attempt
+		}
+	}
+	return selected
+}
+
+func parsePublicAccountImportProductTimestamp(value string) time.Time {
+	parsed, _ := time.Parse(time.RFC3339, strings.TrimSpace(value))
+	return parsed
 }
 
 func loadPublicProductCacheLocked() error {

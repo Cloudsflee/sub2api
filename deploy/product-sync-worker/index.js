@@ -3,8 +3,10 @@ const fs = require('node:fs')
 
 const backendURL = process.env.BACKEND_URL || 'http://sub2api:8080'
 const pollMilliseconds = Number(process.env.POLL_MILLISECONDS || 10000)
+const verificationCooldownMilliseconds = Number(process.env.VERIFICATION_COOLDOWN_MILLISECONDS || 900000)
 const chromePath = process.env.CHROME_PATH || '/usr/bin/chromium-browser'
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+const isVerificationError = (error) => String(error?.message || error).includes('verification required')
 
 async function backend(path, options = {}) {
   const response = await fetch(`${backendURL}${path}`, {
@@ -23,7 +25,11 @@ async function collectProducts(page, token) {
       const response = await fetch(path, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Visitorid: `sub2api${shopToken.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}`,
+        },
         body: JSON.stringify(body),
       })
       const contentType = response.headers.get('content-type') || ''
@@ -98,6 +104,7 @@ async function syncJob(page, job) {
       return
     } catch (error) {
       lastError = error
+      if (isVerificationError(error)) throw error
       await sleep(attempt * 5000)
     }
   }
@@ -134,13 +141,18 @@ async function runBrowser() {
   })
 
   while (browser.connected) {
+    let nextPoll = pollMilliseconds
     try {
       const data = await backend('/api/v1/public/account-import/products/sync-job')
       if (data.job) await syncJob(page, data.job)
     } catch (error) {
       console.error(`${new Date().toISOString()} sync failed: ${error.message}`)
+      if (isVerificationError(error)) {
+        nextPoll = verificationCooldownMilliseconds
+        console.log(`${new Date().toISOString()} pausing product sync after shop verification challenge`)
+      }
     }
-    await sleep(pollMilliseconds)
+    await sleep(nextPoll)
   }
 }
 
