@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useAppStore } from '@/stores/app'
 import { getPublicSettings } from '@/api/auth'
+import { checkUpdates } from '@/api/admin/system'
 import type { PublicSettings } from '@/types'
 
 function createDeferred<T>() {
@@ -75,6 +76,7 @@ describe('useAppStore', () => {
     vi.useFakeTimers()
     localStorage.clear()
     vi.mocked(getPublicSettings).mockReset()
+    vi.mocked(checkUpdates).mockReset()
     // 清除 window.__APP_CONFIG__
     delete (window as any).__APP_CONFIG__
   })
@@ -315,6 +317,45 @@ describe('useAppStore', () => {
       expect(store.sidebarCollapsed).toBe(false)
       expect(store.loading).toBe(false)
       expect(store.toasts).toHaveLength(0)
+    })
+  })
+
+  // --- Version status ---
+
+  describe('version status loading', () => {
+    it('refreshes managed status without forcing a GitHub release request', async () => {
+      vi.mocked(checkUpdates)
+        .mockResolvedValueOnce({
+          current_version: '0.1.153-custom.a886bae16bd1',
+          latest_version: '0.1.155',
+          has_update: true,
+          cached: true,
+          build_type: 'managed',
+        })
+        .mockResolvedValueOnce({
+          current_version: '0.1.153-custom.a886bae16bd1',
+          latest_version: '0.1.155',
+          has_update: true,
+          cached: true,
+          build_type: 'managed',
+          managed_update: {
+            status: 'processing',
+            target_version: '0.1.155',
+          },
+        })
+      const store = useAppStore()
+
+      await store.fetchVersion()
+      await store.fetchVersion()
+      await store.fetchVersion(false, true)
+
+      const cached = await store.fetchVersion()
+
+      expect(checkUpdates).toHaveBeenCalledTimes(2)
+      expect(checkUpdates).toHaveBeenNthCalledWith(1, false)
+      expect(checkUpdates).toHaveBeenNthCalledWith(2, false)
+      expect(store.managedUpdateStatus?.status).toBe('processing')
+      expect(cached?.managed_update?.status).toBe('processing')
     })
   })
 

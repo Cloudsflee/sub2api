@@ -92,7 +92,9 @@ func TestManagedBuildQueuesRepositorySyncWithoutDownloadingBinary(t *testing.T) 
 		"0.1.153-custom.4cf0672931f6",
 		"release",
 	)
-	svc.managedUpdateRequestFile = t.TempDir() + "/upstream-sync-request"
+	dir := t.TempDir()
+	svc.managedUpdateRequestFile = dir + "/upstream-sync-request"
+	svc.managedUpdateStatusFile = dir + "/upstream-sync-status"
 
 	result, err := svc.PerformUpdate(context.Background())
 
@@ -104,6 +106,74 @@ func TestManagedBuildQueuesRepositorySyncWithoutDownloadingBinary(t *testing.T) 
 	request, err := os.ReadFile(svc.managedUpdateRequestFile)
 	require.NoError(t, err)
 	require.Equal(t, "v0.1.154\n", string(request))
+	status, err := svc.readManagedUpdateStatus()
+	require.NoError(t, err)
+	require.Equal(t, &ManagedUpdateStatus{
+		Status:        managedUpdateStatusQueued,
+		TargetVersion: "0.1.154",
+		Message:       "waiting for the repository sync worker",
+		UpdatedAt:     status.UpdatedAt,
+	}, status)
+	require.NotEmpty(t, status.UpdatedAt)
+}
+
+func TestManagedBuildReturnsPersistedRepositorySyncFailure(t *testing.T) {
+	dir := t.TempDir()
+	statusFile := dir + "/upstream-sync-status"
+	require.NoError(t, os.WriteFile(statusFile, []byte(
+		"status=failed\n"+
+			"target=v0.1.155\n"+
+			"commit=abc123\n"+
+			"message=sync repository not found\n"+
+			"updated_at=2026-07-14T08:54:37Z\n",
+	), 0o644))
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v0.1.155"}},
+		"0.1.153-custom.a886bae16bd1",
+		"release",
+	)
+	svc.managedUpdateStatusFile = statusFile
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.True(t, info.HasUpdate)
+	require.Equal(t, &ManagedUpdateStatus{
+		Status:        managedUpdateStatusFailed,
+		TargetVersion: "0.1.155",
+		Commit:        "abc123",
+		Message:       "sync repository not found",
+		UpdatedAt:     "2026-07-14T08:54:37Z",
+	}, info.ManagedUpdate)
+}
+
+func TestManagedBuildDoesNotQueueDuplicateActiveRepositorySync(t *testing.T) {
+	dir := t.TempDir()
+	statusFile := dir + "/upstream-sync-status"
+	require.NoError(t, os.WriteFile(statusFile, []byte(
+		"status=processing\n"+
+			"target=v0.1.155\n"+
+			"commit=\n"+
+			"message=fetching repositories\n"+
+			"updated_at=2026-07-14T09:00:00Z\n",
+	), 0o644))
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v0.1.155"}},
+		"0.1.153-custom.a886bae16bd1",
+		"release",
+	)
+	svc.managedUpdateStatusFile = statusFile
+	svc.managedUpdateRequestFile = dir + "/upstream-sync-request"
+
+	result, err := svc.PerformUpdate(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, result.Queued)
+	require.Equal(t, "0.1.155", result.TargetVersion)
+	_, err = os.Stat(svc.managedUpdateRequestFile)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestManagedBuildRejectsInPlaceRollback(t *testing.T) {

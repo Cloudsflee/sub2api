@@ -27,6 +27,9 @@ sudo systemctl start sub2api-autodeploy.service
 sudo journalctl -u sub2api-autodeploy.service -n 200 --no-pager
 ```
 
+安装器会先确认 `/opt/sub2api-integration` 是位于 `custom` 分支的 Git 仓库；
+条件不满足时不会启用更新定时器，避免管理页接受更新后才发现宿主机没有集成仓库。
+
 ## 常用命令
 
 ```bash
@@ -92,7 +95,8 @@ UPSTREAM_SYNC_LOCK_FILE=/run/lock/sub2api-upstream-sync.lock
 `0.1.153-custom.4cf0672931f6`。版本检查只比较前三段官方版本号，因此相同
 官方基线不会误报更新，新的官方稳定版本仍会正常提示。
 
-托管构建不会在容器内下载或替换官方二进制。管理员点击“立即更新”后：
+托管构建不会在容器内下载或替换官方二进制。管理页按钮显示为“同步到我的仓库”，
+并持久展示 `queued`、`processing`、`pushed` 或 `failed` 宿主机状态。管理员点击后：
 
 1. 后端原子写入只包含 `vX.Y.Z` 的更新请求。
 2. `sub2api-upstream-sync.timer` 在宿主机读取请求并持有独立的仓库同步锁。

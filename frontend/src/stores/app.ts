@@ -10,7 +10,8 @@ import { i18n } from '@/i18n'
 import {
   checkUpdates as checkUpdatesAPI,
   type VersionInfo,
-  type ReleaseInfo
+  type ReleaseInfo,
+  type ManagedUpdateStatus
 } from '@/api/admin/system'
 import { getPublicSettings as fetchPublicSettingsAPI } from '@/api/auth'
 
@@ -43,6 +44,7 @@ export const useAppStore = defineStore('app', () => {
   const hasUpdate = ref<boolean>(false)
   const buildType = ref<string>('source')
   const releaseInfo = ref<ReleaseInfo | null>(null)
+  const managedUpdateStatus = ref<ManagedUpdateStatus | null>(null)
 
   // Auto-incrementing ID for toasts
   let toastIdCounter = 0
@@ -238,17 +240,19 @@ export const useAppStore = defineStore('app', () => {
 
   /**
    * Fetch version info (uses cache unless force=true)
-   * @param force - Force refresh from API
+   * @param force - Force refresh from GitHub through the API
+   * @param refreshStatus - Bypass the browser cache while keeping the backend release cache
    */
-  async function fetchVersion(force = false): Promise<VersionInfo | null> {
+  async function fetchVersion(force = false, refreshStatus = false): Promise<VersionInfo | null> {
     // Return cached data if available and not forcing refresh
-    if (versionLoaded.value && !force) {
+    if (versionLoaded.value && !force && !refreshStatus) {
       return {
         current_version: currentVersion.value,
         latest_version: latestVersion.value,
         has_update: hasUpdate.value,
         build_type: buildType.value,
         release_info: releaseInfo.value || undefined,
+        managed_update: managedUpdateStatus.value || undefined,
         cached: true
       }
     }
@@ -266,6 +270,7 @@ export const useAppStore = defineStore('app', () => {
       hasUpdate.value = data.has_update
       buildType.value = data.build_type || 'source'
       releaseInfo.value = data.release_info || null
+      managedUpdateStatus.value = data.managed_update || null
       versionLoaded.value = true
       return data
     } catch (error) {
@@ -282,6 +287,7 @@ export const useAppStore = defineStore('app', () => {
   function clearVersionCache(): void {
     versionLoaded.value = false
     hasUpdate.value = false
+    managedUpdateStatus.value = null
   }
 
   // ==================== Public Settings Management ====================
@@ -451,6 +457,7 @@ export const useAppStore = defineStore('app', () => {
     hasUpdate,
     buildType,
     releaseInfo,
+    managedUpdateStatus,
 
     // Computed
     hasActiveToasts,

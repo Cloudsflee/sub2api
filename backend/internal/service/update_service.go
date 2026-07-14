@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -47,6 +48,16 @@ const (
 
 	managedBuildType                = "managed"
 	defaultManagedUpdateRequestFile = "/app/data/upstream-sync-request"
+	defaultManagedUpdateStatusFile  = "/app/data/upstream-sync-status"
+	managedUpdateStatusMaxSize      = 16 << 10
+)
+
+const (
+	managedUpdateStatusQueued     = "queued"
+	managedUpdateStatusProcessing = "processing"
+	managedUpdateStatusPushed     = "pushed"
+	managedUpdateStatusCurrent    = "current"
+	managedUpdateStatusFailed     = "failed"
 )
 
 // UpdateCache defines cache operations for update service
@@ -70,6 +81,7 @@ type UpdateService struct {
 	currentVersion           string
 	buildType                string // "source" for manual builds, "release" for CI builds
 	managedUpdateRequestFile string
+	managedUpdateStatusFile  string
 }
 
 // NewUpdateService creates a new UpdateService
@@ -78,24 +90,39 @@ func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, versi
 	if requestFile == "" {
 		requestFile = defaultManagedUpdateRequestFile
 	}
+	statusFile := strings.TrimSpace(os.Getenv("SUB2API_UPSTREAM_SYNC_STATUS_FILE"))
+	if statusFile == "" {
+		statusFile = defaultManagedUpdateStatusFile
+	}
 	return &UpdateService{
 		cache:                    cache,
 		githubClient:             githubClient,
 		currentVersion:           version,
 		buildType:                buildType,
 		managedUpdateRequestFile: requestFile,
+		managedUpdateStatusFile:  statusFile,
 	}
 }
 
 // UpdateInfo contains update information
 type UpdateInfo struct {
-	CurrentVersion string       `json:"current_version"`
-	LatestVersion  string       `json:"latest_version"`
-	HasUpdate      bool         `json:"has_update"`
-	ReleaseInfo    *ReleaseInfo `json:"release_info,omitempty"`
-	Cached         bool         `json:"cached"`
-	Warning        string       `json:"warning,omitempty"`
-	BuildType      string       `json:"build_type"` // "source", "release", or "managed"
+	CurrentVersion string               `json:"current_version"`
+	LatestVersion  string               `json:"latest_version"`
+	HasUpdate      bool                 `json:"has_update"`
+	ReleaseInfo    *ReleaseInfo         `json:"release_info,omitempty"`
+	Cached         bool                 `json:"cached"`
+	Warning        string               `json:"warning,omitempty"`
+	BuildType      string               `json:"build_type"` // "source", "release", or "managed"
+	ManagedUpdate  *ManagedUpdateStatus `json:"managed_update,omitempty"`
+}
+
+// ManagedUpdateStatus is the host-side repository sync state for managed builds.
+type ManagedUpdateStatus struct {
+	Status        string `json:"status"`
+	TargetVersion string `json:"target_version"`
+	Commit        string `json:"commit,omitempty"`
+	Message       string `json:"message,omitempty"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
 }
 
 // UpdateActionResult describes how an accepted update will be applied.
@@ -151,7 +178,7 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 	// Try cache first
 	if !force {
 		if cached, err := s.getFromCache(ctx); err == nil && cached != nil {
-			return cached, nil
+			return s.withManagedUpdateStatus(cached), nil
 		}
 	}
 
@@ -161,20 +188,20 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 		// Return cached on error
 		if cached, cacheErr := s.getFromCache(ctx); cacheErr == nil && cached != nil {
 			cached.Warning = "Using cached data: " + err.Error()
-			return cached, nil
+			return s.withManagedUpdateStatus(cached), nil
 		}
-		return &UpdateInfo{
+		return s.withManagedUpdateStatus(&UpdateInfo{
 			CurrentVersion: s.currentVersion,
 			LatestVersion:  s.currentVersion,
 			HasUpdate:      false,
 			Warning:        err.Error(),
 			BuildType:      s.effectiveBuildType(),
-		}, nil
+		}), nil
 	}
 
 	// Cache result
 	s.saveToCache(ctx, info)
-	return info, nil
+	return s.withManagedUpdateStatus(info), nil
 }
 
 // PerformUpdate applies official builds in place. Managed custom builds enqueue
@@ -190,6 +217,12 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) (*UpdateActionResult,
 	}
 
 	if s.isManagedBuild() {
+		if managedUpdateIsActive(info.ManagedUpdate, info.LatestVersion) {
+			return &UpdateActionResult{
+				Queued:        true,
+				TargetVersion: info.LatestVersion,
+			}, nil
+		}
 		if err := s.queueManagedUpdate(info.LatestVersion); err != nil {
 			return nil, err
 		}
@@ -222,6 +255,7 @@ func (s *UpdateService) queueManagedUpdate(version string) error {
 		return fmt.Errorf("invalid managed update target: %q", version)
 	}
 
+	target := "v" + version
 	dir := filepath.Dir(s.managedUpdateRequestFile)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("create managed update request directory: %w", err)
@@ -237,7 +271,7 @@ func (s *UpdateService) queueManagedUpdate(version string) error {
 		_ = temp.Close()
 		return fmt.Errorf("secure managed update request: %w", err)
 	}
-	if _, err := temp.WriteString("v" + version + "\n"); err != nil {
+	if _, err := temp.WriteString(target + "\n"); err != nil {
 		_ = temp.Close()
 		return fmt.Errorf("write managed update request: %w", err)
 	}
@@ -248,10 +282,141 @@ func (s *UpdateService) queueManagedUpdate(version string) error {
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("close managed update request: %w", err)
 	}
+	queued := &ManagedUpdateStatus{
+		Status:        managedUpdateStatusQueued,
+		TargetVersion: version,
+		Message:       "waiting for the repository sync worker",
+		UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := s.writeManagedUpdateStatus(queued); err != nil {
+		return fmt.Errorf("publish managed update status: %w", err)
+	}
 	if err := os.Rename(tempPath, s.managedUpdateRequestFile); err != nil {
+		queued.Status = managedUpdateStatusFailed
+		queued.Message = "failed to publish repository sync request"
+		queued.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		_ = s.writeManagedUpdateStatus(queued)
 		return fmt.Errorf("publish managed update request: %w", err)
 	}
 	return nil
+}
+
+func (s *UpdateService) withManagedUpdateStatus(info *UpdateInfo) *UpdateInfo {
+	if info == nil || !s.isManagedBuild() {
+		return info
+	}
+	status, err := s.readManagedUpdateStatus()
+	if err == nil {
+		info.ManagedUpdate = status
+	}
+	return info
+}
+
+func (s *UpdateService) readManagedUpdateStatus() (*ManagedUpdateStatus, error) {
+	file, err := os.Open(s.managedUpdateStatusFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+
+	data, err := io.ReadAll(io.LimitReader(file, managedUpdateStatusMaxSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > managedUpdateStatusMaxSize {
+		return nil, fmt.Errorf("managed update status is too large")
+	}
+
+	values := make(map[string]string)
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(scanner.Text(), "=")
+		if ok {
+			values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	status := strings.TrimSpace(values["status"])
+	target := strings.TrimPrefix(strings.TrimSpace(values["target"]), "v")
+	if !managedUpdateStatusIsValid(status) || !isStableReleaseVersion(target) {
+		return nil, nil
+	}
+	return &ManagedUpdateStatus{
+		Status:        status,
+		TargetVersion: target,
+		Commit:        strings.TrimSpace(values["commit"]),
+		Message:       strings.TrimSpace(values["message"]),
+		UpdatedAt:     strings.TrimSpace(values["updated_at"]),
+	}, nil
+}
+
+func (s *UpdateService) writeManagedUpdateStatus(status *ManagedUpdateStatus) error {
+	if status == nil || !managedUpdateStatusIsValid(status.Status) || !isStableReleaseVersion(status.TargetVersion) {
+		return fmt.Errorf("invalid managed update status")
+	}
+	dir := filepath.Dir(s.managedUpdateStatusFile)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(dir, ".upstream-sync-status-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer func() { _ = os.Remove(tempPath) }()
+	if err := temp.Chmod(0o644); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	message := strings.NewReplacer("\r", " ", "\n", " ").Replace(status.Message)
+	content := fmt.Sprintf(
+		"status=%s\ntarget=v%s\ncommit=%s\nmessage=%s\nupdated_at=%s\n",
+		status.Status,
+		status.TargetVersion,
+		strings.TrimSpace(status.Commit),
+		message,
+		strings.TrimSpace(status.UpdatedAt),
+	)
+	if _, err := temp.WriteString(content); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, s.managedUpdateStatusFile)
+}
+
+func managedUpdateStatusIsValid(status string) bool {
+	switch status {
+	case managedUpdateStatusQueued, managedUpdateStatusProcessing, managedUpdateStatusPushed,
+		managedUpdateStatusCurrent, managedUpdateStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func managedUpdateIsActive(status *ManagedUpdateStatus, targetVersion string) bool {
+	if status == nil || status.TargetVersion != strings.TrimPrefix(targetVersion, "v") {
+		return false
+	}
+	switch status.Status {
+	case managedUpdateStatusQueued, managedUpdateStatusProcessing, managedUpdateStatusPushed, managedUpdateStatusCurrent:
+		return true
+	default:
+		return false
+	}
 }
 
 func isStableReleaseVersion(version string) bool {

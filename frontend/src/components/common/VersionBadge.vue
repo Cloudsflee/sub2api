@@ -10,9 +10,9 @@
             ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50'
             : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-800 dark:text-dark-400 dark:hover:bg-dark-700'
         ]"
-        :title="hasUpdate ? t('version.updateAvailable') : t('version.upToDate')"
+        :title="badgeTitle"
       >
-        <span v-if="currentVersion" class="font-medium">v{{ currentVersion }}</span>
+        <span v-if="currentVersion" class="font-medium">v{{ compactVersion }}</span>
         <span
           v-else
           class="h-3 w-12 animate-pulse rounded bg-gray-200 font-medium dark:bg-dark-600"
@@ -84,7 +84,7 @@
                   <span
                     v-if="currentVersion"
                     class="text-2xl font-bold text-gray-900 dark:text-white"
-                    >v{{ currentVersion }}</span
+                    >v{{ compactVersion }}</span
                   >
                   <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
                   <!-- Show check mark when up to date -->
@@ -105,6 +105,9 @@
                     </svg>
                   </span>
                 </div>
+                <p v-if="buildLabel" class="mt-1 text-xs font-medium text-gray-400 dark:text-dark-500" :title="currentVersion">
+                  {{ buildLabel }}
+                </p>
                 <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
                   {{
                     hasUpdate
@@ -115,7 +118,7 @@
               </div>
 
               <!-- Priority 1: Update error (must check before hasUpdate) -->
-              <div v-if="updateError" class="space-y-2">
+              <div v-if="effectiveUpdateError" class="space-y-2">
                 <div
                   class="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-800/50 dark:bg-red-900/20"
                 >
@@ -133,8 +136,8 @@
                     <p class="text-sm font-medium text-red-700 dark:text-red-300">
                       {{ t('version.updateFailed') }}
                     </p>
-                    <p class="truncate text-xs text-red-600/70 dark:text-red-400/70">
-                      {{ updateError }}
+                    <p class="break-words text-xs leading-4 text-red-600/70 dark:text-red-400/70">
+                      {{ effectiveUpdateError }}
                     </p>
                   </div>
                 </div>
@@ -150,7 +153,7 @@
               </div>
 
               <!-- Priority 2: Managed repository update queued -->
-              <div v-else-if="updateQueued" class="space-y-2">
+              <div v-else-if="effectiveUpdateQueued" class="space-y-2">
                 <div
                   class="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-800/50 dark:bg-green-900/20"
                 >
@@ -161,10 +164,10 @@
                   </div>
                   <div class="min-w-0 flex-1">
                     <p class="text-sm font-medium text-green-700 dark:text-green-300">
-                      {{ t('version.updateQueued') }}
+                      {{ managedUpdateTitle }}
                     </p>
                     <p class="text-xs leading-4 text-green-600/70 dark:text-green-400/70">
-                      {{ t('version.updateQueuedHint', { version: 'v' + queuedTargetVersion }) }}
+                      {{ managedUpdateHint }}
                     </p>
                   </div>
                 </div>
@@ -359,8 +362,8 @@
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  <Icon v-else name="download" size="sm" :stroke-width="2" />
-                  {{ updating ? t('version.updating') : t('version.updateNow') }}
+                  <Icon v-else :name="isManagedBuild ? 'sync' : 'download'" size="sm" :stroke-width="2" />
+                  {{ updating ? t('version.updating') : isManagedBuild ? t('version.syncToFork') : t('version.updateNow') }}
                 </button>
 
                 <!-- View release link -->
@@ -663,8 +666,8 @@
     </template>
 
     <!-- Non-admin: Simple static version text -->
-    <span v-else-if="version" class="text-xs text-gray-500 dark:text-dark-400">
-      v{{ version }}
+    <span v-else-if="version" class="text-xs text-gray-500 dark:text-dark-400" :title="version">
+      v{{ versionDisplay(version).compact }}
     </span>
   </div>
 </template>
@@ -682,6 +685,7 @@ import {
 } from '@/api/admin/system'
 import { useClipboard } from '@/composables/useClipboard'
 import Icon from '@/components/icons/Icon.vue'
+import { versionDisplay } from '@/utils/versionDisplay'
 
 const GITHUB_REPO = 'Wei-Shaw/sub2api'
 // Docker Hub image published by CI (tags carry no "v" prefix, e.g. weishaw/sub2api:0.1.146)
@@ -704,6 +708,9 @@ const dropdownRef = ref<HTMLElement | null>(null)
 // Use store's cached version state
 const loading = computed(() => appStore.versionLoading)
 const currentVersion = computed(() => appStore.currentVersion || props.version || '')
+const currentVersionDisplay = computed(() => versionDisplay(currentVersion.value))
+const compactVersion = computed(() => currentVersionDisplay.value.compact)
+const buildLabel = computed(() => currentVersionDisplay.value.buildLabel)
 const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
@@ -766,6 +773,51 @@ const activeManualCommand = computed(() =>
 const isReleaseBuild = computed(() => buildType.value === 'release')
 const isManagedBuild = computed(() => buildType.value === 'managed')
 const canOnlineUpdate = computed(() => isReleaseBuild.value || isManagedBuild.value)
+const relevantManagedUpdate = computed(() => {
+  const status = appStore.managedUpdateStatus
+  if (!isManagedBuild.value || !hasUpdate.value || !status) return null
+  const target = status.target_version.replace(/^v/, '')
+  if (target !== latestVersion.value.replace(/^v/, '')) return null
+  return status
+})
+const persistedManagedError = computed(() => (
+  relevantManagedUpdate.value?.status === 'failed'
+    ? relevantManagedUpdate.value.message || t('version.updateFailed')
+    : ''
+))
+const effectiveUpdateError = computed(() => updateError.value || persistedManagedError.value)
+const managedUpdateActive = computed(() => {
+  const status = relevantManagedUpdate.value?.status
+  return status === 'queued' || status === 'processing' || status === 'pushed' || status === 'current'
+})
+const effectiveUpdateQueued = computed(() => updateQueued.value || managedUpdateActive.value)
+const effectiveQueuedTargetVersion = computed(() => (
+  relevantManagedUpdate.value?.target_version || queuedTargetVersion.value || latestVersion.value
+).replace(/^v/, ''))
+const managedUpdateTitle = computed(() => {
+  switch (relevantManagedUpdate.value?.status) {
+    case 'processing': return t('version.updateSyncing')
+    case 'pushed': return t('version.updateWaitingForCI')
+    case 'current': return t('version.updateWaitingForDeploy')
+    default: return t('version.updateQueued')
+  }
+})
+const managedUpdateHint = computed(() => {
+  const version = `v${effectiveQueuedTargetVersion.value}`
+  switch (relevantManagedUpdate.value?.status) {
+    case 'processing': return t('version.updateSyncingHint', { version })
+    case 'pushed': return t('version.updateWaitingForCIHint', { version })
+    case 'current': return t('version.updateWaitingForDeployHint', { version })
+    default: return t('version.updateQueuedHint', { version })
+  }
+})
+const badgeTitle = computed(() => {
+  const state = hasUpdate.value ? t('version.updateAvailable') : t('version.upToDate')
+  const fullVersion = currentVersion.value.replace(/^v/, '')
+  return fullVersion ? `v${fullVersion}\n${state}` : state
+})
+
+let managedUpdatePollTimer: number | undefined
 
 function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value
@@ -787,6 +839,7 @@ async function refreshVersion(force = true) {
   resetRollbackState()
 
   await appStore.fetchVersion(force)
+  syncManagedUpdatePolling()
 }
 
 async function handleUpdate() {
@@ -808,6 +861,9 @@ async function handleUpdate() {
     if (!updateQueued.value) {
       // Direct release updates change the running binary after restart.
       appStore.clearVersionCache()
+    } else {
+      await appStore.fetchVersion(false, true)
+      startManagedUpdatePolling()
     }
   } catch (error: unknown) {
     const err = error as { response?: { data?: { message?: string } }; message?: string }
@@ -815,6 +871,35 @@ async function handleUpdate() {
   } finally {
     updating.value = false
   }
+}
+
+function startManagedUpdatePolling() {
+  if (managedUpdatePollTimer !== undefined) return
+  managedUpdatePollTimer = window.setInterval(() => void pollManagedUpdate(), 10_000)
+}
+
+function stopManagedUpdatePolling() {
+  if (managedUpdatePollTimer === undefined) return
+  window.clearInterval(managedUpdatePollTimer)
+  managedUpdatePollTimer = undefined
+}
+
+function syncManagedUpdatePolling() {
+  const localTarget = queuedTargetVersion.value.replace(/^v/, '')
+  if (updateQueued.value && localTarget && (!hasUpdate.value || localTarget === compactVersion.value)) {
+    updateQueued.value = false
+    queuedTargetVersion.value = ''
+  }
+  if (effectiveUpdateQueued.value && !effectiveUpdateError.value) {
+    startManagedUpdatePolling()
+  } else {
+    stopManagedUpdatePolling()
+  }
+}
+
+async function pollManagedUpdate() {
+  await appStore.fetchVersion(false, true)
+  syncManagedUpdatePolling()
 }
 
 function resetRollbackState() {
@@ -956,12 +1041,13 @@ function handleClickOutside(event: MouseEvent) {
 onMounted(() => {
   if (isAdmin.value) {
     // Use cached version if available, otherwise fetch
-    appStore.fetchVersion(false)
+    void appStore.fetchVersion(false).then(() => syncManagedUpdatePolling())
   }
   document.addEventListener('click', handleClickOutside)
 })
 
 onBeforeUnmount(() => {
+  stopManagedUpdatePolling()
   document.removeEventListener('click', handleClickOutside)
 })
 </script>

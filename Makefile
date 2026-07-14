@@ -2,6 +2,9 @@
 
 FRONTEND_CRITICAL_VITEST := \
 	src/utils/__tests__/publicProductCatalog.spec.ts \
+	src/utils/__tests__/versionDisplay.spec.ts \
+	src/components/common/__tests__/VersionBadge.spec.ts \
+	src/stores/__tests__/app.spec.ts \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \
 	src/views/auth/__tests__/WechatCallbackView.spec.ts \
 	src/views/user/__tests__/PaymentView.spec.ts \

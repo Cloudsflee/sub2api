@@ -7,6 +7,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 DEPLOY_NOW=false
 DEPLOY_DIR=${DEPLOY_DIR:-/opt/sub2api}
 COMPOSE_FILE=${COMPOSE_FILE:-$DEPLOY_DIR/docker-compose.yml}
+SYNC_REPO_DIR=${SYNC_REPO_DIR:-/opt/sub2api-integration}
 STAMP=$(date +%Y%m%d-%H%M%S)
 
 if [[ ${1:-} == --deploy-now ]]; then
@@ -18,6 +19,15 @@ fi
 
 [[ $EUID -eq 0 ]] || { echo "run this installer as root" >&2; exit 1; }
 [[ -f "$COMPOSE_FILE" ]] || { echo "Compose file not found: $COMPOSE_FILE" >&2; exit 1; }
+[[ -d "$SYNC_REPO_DIR/.git" ]] || {
+  echo "Managed update repository not found: $SYNC_REPO_DIR" >&2
+  echo "Clone Cloudsflee/sub2api there and check out custom before installing." >&2
+  exit 1
+}
+[[ "$(git -C "$SYNC_REPO_DIR" branch --show-current)" == custom ]] || {
+  echo "Managed update repository must be on custom: $SYNC_REPO_DIR" >&2
+  exit 1
+}
 
 for script in sub2api-autodeploy.sh sub2api-health-restart.sh sub2api-backup.sh sub2api-upstream-sync.sh install.sh; do
   bash -n "$SCRIPT_DIR/$script"

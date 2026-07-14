@@ -11,6 +11,14 @@ export interface ReleaseInfo {
   html_url: string
 }
 
+export interface ManagedUpdateStatus {
+  status: 'queued' | 'processing' | 'pushed' | 'current' | 'failed'
+  target_version: string
+  commit?: string
+  message?: string
+  updated_at?: string
+}
+
 export interface VersionInfo {
   current_version: string
   latest_version: string
@@ -19,6 +27,7 @@ export interface VersionInfo {
   cached: boolean
   warning?: string
   build_type: string // "source", "release", or "managed"
+  managed_update?: ManagedUpdateStatus
 }
 
 /**

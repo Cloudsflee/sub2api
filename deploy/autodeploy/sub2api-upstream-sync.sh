@@ -19,12 +19,14 @@ FORK_TAG_PREFIX=upstream/
 TARGET=
 MERGE_STARTED=false
 ORIGINAL_CUSTOM_COMMIT=
+LAST_ERROR=
 
 log() {
   printf '%s [%s] %s\n' "$(date --iso-8601=seconds)" "$PROGRAM" "$*"
 }
 
 fail() {
+  LAST_ERROR=$*
   log "ERROR: $*" >&2
   return 1
 }
@@ -53,6 +55,7 @@ EOF
 on_error() {
   local rc=$?
   local line=$1
+  local message=${LAST_ERROR:-repository sync command failed}
   trap - ERR HUP INT TERM
   if [[ "$MERGE_STARTED" == true ]]; then
     git -C "$SYNC_REPO_DIR" merge --abort >/dev/null 2>&1 || true
@@ -60,7 +63,7 @@ on_error() {
   if [[ -n "$ORIGINAL_CUSTOM_COMMIT" ]]; then
     git -C "$SYNC_REPO_DIR" reset --hard "$ORIGINAL_CUSTOM_COMMIT" >/dev/null 2>&1 || true
   fi
-  write_status failed "repository sync failed at line $line (exit $rc)" \
+  write_status failed "$message (line $line, exit $rc)" \
     "$(git -C "$SYNC_REPO_DIR" rev-parse HEAD 2>/dev/null || true)" || true
   rm -f "$PROCESSING_FILE"
   log "repository sync failed at line $line (exit $rc)"
@@ -106,6 +109,7 @@ trap 'on_signal TERM' TERM
 TARGET=$(tr -d '\r\n' <"$PROCESSING_FILE")
 [[ "$TARGET" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
   || fail "invalid stable release tag: $TARGET"
+write_status processing "repository sync worker accepted $TARGET"
 [[ -d "$SYNC_REPO_DIR/.git" ]] || fail "sync repository not found: $SYNC_REPO_DIR"
 [[ "$(git -C "$SYNC_REPO_DIR" branch --show-current)" == "$SOURCE_BRANCH" ]] \
   || fail "sync repository must be on $SOURCE_BRANCH"

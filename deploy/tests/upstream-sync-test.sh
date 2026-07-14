@@ -144,4 +144,18 @@ fi
 grep -Fx 'status=failed' "$DATA/upstream-sync-status" >/dev/null
 [[ ! -e "$DATA/upstream-sync-request.processing" ]]
 
+printf 'v0.1.155\n' >"$DATA/upstream-sync-request"
+if SYNC_REPO_DIR=$TEST_ROOT/missing-repository \
+  DEPLOY_DIR=$TEST_ROOT \
+  UPSTREAM_SYNC_REQUEST_FILE=$DATA/upstream-sync-request \
+  UPSTREAM_SYNC_STATUS_FILE=$DATA/upstream-sync-status \
+  UPSTREAM_SYNC_LOCK_FILE=$TEST_ROOT/missing-repository.lock \
+    bash "$SYNC_SCRIPT"; then
+  echo 'missing sync repository unexpectedly succeeded' >&2
+  exit 1
+fi
+grep -Fx 'status=failed' "$DATA/upstream-sync-status" >/dev/null
+grep -F 'message=sync repository not found:' "$DATA/upstream-sync-status" >/dev/null
+[[ ! -e "$DATA/upstream-sync-request.processing" ]]
+
 echo 'upstream sync tests passed'
