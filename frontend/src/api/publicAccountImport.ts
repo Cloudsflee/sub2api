@@ -14,13 +14,14 @@ export interface PublicAccountImportMessage {
 export interface PublicAccountImportItem {
   index: number
   name?: string
-  action: 'created' | 'skipped' | 'failed' | string
+  action: 'created' | 'updated' | 'skipped' | 'failed' | string
   message?: string
 }
 
 export interface PublicAccountImportResult {
   total: number
   created: number
+  updated: number
   skipped: number
   failed: number
   items?: PublicAccountImportItem[]

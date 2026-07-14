@@ -908,6 +908,7 @@ func (s *codexImportMemoryAdminService) CreateAccount(ctx context.Context, input
 		Status:      service.StatusActive,
 		Credentials: cloneCodexImportTestMap(input.Credentials),
 		Extra:       cloneCodexImportTestMap(input.Extra),
+		GroupIDs:    append([]int64(nil), input.GroupIDs...),
 	}
 	s.nextID++
 	s.accounts = append(s.accounts, account)
@@ -924,8 +925,18 @@ func (s *codexImportMemoryAdminService) UpdateAccount(ctx context.Context, id in
 	}
 	for idx := range s.accounts {
 		if s.accounts[idx].ID == id {
-			s.accounts[idx].Credentials = cloneCodexImportTestMap(input.Credentials)
-			s.accounts[idx].Extra = cloneCodexImportTestMap(input.Extra)
+			if input.Name != "" {
+				s.accounts[idx].Name = input.Name
+			}
+			if len(input.Credentials) > 0 {
+				s.accounts[idx].Credentials = cloneCodexImportTestMap(input.Credentials)
+			}
+			if input.Extra != nil {
+				s.accounts[idx].Extra = cloneCodexImportTestMap(input.Extra)
+			}
+			if input.GroupIDs != nil {
+				s.accounts[idx].GroupIDs = append([]int64(nil), (*input.GroupIDs)...)
+			}
 			return &s.accounts[idx], nil
 		}
 	}

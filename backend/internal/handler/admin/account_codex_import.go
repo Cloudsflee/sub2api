@@ -40,6 +40,8 @@ type CodexSessionImportRequest struct {
 	SkipExisting            *bool          `json:"skip_existing,omitempty"`
 	SkipDefaultGroupBind    *bool          `json:"skip_default_group_bind"`
 	ConfirmMixedChannelRisk *bool          `json:"confirm_mixed_channel_risk"`
+	// Internal mode for the unauthenticated importer; never accept it from JSON.
+	mergeExistingGroupsOnly bool
 }
 
 type CodexSessionImportResult struct {
@@ -246,6 +248,78 @@ func (h *AccountHandler) importCodexSessions(ctx context.Context, req CodexSessi
 		markCodexIdentitySeen(seenIdentity, item.IdentityKeys, entry.Index, item.UserID)
 
 		existing, matchedKey := index.Find(item.IdentityKeys, item.UserID)
+		if req.mergeExistingGroupsOnly {
+			exactExisting := index.FindByAccessToken(item.AccessToken)
+			if exactExisting == nil && codexExistingRefreshTokenMatches(existing, item.RefreshToken) {
+				exactExisting = existing
+			}
+			if exactExisting != nil {
+				existing = exactExisting
+				mergedGroupIDs, changed := mergeCodexImportGroupIDs(existing.GroupIDs, req.GroupIDs)
+				if !changed {
+					message := "账号已存在且已绑定所选分组"
+					result.Skipped++
+					result.Items = append(result.Items, CodexSessionImportItem{
+						Index:     entry.Index,
+						Name:      accountName,
+						Action:    "skipped",
+						AccountID: existing.ID,
+						Message:   message,
+					})
+					continue
+				}
+
+				updated, updateErr := h.adminService.UpdateAccount(ctx, existing.ID, &service.UpdateAccountInput{
+					GroupIDs: &mergedGroupIDs,
+				})
+				if updateErr != nil {
+					result.Failed++
+					result.Items = append(result.Items, CodexSessionImportItem{
+						Index:   entry.Index,
+						Name:    accountName,
+						Action:  "failed",
+						Message: updateErr.Error(),
+					})
+					result.Errors = append(result.Errors, CodexSessionImportMessage{
+						Index:   entry.Index,
+						Name:    accountName,
+						Message: updateErr.Error(),
+					})
+					continue
+				}
+
+				accountID := existing.ID
+				if updated != nil {
+					accountID = updated.ID
+					index.Add(*updated)
+				} else {
+					existing.GroupIDs = mergedGroupIDs
+					index.Add(*existing)
+				}
+				result.Updated++
+				result.Items = append(result.Items, CodexSessionImportItem{
+					Index:     entry.Index,
+					Name:      accountName,
+					Action:    "updated",
+					AccountID: accountID,
+					Message:   "账号已存在，已追加绑定所选分组",
+				})
+				continue
+			}
+
+			if existing != nil {
+				message := "账号已存在，但凭据与已有记录不一致，已跳过"
+				result.Skipped++
+				result.Items = append(result.Items, CodexSessionImportItem{
+					Index:     entry.Index,
+					Name:      accountName,
+					Action:    "skipped",
+					AccountID: existing.ID,
+					Message:   message,
+				})
+				continue
+			}
+		}
 		if existing != nil && updateExisting {
 			if strings.HasPrefix(matchedKey, "account:") && item.UserID != "" &&
 				codexCredentialString(existing.Credentials, "chatgpt_user_id") == "" {
@@ -988,6 +1062,61 @@ func (i *codexAccountIndex) Find(keys []string, userID string) (*service.Account
 		}
 	}
 	return nil, ""
+}
+
+func (i *codexAccountIndex) FindByAccessToken(accessToken string) *service.Account {
+	if i == nil {
+		return nil
+	}
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return nil
+	}
+	key := "access:" + codexTokenFingerprint(accessToken)
+	for _, account := range i.accountsByKey[key] {
+		if strings.TrimSpace(codexCredentialString(account.Credentials, "access_token")) == accessToken {
+			return &account
+		}
+	}
+	return nil
+}
+
+func codexExistingRefreshTokenMatches(existing *service.Account, refreshToken string) bool {
+	if existing == nil {
+		return false
+	}
+	refreshToken = strings.TrimSpace(refreshToken)
+	return refreshToken != "" &&
+		strings.TrimSpace(codexCredentialString(existing.Credentials, "refresh_token")) == refreshToken
+}
+
+func mergeCodexImportGroupIDs(existing, requested []int64) ([]int64, bool) {
+	merged := make([]int64, 0, len(existing)+len(requested))
+	seen := make(map[int64]struct{}, len(existing)+len(requested))
+	for _, groupID := range existing {
+		if groupID <= 0 {
+			continue
+		}
+		if _, ok := seen[groupID]; ok {
+			continue
+		}
+		seen[groupID] = struct{}{}
+		merged = append(merged, groupID)
+	}
+
+	changed := false
+	for _, groupID := range requested {
+		if groupID <= 0 {
+			continue
+		}
+		if _, ok := seen[groupID]; ok {
+			continue
+		}
+		seen[groupID] = struct{}{}
+		merged = append(merged, groupID)
+		changed = true
+	}
+	return merged, changed
 }
 
 // codexIdentityConflicts 判断 account: 键的命中是否把同一 ChatGPT 团队的两个

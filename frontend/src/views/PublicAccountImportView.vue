@@ -167,10 +167,14 @@
               <Icon name="checkCircle" size="sm" class="text-emerald-600 dark:text-emerald-400" />
               {{ t('publicAccountImport.resultTitle') }}
             </div>
-            <div class="grid grid-cols-3 divide-x divide-gray-200 border-y border-gray-200 py-3 text-center dark:divide-dark-700 dark:border-dark-700">
+            <div class="grid grid-cols-4 divide-x divide-gray-200 border-y border-gray-200 py-3 text-center dark:divide-dark-700 dark:border-dark-700">
               <div>
                 <div class="text-lg font-semibold text-emerald-600 dark:text-emerald-400">{{ result.created }}</div>
                 <div class="text-xs text-gray-500 dark:text-dark-400">{{ t('publicAccountImport.created') }}</div>
+              </div>
+              <div>
+                <div class="text-lg font-semibold text-blue-600 dark:text-blue-400">{{ result.updated ?? 0 }}</div>
+                <div class="text-xs text-gray-500 dark:text-dark-400">{{ t('publicAccountImport.updated') }}</div>
               </div>
               <div>
                 <div class="text-lg font-semibold text-amber-600 dark:text-amber-400">{{ result.skipped }}</div>
@@ -182,13 +186,40 @@
               </div>
             </div>
 
-            <div v-if="result.errors?.length" class="mt-4 space-y-1 text-xs text-red-700 dark:text-red-300">
-              <div v-for="item in result.errors" :key="`error-${item.index}-${item.message}`">
+            <div v-if="result.items?.length" class="mt-4">
+              <div class="mb-2 text-xs font-semibold text-gray-600 dark:text-dark-300">
+                {{ t('publicAccountImport.detailsTitle') }}
+              </div>
+              <div class="divide-y divide-gray-100 border-y border-gray-200 dark:divide-dark-800 dark:border-dark-700">
+                <div
+                  v-for="item in result.items"
+                  :key="`item-${item.index}-${item.action}-${item.name || ''}`"
+                  class="flex min-w-0 gap-3 py-2.5 text-xs"
+                >
+                  <span class="w-14 shrink-0 font-semibold" :class="importActionClass(item.action)">
+                    {{ importActionLabel(item.action) }}
+                  </span>
+                  <div class="min-w-0 flex-1">
+                    <div class="break-all font-medium text-gray-800 dark:text-dark-100">
+                      {{ item.name || `#${item.index}` }}
+                    </div>
+                    <div v-if="item.message" class="mt-0.5 break-words text-gray-500 dark:text-dark-400">
+                      {{ item.message }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="additionalErrors.length" class="mt-4 border-y border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+              <div class="mb-1 font-semibold">{{ t('publicAccountImport.errorsTitle') }}</div>
+              <div v-for="item in additionalErrors" :key="`error-${item.index}-${item.message}`" class="break-words">
                 {{ item.name || `#${item.index}` }}: {{ item.message }}
               </div>
             </div>
-            <div v-else-if="result.warnings?.length" class="mt-4 space-y-1 text-xs text-amber-700 dark:text-amber-300">
-              <div v-for="item in result.warnings" :key="`warning-${item.index}-${item.message}`">
+            <div v-if="additionalWarnings.length" class="mt-4 border-y border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <div class="mb-1 font-semibold">{{ t('publicAccountImport.remindersTitle') }}</div>
+              <div v-for="item in additionalWarnings" :key="`warning-${item.index}-${item.message}`" class="break-words">
                 {{ item.name || `#${item.index}` }}: {{ item.message }}
               </div>
             </div>
@@ -513,6 +544,8 @@ const pagedProducts = computed(() => {
   const start = (productPage.value - 1) * CATALOG_PAGE_SIZE
   return filteredProducts.value.slice(start, start + CATALOG_PAGE_SIZE)
 })
+const additionalErrors = computed(() => filterAdditionalResultMessages(result.value?.errors || []))
+const additionalWarnings = computed(() => filterAdditionalResultMessages(result.value?.warnings || []))
 
 onMounted(async () => {
   void appStore.fetchPublicSettings()
@@ -603,6 +636,33 @@ function removeFile(index: number) {
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   return `${(bytes / 1024).toFixed(1)} KB`
+}
+
+function filterAdditionalResultMessages<T extends { index: number; message: string }>(messages: T[]): T[] {
+  const items = result.value?.items || []
+  return messages.filter((message) => !items.some((item) => (
+    item.index === message.index && item.message === message.message
+  )))
+}
+
+function importActionLabel(action: string): string {
+  switch (action) {
+    case 'created': return t('publicAccountImport.created')
+    case 'updated': return t('publicAccountImport.updated')
+    case 'skipped': return t('publicAccountImport.skipped')
+    case 'failed': return t('publicAccountImport.failed')
+    default: return action
+  }
+}
+
+function importActionClass(action: string): string {
+  switch (action) {
+    case 'created': return 'text-emerald-600 dark:text-emerald-400'
+    case 'updated': return 'text-blue-600 dark:text-blue-400'
+    case 'skipped': return 'text-amber-600 dark:text-amber-400'
+    case 'failed': return 'text-red-600 dark:text-red-400'
+    default: return 'text-gray-500 dark:text-dark-400'
+  }
 }
 
 async function handleSubmit() {

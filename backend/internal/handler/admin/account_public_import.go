@@ -52,6 +52,7 @@ type PublicAccountImportItem struct {
 type PublicAccountImportResult struct {
 	Total    int                         `json:"total"`
 	Created  int                         `json:"created"`
+	Updated  int                         `json:"updated"`
 	Skipped  int                         `json:"skipped"`
 	Failed   int                         `json:"failed"`
 	Items    []PublicAccountImportItem   `json:"items,omitempty"`
@@ -118,6 +119,7 @@ func (h *AccountHandler) PublicImportCodexSessions(c *gin.Context) {
 		SkipExisting:            &skipExisting,
 		SkipDefaultGroupBind:    &skipDefaultGroupBind,
 		ConfirmMixedChannelRisk: &confirmMixedChannelRisk,
+		mergeExistingGroupsOnly: true,
 	}
 	entries, err := parseCodexSessionImportEntries(importReq)
 	if err != nil {
@@ -323,6 +325,7 @@ func newPublicAccountImportResult(result CodexSessionImportResult) PublicAccount
 	return PublicAccountImportResult{
 		Total:    result.Total,
 		Created:  result.Created,
+		Updated:  result.Updated,
 		Skipped:  result.Skipped,
 		Failed:   result.Failed,
 		Items:    items,

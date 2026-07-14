@@ -109,6 +109,186 @@ func TestPublicImportCodexSessionsBindsMultipleAllowedGroups(t *testing.T) {
 	require.True(t, svc.createdAccounts[0].SkipDefaultGroupBind)
 }
 
+func TestPublicImportCodexSessionsMergesGroupsWithoutOverwritingExistingAccount(t *testing.T) {
+	t.Setenv(publicAccountImportEnabledEnv, "true")
+	t.Setenv(publicAccountImportGroupIDsEnv, "5,9")
+
+	value := buildCodexAccessOnlyImportValue(t, "workspace-existing-public", "user-existing-public")
+	item, err := normalizeCodexImportEntry(codexImportEntry{Index: 1, Value: value})
+	require.NoError(t, err)
+	existingCredentials := cloneCodexImportTestMap(item.Credentials)
+	existingCredentials["refresh_token"] = "stored-refresh-token"
+	existingExtra := map[string]any{"stored_setting": "keep-me"}
+	proxyID := int64(88)
+	svc := newCodexImportMemoryAdminService([]service.Account{{
+		ID:          77,
+		Name:        "existing-public-account",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Credentials: existingCredentials,
+		Extra:       existingExtra,
+		ProxyID:     &proxyID,
+		Concurrency: 11,
+		Priority:    23,
+		GroupIDs:    []int64{9, 6},
+	}})
+	svc.groups = []service.Group{
+		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+	}
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	accountJSON, err := json.Marshal(value)
+	require.NoError(t, err)
+	body, err := json.Marshal(PublicAccountImportRequest{
+		Contents: []string{string(accountJSON)},
+		GroupIDs: []int64{5},
+	})
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/v1/public/account-import", h.PublicImportCodexSessions)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/public/account-import", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "public-import-merge-existing")
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var payload struct {
+		Code int                       `json:"code"`
+		Data PublicAccountImportResult `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.Zero(t, payload.Code)
+	require.Equal(t, 1, payload.Data.Updated)
+	require.Zero(t, payload.Data.Created)
+	require.Zero(t, payload.Data.Skipped)
+	require.Zero(t, payload.Data.Failed)
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, "updated", payload.Data.Items[0].Action)
+	require.Contains(t, payload.Data.Items[0].Message, "追加绑定")
+
+	require.Empty(t, svc.createdAccounts)
+	require.Len(t, svc.updatedAccounts, 1)
+	update := svc.updatedAccounts[0].input
+	require.NotNil(t, update.GroupIDs)
+	require.Equal(t, []int64{9, 6, 5}, *update.GroupIDs)
+	require.Nil(t, update.Credentials)
+	require.Nil(t, update.Extra)
+	require.Nil(t, update.ProxyID)
+	require.Nil(t, update.Concurrency)
+	require.Nil(t, update.Priority)
+	require.Equal(t, "stored-refresh-token", svc.accounts[0].Credentials["refresh_token"])
+	require.Equal(t, "keep-me", svc.accounts[0].Extra["stored_setting"])
+	require.Equal(t, proxyID, *svc.accounts[0].ProxyID)
+	require.Equal(t, 11, svc.accounts[0].Concurrency)
+	require.Equal(t, 23, svc.accounts[0].Priority)
+}
+
+func TestPublicImportCodexSessionsSkipsExistingAccountWithAllGroupsBound(t *testing.T) {
+	t.Setenv(publicAccountImportEnabledEnv, "true")
+	t.Setenv(publicAccountImportGroupIDsEnv, "5")
+
+	value := buildCodexAccessOnlyImportValue(t, "workspace-bound-public", "user-bound-public")
+	item, err := normalizeCodexImportEntry(codexImportEntry{Index: 1, Value: value})
+	require.NoError(t, err)
+	svc := newCodexImportMemoryAdminService([]service.Account{{
+		ID:          78,
+		Name:        "already-bound-public-account",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Credentials: item.Credentials,
+		GroupIDs:    []int64{5, 6},
+	}})
+	svc.groups = []service.Group{
+		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+	}
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	accountJSON, err := json.Marshal(value)
+	require.NoError(t, err)
+	body, err := json.Marshal(PublicAccountImportRequest{
+		Contents: []string{string(accountJSON)},
+		GroupIDs: []int64{5},
+	})
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/v1/public/account-import", h.PublicImportCodexSessions)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/public/account-import", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "public-import-already-bound")
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var payload struct {
+		Code int                       `json:"code"`
+		Data PublicAccountImportResult `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.Zero(t, payload.Code)
+	require.Equal(t, 1, payload.Data.Skipped)
+	require.Zero(t, payload.Data.Created)
+	require.Zero(t, payload.Data.Updated)
+	require.Zero(t, payload.Data.Failed)
+	require.Len(t, payload.Data.Items, 1)
+	require.Equal(t, "skipped", payload.Data.Items[0].Action)
+	require.Contains(t, payload.Data.Items[0].Message, "已绑定所选分组")
+	require.Empty(t, svc.createdAccounts)
+	require.Empty(t, svc.updatedAccounts)
+}
+
+func TestImportCodexSessionsMergeExistingGroupsRequiresMatchingCredentials(t *testing.T) {
+	expiresAt := time.Now().Add(time.Hour)
+	storedValue := map[string]any{
+		"access_token":  buildCodexAccessTokenWithJTI(t, "workspace-protected", "user-protected", "stored", expiresAt),
+		"refresh_token": "stored-refresh-token",
+	}
+	incomingValue := map[string]any{
+		"access_token":  buildCodexAccessTokenWithJTI(t, "workspace-protected", "user-protected", "incoming", expiresAt),
+		"refresh_token": "different-refresh-token",
+	}
+	storedItem, err := normalizeCodexImportEntry(codexImportEntry{Index: 1, Value: storedValue})
+	require.NoError(t, err)
+
+	svc := newCodexImportMemoryAdminService([]service.Account{{
+		ID:          79,
+		Name:        "protected-public-account",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Credentials: storedItem.Credentials,
+		GroupIDs:    []int64{6},
+	}})
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	updateExisting := false
+	skipExisting := true
+	result, err := h.importCodexSessions(t.Context(), CodexSessionImportRequest{
+		GroupIDs:                []int64{5, 6},
+		UpdateExisting:          &updateExisting,
+		SkipExisting:            &skipExisting,
+		mergeExistingGroupsOnly: true,
+	}, []codexImportEntry{{Index: 1, Value: incomingValue}})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Skipped)
+	require.Zero(t, result.Created)
+	require.Zero(t, result.Updated)
+	require.Zero(t, result.Failed)
+	require.Len(t, result.Items, 1)
+	require.Contains(t, result.Items[0].Message, "凭据与已有记录不一致")
+	require.Empty(t, svc.createdAccounts)
+	require.Empty(t, svc.updatedAccounts)
+}
+
 func TestResolvePublicAccountImportGroupsAddsAllAndSetsPriority(t *testing.T) {
 	t.Setenv(publicAccountImportGroupIDsEnv, "*")
 
