@@ -11,6 +11,7 @@
 7. 仅重建应用和 Worker，不重启 PostgreSQL/Redis。
 8. 健康检查失败时自动恢复上一组镜像。
 9. 构建后限制 BuildKit 缓存体积，并为根文件系统保留安全余量。
+10. 管理页“立即更新”先同步官方稳定 tag 到 fork，再经过相同 CI 门禁部署。
 
 ## 安装
 
@@ -50,6 +51,10 @@ sudo sub2api-autodeploy --rollback
 # 查看定时器和日志
 systemctl status sub2api-autodeploy.timer
 journalctl -u sub2api-autodeploy.service -f
+
+# 查看管理页提交的官方版本同步任务
+systemctl status sub2api-upstream-sync.timer
+journalctl -u sub2api-upstream-sync.service -n 100 --no-pager
 ```
 
 ## 分支职责
@@ -70,9 +75,34 @@ DEPLOY_DIR=/opt/sub2api
 PRUNE_BUILD_CACHE=true
 BUILD_CACHE_MAX_USED_SPACE=6gb
 BUILD_CACHE_MIN_FREE_SPACE=8gb
+SYNC_REPO_DIR=/opt/sub2api-integration
+UPSTREAM_SYNC_REQUEST_FILE=/opt/sub2api/data/upstream-sync-request
+UPSTREAM_SYNC_STATUS_FILE=/opt/sub2api/data/upstream-sync-status
+UPSTREAM_SYNC_LOCK_FILE=/run/lock/sub2api-upstream-sync.lock
 ```
 
 部署状态保存在 `/var/lib/sub2api-autodeploy/state.env`，详细构建日志保存在
 `/var/log/sub2api-autodeploy/`。生产 `.env` 只记录当前不可变镜像标签，不会进入 Git。
 备份保存在 `/opt/backups/sub2api/`；持续写入的运行日志不会进入恢复归档。
 商品目录缓存同样不会进入恢复归档，恢复后由同步 Worker 自动重建。
+
+## 托管版本更新
+
+二开镜像版本格式为 `<官方版本>-custom.<提交前缀>`，例如
+`0.1.153-custom.4cf0672931f6`。版本检查只比较前三段官方版本号，因此相同
+官方基线不会误报更新，新的官方稳定版本仍会正常提示。
+
+托管构建不会在容器内下载或替换官方二进制。管理员点击“立即更新”后：
+
+1. 后端原子写入只包含 `vX.Y.Z` 的更新请求。
+2. `sub2api-upstream-sync.timer` 在宿主机读取请求并持有独立的仓库同步锁。
+3. 同步脚本确认集成仓库干净、tag 属于官方 `main`，且 fork 的 `main` 可以快进。
+4. 脚本先将对应提交推送到 `Cloudsflee/sub2api` 的 `main`，并创建
+   `upstream/vX.Y.Z` 追踪 tag；不会推送 `v*` tag 误触发 fork 的 Release workflow。
+5. 再把该 tag 合并到 `custom` 并推送，从而触发 GitHub CI。
+6. CI 全绿后推进 `deploy/custom`，服务器按正常备份、健康检查和回滚流程部署。
+
+合并冲突、非快进、工作区修改或网络错误都会终止同步；此时不会推进
+`custom` 或 `deploy/custom`，当前生产容器保持不变。托管构建的版本回退继续使用
+服务器保存的不可变镜像，不使用官方 Release 二进制。部署端会显式同步 fork 的
+正式 tags；中断或推送失败时，集成仓库会恢复到远端 `custom`，请求可安全重试。

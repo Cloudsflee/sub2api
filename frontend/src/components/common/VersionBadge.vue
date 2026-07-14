@@ -149,7 +149,28 @@
                 </button>
               </div>
 
-              <!-- Priority 2: Update success - need restart -->
+              <!-- Priority 2: Managed repository update queued -->
+              <div v-else-if="updateQueued" class="space-y-2">
+                <div
+                  class="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-800/50 dark:bg-green-900/20"
+                >
+                  <div
+                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/50"
+                  >
+                    <Icon name="sync" size="sm" :stroke-width="2" class="text-green-600 dark:text-green-400" />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-green-700 dark:text-green-300">
+                      {{ t('version.updateQueued') }}
+                    </p>
+                    <p class="text-xs leading-4 text-green-600/70 dark:text-green-400/70">
+                      {{ t('version.updateQueuedHint', { version: 'v' + queuedTargetVersion }) }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Priority 3: Update success - need restart -->
               <div v-else-if="updateSuccess && needRestart" class="space-y-2">
                 <div
                   class="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-800/50 dark:bg-green-900/20"
@@ -231,8 +252,8 @@
                 </button>
               </div>
 
-              <!-- Priority 3: Update available for source build - show git pull hint -->
-              <div v-else-if="hasUpdate && !isReleaseBuild" class="space-y-2">
+              <!-- Priority 4: Update available for source build - show git pull hint -->
+              <div v-else-if="hasUpdate && !canOnlineUpdate" class="space-y-2">
                 <a
                   v-if="releaseInfo?.html_url && releaseInfo.html_url !== '#'"
                   :href="releaseInfo.html_url"
@@ -291,8 +312,8 @@
                 </div>
               </div>
 
-              <!-- Priority 4: Update available for release build - show update button -->
-              <div v-else-if="hasUpdate && isReleaseBuild" class="space-y-2">
+              <!-- Priority 5: Update available for release or managed build -->
+              <div v-else-if="hasUpdate && canOnlineUpdate" class="space-y-2">
                 <!-- Update info card -->
                 <div
                   class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/50 dark:bg-amber-900/20"
@@ -355,7 +376,7 @@
                 </a>
               </div>
 
-              <!-- Priority 5: Up to date - GitHub link + version rollback -->
+              <!-- Priority 6: Up to date - GitHub link + version rollback -->
               <div v-else class="space-y-2">
                 <a
                   v-if="releaseInfo?.html_url && releaseInfo.html_url !== '#'"
@@ -395,9 +416,20 @@
 
                   <transition name="rollback">
                     <div v-if="rollbackPanelOpen" class="mt-2 space-y-2">
+                      <!-- Managed builds roll back through immutable deployment images. -->
+                      <div
+                        v-if="isManagedBuild"
+                        class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
+                      >
+                        <Icon name="infoCircle" size="sm" :stroke-width="2" class="flex-shrink-0 text-blue-500 dark:text-blue-400" />
+                        <p class="min-w-0 flex-1 text-xs leading-4 text-blue-600 dark:text-blue-400">
+                          {{ t('version.rollbackManagedHint') }}
+                        </p>
+                      </div>
+
                       <!-- Source build: online rollback unavailable, use git instead -->
                       <div
-                        v-if="!isReleaseBuild"
+                        v-else-if="!isReleaseBuild"
                         class="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 p-2 dark:border-blue-800/50 dark:bg-blue-900/20"
                       >
                         <svg
@@ -683,6 +715,8 @@ const restarting = ref(false)
 const needRestart = ref(false)
 const updateError = ref('')
 const updateSuccess = ref(false)
+const updateQueued = ref(false)
+const queuedTargetVersion = ref('')
 const restartCountdown = ref(0)
 // Distinguishes the success + restart panel between update and rollback flows
 const successKind = ref<'update' | 'rollback'>('update')
@@ -730,6 +764,8 @@ const activeManualCommand = computed(() =>
 
 // Only show update check for release builds (binary/docker deployment)
 const isReleaseBuild = computed(() => buildType.value === 'release')
+const isManagedBuild = computed(() => buildType.value === 'managed')
+const canOnlineUpdate = computed(() => isReleaseBuild.value || isManagedBuild.value)
 
 function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value
@@ -745,6 +781,8 @@ async function refreshVersion(force = true) {
   // Reset update states when refreshing
   updateError.value = ''
   updateSuccess.value = false
+  updateQueued.value = false
+  queuedTargetVersion.value = ''
   needRestart.value = false
   resetRollbackState()
 
@@ -757,14 +795,20 @@ async function handleUpdate() {
   updating.value = true
   updateError.value = ''
   updateSuccess.value = false
+  updateQueued.value = false
+  queuedTargetVersion.value = ''
 
   try {
     const result = await performUpdate()
     successKind.value = 'update'
-    updateSuccess.value = true
+    updateQueued.value = result.queued === true
+    queuedTargetVersion.value = result.target_version || latestVersion.value
+    updateSuccess.value = !updateQueued.value
     needRestart.value = result.need_restart
-    // Clear version cache to reflect update completed
-    appStore.clearVersionCache()
+    if (!updateQueued.value) {
+      // Direct release updates change the running binary after restart.
+      appStore.clearVersionCache()
+    }
   } catch (error: unknown) {
     const err = error as { response?: { data?: { message?: string } }; message?: string }
     updateError.value = err.response?.data?.message || err.message || t('version.updateFailed')

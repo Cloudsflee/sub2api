@@ -1,0 +1,12 @@
+[Unit]
+Description=Check for managed Sub2API upstream update requests
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+RandomizedDelaySec=10s
+Persistent=true
+Unit=sub2api-upstream-sync.service
+
+[Install]
+WantedBy=timers.target

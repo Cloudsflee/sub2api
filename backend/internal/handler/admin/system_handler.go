@@ -24,7 +24,7 @@ type SystemHandler struct {
 
 type systemUpdateService interface {
 	CheckUpdate(ctx context.Context, force bool) (*service.UpdateInfo, error)
-	PerformUpdate(ctx context.Context) error
+	PerformUpdate(ctx context.Context) (*service.UpdateActionResult, error)
 	Rollback() error
 	ListRollbackVersions(ctx context.Context) ([]service.RollbackVersion, error)
 	RollbackToVersion(ctx context.Context, version string) error
@@ -75,7 +75,8 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 			release(releaseReason, succeeded)
 		}()
 
-		if err := h.updateSvc.PerformUpdate(ctx); err != nil {
+		result, err := h.updateSvc.PerformUpdate(ctx)
+		if err != nil {
 			if errors.Is(err, service.ErrNoUpdateAvailable) {
 				info, checkErr := h.updateSvc.CheckUpdate(ctx, false)
 				if checkErr != nil {
@@ -94,12 +95,23 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 			releaseReason = "SYSTEM_UPDATE_FAILED"
 			return nil, err
 		}
+		if result == nil {
+			releaseReason = "SYSTEM_UPDATE_FAILED"
+			return nil, errors.New("update completed without a result")
+		}
 		succeeded = true
 
+		message := "Update completed. Please restart the service."
+		if result.Queued {
+			message = "Repository update queued. CI deployment will continue automatically."
+		}
+
 		return gin.H{
-			"message":      "Update completed. Please restart the service.",
-			"need_restart": true,
-			"operation_id": lock.OperationID(),
+			"message":        message,
+			"need_restart":   result.NeedRestart,
+			"queued":         result.Queued,
+			"target_version": result.TargetVersion,
+			"operation_id":   lock.OperationID(),
 		}, nil
 	})
 }

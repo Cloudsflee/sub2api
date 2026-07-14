@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -62,11 +63,67 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 		"release",
 	)
 
-	err := svc.PerformUpdate(context.Background())
+	_, err := svc.PerformUpdate(context.Background())
 
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrNoUpdateAvailable))
 	require.ErrorIs(t, err, ErrNoUpdateAvailable)
+}
+
+func TestManagedBuildUsesOfficialBaseVersionForUpdateChecks(t *testing.T) {
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v0.1.153"}},
+		"0.1.153-custom.4cf0672931f6",
+		"release",
+	)
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.False(t, info.HasUpdate)
+	require.Equal(t, managedBuildType, info.BuildType)
+}
+
+func TestManagedBuildQueuesRepositorySyncWithoutDownloadingBinary(t *testing.T) {
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v0.1.154"}},
+		"0.1.153-custom.4cf0672931f6",
+		"release",
+	)
+	svc.managedUpdateRequestFile = t.TempDir() + "/upstream-sync-request"
+
+	result, err := svc.PerformUpdate(context.Background())
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.Queued)
+	require.False(t, result.NeedRestart)
+	require.Equal(t, "0.1.154", result.TargetVersion)
+	request, err := os.ReadFile(svc.managedUpdateRequestFile)
+	require.NoError(t, err)
+	require.Equal(t, "v0.1.154\n", string(request))
+}
+
+func TestManagedBuildRejectsInPlaceRollback(t *testing.T) {
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{},
+		"0.1.153-custom.4cf0672931f6",
+		"release",
+	)
+
+	require.ErrorIs(t, svc.Rollback(), ErrManagedRollbackRequired)
+	require.ErrorIs(t, svc.RollbackToVersion(context.Background(), "0.1.152"), ErrManagedRollbackRequired)
+	versions, err := svc.ListRollbackVersions(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, versions)
+}
+
+func TestCompareVersionsIgnoresManagedBuildSuffix(t *testing.T) {
+	require.Zero(t, compareVersions("0.1.153-custom.4cf0672931f6", "0.1.153"))
+	require.Less(t, compareVersions("0.1.153-custom.4cf0672931f6", "0.1.154"), 0)
 }
 
 func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateService {

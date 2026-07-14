@@ -18,7 +18,7 @@ export interface VersionInfo {
   release_info?: ReleaseInfo
   cached: boolean
   warning?: string
-  build_type: string // "source" for manual builds, "release" for CI builds
+  build_type: string // "source", "release", or "managed"
 }
 
 /**
@@ -43,6 +43,8 @@ export async function checkUpdates(force = false): Promise<VersionInfo> {
 export interface UpdateResult {
   message: string
   need_restart: boolean
+  queued?: boolean
+  target_version?: string
 }
 
 export interface RollbackVersionInfo {
@@ -63,7 +65,7 @@ export async function getRollbackVersions(): Promise<{ versions: RollbackVersion
 
 /**
  * Perform system update
- * Downloads and applies the latest version
+ * Applies an official release build or queues the managed repository sync flow
  */
 export async function performUpdate(): Promise<UpdateResult> {
   const { data } = await apiClient.post<UpdateResult>('/admin/system/update')

@@ -19,7 +19,7 @@ fi
 [[ $EUID -eq 0 ]] || { echo "run this installer as root" >&2; exit 1; }
 [[ -f "$COMPOSE_FILE" ]] || { echo "Compose file not found: $COMPOSE_FILE" >&2; exit 1; }
 
-for script in sub2api-autodeploy.sh sub2api-health-restart.sh sub2api-backup.sh install.sh; do
+for script in sub2api-autodeploy.sh sub2api-health-restart.sh sub2api-backup.sh sub2api-upstream-sync.sh install.sh; do
   bash -n "$SCRIPT_DIR/$script"
 done
 python3 -m py_compile "$SCRIPT_DIR/configure-compose.py"
@@ -39,10 +39,13 @@ if [[ -f /usr/local/sbin/sub2api-backup.sh ]] \
     "/usr/local/sbin/sub2api-backup.sh.pre-autodeploy-$STAMP"
 fi
 install -m 0755 "$SCRIPT_DIR/sub2api-backup.sh" /usr/local/sbin/sub2api-backup.sh
+install -m 0755 "$SCRIPT_DIR/sub2api-upstream-sync.sh" /usr/local/sbin/sub2api-upstream-sync.sh
 
 install -m 0644 "$SCRIPT_DIR/sub2api-autodeploy.service" /etc/systemd/system/sub2api-autodeploy.service
 install -m 0644 "$SCRIPT_DIR/sub2api-autodeploy.timer" /etc/systemd/system/sub2api-autodeploy.timer
 install -m 0644 "$SCRIPT_DIR/sub2api-health-restart.service" /etc/systemd/system/sub2api-health-restart.service
+install -m 0644 "$SCRIPT_DIR/sub2api-upstream-sync.service" /etc/systemd/system/sub2api-upstream-sync.service
+install -m 0644 "$SCRIPT_DIR/sub2api-upstream-sync.timer" /etc/systemd/system/sub2api-upstream-sync.timer
 
 if [[ ! -f /etc/default/sub2api-autodeploy ]]; then
   install -m 0640 "$SCRIPT_DIR/sub2api-autodeploy.default" /etc/default/sub2api-autodeploy
@@ -59,12 +62,14 @@ fi
 
 systemctl daemon-reload
 systemctl enable --now sub2api-autodeploy.timer
+systemctl enable --now sub2api-upstream-sync.timer
 systemctl restart sub2api-health-restart.timer
 
 echo "Sub2API auto-deployment installed."
 echo "Timer: systemctl status sub2api-autodeploy.timer"
 echo "Status: /usr/local/sbin/sub2api-autodeploy --status"
 echo "Logs: journalctl -u sub2api-autodeploy.service"
+echo "Upstream sync: journalctl -u sub2api-upstream-sync.service"
 
 if [[ "$DEPLOY_NOW" == true ]]; then
   systemctl start sub2api-autodeploy.service

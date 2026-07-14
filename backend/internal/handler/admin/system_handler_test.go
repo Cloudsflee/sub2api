@@ -19,6 +19,7 @@ import (
 
 type systemHandlerUpdateServiceStub struct {
 	performErr           error
+	performResult        *service.UpdateActionResult
 	updateInfo           *service.UpdateInfo
 	checkErr             error
 	checkForces          []bool
@@ -37,9 +38,9 @@ func (s *systemHandlerUpdateServiceStub) CheckUpdate(_ context.Context, force bo
 	return s.updateInfo, s.checkErr
 }
 
-func (s *systemHandlerUpdateServiceStub) PerformUpdate(context.Context) error {
+func (s *systemHandlerUpdateServiceStub) PerformUpdate(context.Context) (*service.UpdateActionResult, error) {
 	s.performCall++
-	return s.performErr
+	return s.performResult, s.performErr
 }
 
 func (s *systemHandlerUpdateServiceStub) Rollback() error {
@@ -66,6 +67,9 @@ type systemUpdateResponseEnvelope struct {
 		AlreadyUpToDate bool   `json:"already_up_to_date"`
 		CurrentVersion  string `json:"current_version"`
 		LatestVersion   string `json:"latest_version"`
+		NeedRestart     bool   `json:"need_restart"`
+		Queued          bool   `json:"queued"`
+		TargetVersion   string `json:"target_version"`
 		OperationID     string `json:"operation_id"`
 	} `json:"data"`
 }
@@ -163,6 +167,32 @@ func TestSystemHandlerPerformUpdateFailureStillReturnsInternalError(t *testing.T
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, http.StatusInternalServerError, body.Code)
 	require.Equal(t, "internal error", body.Message)
+}
+
+func TestSystemHandlerPerformUpdateReturnsManagedQueueResult(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{
+		performResult: &service.UpdateActionResult{
+			Queued:        true,
+			TargetVersion: "0.1.154",
+		},
+	}
+	repo := newMemoryIdempotencyRepoStub()
+	router := newSystemHandlerTestRouter(t, updateSvc, repo)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/update", nil)
+	req.Header.Set("Idempotency-Key", "managed-update")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	requireSystemLockStatus(t, repo, service.IdempotencyStatusSucceeded)
+
+	var body systemUpdateResponseEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.True(t, body.Data.Queued)
+	require.False(t, body.Data.NeedRestart)
+	require.Equal(t, "0.1.154", body.Data.TargetVersion)
+	require.Contains(t, body.Data.Message, "Repository update queued")
 }
 
 func TestSystemHandlerRollbackWithoutBodyUsesLegacyBackup(t *testing.T) {

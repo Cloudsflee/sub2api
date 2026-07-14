@@ -1,0 +1,15 @@
+[Unit]
+Description=Sync requested official Sub2API release into the managed fork
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/sub2api-autodeploy
+ExecStart=/usr/local/sbin/sub2api-upstream-sync.sh
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+UMask=0027
+SyslogIdentifier=sub2api-upstream-sync

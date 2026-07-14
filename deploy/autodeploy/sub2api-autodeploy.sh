@@ -206,7 +206,7 @@ refresh_approved_commit() {
   local source_ref="refs/remotes/$REMOTE/$SOURCE_BRANCH"
 
   log "fetching $REMOTE/$SOURCE_BRANCH and CI-approved $REMOTE/$DEPLOY_BRANCH"
-  git -C "$REPO_DIR" fetch --prune "$REMOTE"
+  git -C "$REPO_DIR" fetch --prune --tags "$REMOTE"
 
   git -C "$REPO_DIR" rev-parse --verify "$source_ref^{commit}" >/dev/null 2>&1 \
     || die "source branch not found: $REMOTE/$SOURCE_BRANCH"
@@ -276,11 +276,35 @@ run_docker_build() {
   fi
 }
 
+resolve_official_version() {
+  local tag version
+
+  tag=$(git -C "$BUILD_DIR" describe --tags --abbrev=0 \
+    --match 'upstream/v[0-9]*.[0-9]*.[0-9]*' "$TARGET_COMMIT" 2>/dev/null || true)
+  version=${tag#upstream/v}
+  if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf '%s\n' "$version"
+    return
+  fi
+
+  tag=$(git -C "$BUILD_DIR" describe --tags --abbrev=0 \
+    --match 'v[0-9]*.[0-9]*.[0-9]*' "$TARGET_COMMIT" 2>/dev/null || true)
+  version=${tag#v}
+  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    version=$(tr -d '\r\n' <"$BUILD_DIR/backend/cmd/server/VERSION" 2>/dev/null || true)
+  fi
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || die "cannot determine official base version for $TARGET_COMMIT"
+  printf '%s\n' "$version"
+}
+
 build_images() {
   local short=${TARGET_COMMIT:0:12}
-  local date_value
+  local date_value official_version version_value
   local app_revision worker_revision
   date_value=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  official_version=$(resolve_official_version)
+  version_value="$official_version-custom.$short"
 
   APP_CANDIDATE="$APP_IMAGE_REPOSITORY:git-$TARGET_COMMIT"
   WORKER_CANDIDATE="$WORKER_IMAGE_REPOSITORY:git-$TARGET_COMMIT"
@@ -296,7 +320,7 @@ build_images() {
     run_docker_build "application image" "$LOG_DIR/app-$short.log" \
       --label "org.opencontainers.image.revision=$TARGET_COMMIT" \
       --label "org.opencontainers.image.source=https://github.com/Cloudsflee/sub2api" \
-      --build-arg "VERSION=custom-$short" \
+      --build-arg "VERSION=$version_value" \
       --build-arg "COMMIT=$TARGET_COMMIT" \
       --build-arg "DATE=$date_value" \
       -t "$APP_CANDIDATE" "$BUILD_DIR"

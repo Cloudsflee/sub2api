@@ -25,6 +25,7 @@ import (
 var (
 	ErrNoUpdateAvailable         = infraerrors.Conflict("ALREADY_UP_TO_DATE", "no update available; current version is latest")
 	ErrRollbackVersionNotAllowed = infraerrors.BadRequest("ROLLBACK_VERSION_NOT_ALLOWED", "version is not in the allowed rollback list")
+	ErrManagedRollbackRequired   = infraerrors.Conflict("MANAGED_ROLLBACK_REQUIRED", "managed builds must be rolled back by the deployment service")
 )
 
 const (
@@ -43,6 +44,9 @@ const (
 	maxRollbackVersions = 3
 	// Fetch a few extra releases so filtering (current/newer/prerelease) still leaves enough candidates
 	rollbackFetchPageSize = 15
+
+	managedBuildType                = "managed"
+	defaultManagedUpdateRequestFile = "/app/data/upstream-sync-request"
 )
 
 // UpdateCache defines cache operations for update service
@@ -61,19 +65,25 @@ type GitHubReleaseClient interface {
 
 // UpdateService handles software updates
 type UpdateService struct {
-	cache          UpdateCache
-	githubClient   GitHubReleaseClient
-	currentVersion string
-	buildType      string // "source" for manual builds, "release" for CI builds
+	cache                    UpdateCache
+	githubClient             GitHubReleaseClient
+	currentVersion           string
+	buildType                string // "source" for manual builds, "release" for CI builds
+	managedUpdateRequestFile string
 }
 
 // NewUpdateService creates a new UpdateService
 func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType string) *UpdateService {
+	requestFile := strings.TrimSpace(os.Getenv("SUB2API_UPSTREAM_SYNC_REQUEST_FILE"))
+	if requestFile == "" {
+		requestFile = defaultManagedUpdateRequestFile
+	}
 	return &UpdateService{
-		cache:          cache,
-		githubClient:   githubClient,
-		currentVersion: version,
-		buildType:      buildType,
+		cache:                    cache,
+		githubClient:             githubClient,
+		currentVersion:           version,
+		buildType:                buildType,
+		managedUpdateRequestFile: requestFile,
 	}
 }
 
@@ -85,7 +95,14 @@ type UpdateInfo struct {
 	ReleaseInfo    *ReleaseInfo `json:"release_info,omitempty"`
 	Cached         bool         `json:"cached"`
 	Warning        string       `json:"warning,omitempty"`
-	BuildType      string       `json:"build_type"` // "source" or "release"
+	BuildType      string       `json:"build_type"` // "source", "release", or "managed"
+}
+
+// UpdateActionResult describes how an accepted update will be applied.
+type UpdateActionResult struct {
+	NeedRestart   bool
+	Queued        bool
+	TargetVersion string
 }
 
 // ReleaseInfo contains GitHub release details
@@ -151,7 +168,7 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 			LatestVersion:  s.currentVersion,
 			HasUpdate:      false,
 			Warning:        err.Error(),
-			BuildType:      s.buildType,
+			BuildType:      s.effectiveBuildType(),
 		}, nil
 	}
 
@@ -160,19 +177,95 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 	return info, nil
 }
 
-// PerformUpdate downloads and applies the update
-// Uses atomic file replacement pattern for safe in-place updates
-func (s *UpdateService) PerformUpdate(ctx context.Context) error {
+// PerformUpdate applies official builds in place. Managed custom builds enqueue
+// a host-side repository sync so they continue through the fork's CI gate.
+func (s *UpdateService) PerformUpdate(ctx context.Context) (*UpdateActionResult, error) {
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if !info.HasUpdate {
-		return ErrNoUpdateAvailable
+		return nil, ErrNoUpdateAvailable
 	}
 
-	return s.applyReleaseAssets(ctx, info.ReleaseInfo.Assets)
+	if s.isManagedBuild() {
+		if err := s.queueManagedUpdate(info.LatestVersion); err != nil {
+			return nil, err
+		}
+		return &UpdateActionResult{
+			Queued:        true,
+			TargetVersion: info.LatestVersion,
+		}, nil
+	}
+
+	if err := s.applyReleaseAssets(ctx, info.ReleaseInfo.Assets); err != nil {
+		return nil, err
+	}
+	return &UpdateActionResult{NeedRestart: true, TargetVersion: info.LatestVersion}, nil
+}
+
+func (s *UpdateService) effectiveBuildType() string {
+	if s.isManagedBuild() {
+		return managedBuildType
+	}
+	return s.buildType
+}
+
+func (s *UpdateService) isManagedBuild() bool {
+	return strings.Contains(s.currentVersion, "-custom.")
+}
+
+func (s *UpdateService) queueManagedUpdate(version string) error {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if !isStableReleaseVersion(version) {
+		return fmt.Errorf("invalid managed update target: %q", version)
+	}
+
+	dir := filepath.Dir(s.managedUpdateRequestFile)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("create managed update request directory: %w", err)
+	}
+	temp, err := os.CreateTemp(dir, ".upstream-sync-request-*")
+	if err != nil {
+		return fmt.Errorf("create managed update request: %w", err)
+	}
+	tempPath := temp.Name()
+	defer func() { _ = os.Remove(tempPath) }()
+
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("secure managed update request: %w", err)
+	}
+	if _, err := temp.WriteString("v" + version + "\n"); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("write managed update request: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("sync managed update request: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close managed update request: %w", err)
+	}
+	if err := os.Rename(tempPath, s.managedUpdateRequestFile); err != nil {
+		return fmt.Errorf("publish managed update request: %w", err)
+	}
+	return nil
+}
+
+func isStableReleaseVersion(version string) bool {
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		value, err := strconv.Atoi(part)
+		if err != nil || value < 0 || strconv.Itoa(value) != part {
+			return false
+		}
+	}
+	return true
 }
 
 // applyReleaseAssets downloads the platform archive from the given release assets,
@@ -281,6 +374,10 @@ func (s *UpdateService) applyReleaseAssets(ctx context.Context, releaseAssets []
 
 // Rollback restores the previous version
 func (s *UpdateService) Rollback() error {
+	if s.isManagedBuild() {
+		return ErrManagedRollbackRequired
+	}
+
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
@@ -307,6 +404,10 @@ func (s *UpdateService) Rollback() error {
 // strictly older than the current version (the current version itself is excluded),
 // newest first. Draft and prerelease entries are skipped.
 func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVersion, error) {
+	if s.isManagedBuild() {
+		return []RollbackVersion{}, nil
+	}
+
 	releases, err := s.fetchRollbackCandidates(ctx)
 	if err != nil {
 		return nil, err
@@ -327,6 +428,10 @@ func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVer
 // The target must be one of the versions returned by ListRollbackVersions;
 // anything else (including the current version) is rejected.
 func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) error {
+	if s.isManagedBuild() {
+		return ErrManagedRollbackRequired
+	}
+
 	target := strings.TrimPrefix(strings.TrimSpace(version), "v")
 	if target == "" {
 		return ErrRollbackVersionNotAllowed
@@ -428,7 +533,7 @@ func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, er
 			Assets:      assets,
 		},
 		Cached:    false,
-		BuildType: s.buildType,
+		BuildType: s.effectiveBuildType(),
 	}, nil
 }
 
@@ -618,7 +723,7 @@ func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {
 		HasUpdate:      compareVersions(s.currentVersion, cached.Latest) < 0,
 		ReleaseInfo:    cached.ReleaseInfo,
 		Cached:         true,
-		BuildType:      s.buildType,
+		BuildType:      s.effectiveBuildType(),
 	}, nil
 }
 
@@ -655,6 +760,9 @@ func compareVersions(current, latest string) int {
 
 func parseVersion(v string) [3]int {
 	v = strings.TrimPrefix(v, "v")
+	if suffix := strings.IndexAny(v, "-+"); suffix >= 0 {
+		v = v[:suffix]
+	}
 	parts := strings.Split(v, ".")
 	result := [3]int{0, 0, 0}
 	for i := 0; i < len(parts) && i < 3; i++ {

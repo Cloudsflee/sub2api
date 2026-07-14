@@ -33,6 +33,8 @@ tar \
   --warning=no-file-changed \
   --exclude='data/logs' \
   --exclude='data/public-account-import-products.json' \
+  --exclude='data/upstream-sync-request*' \
+  --exclude='data/upstream-sync-status' \
   -czf "$TEMP_FILES" \
   .env docker-compose.yml data
 
