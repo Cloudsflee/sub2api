@@ -1,4 +1,4 @@
-const puppeteer = require('puppeteer-core')
+const { chromium } = require('playwright-core')
 const fs = require('node:fs')
 const {
   isVerificationPageState,
@@ -23,7 +23,7 @@ let workerStatus = {
   proxy_enabled: Boolean(proxy),
   started_at: new Date().toISOString(),
 }
-let activeBrowser
+let activeBrowserContext
 let stopping = false
 
 function publishStatus(values) {
@@ -54,7 +54,7 @@ async function backend(path, options = {}) {
 }
 
 async function collectProducts(page, token) {
-  return page.evaluate(async (shopToken, requestTimeoutMilliseconds) => {
+  return page.evaluate(async ({ shopToken, requestTimeoutMilliseconds }) => {
     const post = async (path, body) => {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), requestTimeoutMilliseconds)
@@ -122,7 +122,7 @@ async function collectProducts(page, token) {
       }
     }
     return products
-  }, token, shopRequestTimeoutMilliseconds)
+  }, { shopToken: token, requestTimeoutMilliseconds: shopRequestTimeoutMilliseconds })
 }
 
 async function rejectVerificationPage(page) {
@@ -175,11 +175,17 @@ async function runBrowser() {
   for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
     fs.rmSync(`${chromeProfileDirectory}/${name}`, { force: true, recursive: true })
   }
-  const browser = await puppeteer.launch({
+  const context = await chromium.launchPersistentContext(chromeProfileDirectory, {
     executablePath: chromePath,
     headless: true,
-    protocolTimeout: browserProtocolTimeoutMilliseconds,
-    userDataDir: chromeProfileDirectory,
+    timeout: browserProtocolTimeoutMilliseconds,
+    viewport: { width: 1024, height: 768 },
+    locale: 'zh-CN',
+    timezoneId: 'Asia/Shanghai',
+    colorScheme: 'light',
+    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+    extraHTTPHeaders: { 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
+    ...(proxy ? { proxy } : {}),
     args: [
       '--no-sandbox',
       '--disable-dev-shm-usage',
@@ -189,25 +195,31 @@ async function runBrowser() {
       '--disable-renderer-backgrounding',
       '--disable-blink-features=AutomationControlled',
       '--no-first-run',
-      ...(proxy ? [`--proxy-server=${proxy.server}`] : []),
+      '--lang=zh-CN',
+      '--window-size=1024,768',
     ],
   })
-  activeBrowser = browser
-  const pages = await browser.pages()
-  const page = pages[0] || await browser.newPage()
-  if (proxy?.username || proxy?.password) {
-    await page.authenticate({ username: proxy.username, password: proxy.password })
-  }
-  await page.setViewport({ width: 1024, height: 768 })
-  await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36')
-  await page.setRequestInterception(true)
-  page.on('request', (request) => {
-    if (['image', 'media', 'font'].includes(request.resourceType())) request.abort()
-    else request.continue()
+  activeBrowserContext = context
+  context.setDefaultTimeout(browserProtocolTimeoutMilliseconds)
+  await context.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => undefined, configurable: true })
+    Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['zh-CN', 'zh', 'en'], configurable: true })
+    if (!window.chrome) Object.defineProperty(window, 'chrome', { value: { runtime: {} } })
   })
-  publishStatus({ state: 'idle', browser_started_at: new Date().toISOString() })
+  await context.route('**/*', async (route) => {
+    if (['image', 'media', 'font'].includes(route.request().resourceType())) await route.abort()
+    else await route.continue()
+  })
+  const pages = context.pages()
+  const page = pages[0] || await context.newPage()
+  const browser = context.browser()
+  publishStatus({
+    state: 'idle',
+    browser_engine: 'playwright',
+    browser_started_at: new Date().toISOString(),
+  })
 
-  while (browser.connected && !stopping) {
+  while (browser?.isConnected() && !stopping) {
     let nextPoll = pollMilliseconds
     try {
       const data = await backend('/api/v1/public/account-import/products/sync-job')
@@ -228,7 +240,7 @@ async function runBrowser() {
     }
     await sleep(nextPoll)
   }
-  if (activeBrowser === browser) activeBrowser = undefined
+  if (activeBrowserContext === context) activeBrowserContext = undefined
 }
 
 async function main() {
@@ -249,7 +261,7 @@ async function shutdown(signal) {
   stopping = true
   publishStatus({ state: 'stopping', stop_signal: signal })
   try {
-    await activeBrowser?.close()
+    await activeBrowserContext?.close()
   } catch (error) {
     console.error(`${new Date().toISOString()} browser shutdown failed: ${errorMessage(error)}`)
   }

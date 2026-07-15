@@ -1,11 +1,12 @@
 # Product catalog sync worker
 
 The worker polls the public product-sync job endpoint independently of the
-account-import page. Its Chromium session must receive JSON from
-`pay.ldxp.cn`; Alibaba Cloud ESA may challenge data-center IP addresses.
+account-import page. It uses a persistent Playwright Chromium context that
+must receive JSON from `pay.ldxp.cn`; Alibaba Cloud ESA may challenge
+data-center IP addresses.
 
-Configure a trusted HTTP/HTTPS egress proxy when the server IP receives the
-ESA slider page:
+Configure a trusted HTTP/HTTPS egress proxy if the Playwright session receives
+the ESA slider page:
 
 ```env
 PRODUCT_SYNC_PROXY_URL=http://user:password@proxy.example:8080

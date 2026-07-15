@@ -1,4 +1,4 @@
-.PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
+.PHONY: build build-backend build-frontend test test-backend test-frontend test-worker test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
 	src/utils/__tests__/publicProductCatalog.spec.ts \
@@ -30,11 +30,14 @@ test-backend:
 	@$(MAKE) -C backend test
 
 test-frontend:
-	@node --check deploy/product-sync-worker/index.js
-	@node --test deploy/product-sync-worker/worker-utils.test.js
+	@$(MAKE) test-worker
 	@pnpm --dir frontend run lint:check
 	@pnpm --dir frontend run typecheck
 	@$(MAKE) test-frontend-critical
+
+test-worker:
+	@npm --prefix deploy/product-sync-worker ci --omit=dev --no-audit --no-fund
+	@npm --prefix deploy/product-sync-worker test
 
 test-frontend-critical:
 	@pnpm --dir frontend exec vitest run $(FRONTEND_CRITICAL_VITEST)
