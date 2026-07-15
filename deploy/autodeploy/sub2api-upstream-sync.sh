@@ -151,7 +151,15 @@ fi
 
 log "merging $TARGET into $SOURCE_BRANCH"
 MERGE_STARTED=true
-git -C "$SYNC_REPO_DIR" merge --no-ff --no-edit "$tag_commit"
+merge_output=
+if ! merge_output=$(git -C "$SYNC_REPO_DIR" merge --no-ff --no-edit "$tag_commit" 2>&1); then
+  printf '%s\n' "$merge_output" >&2
+  conflicts=$(git -C "$SYNC_REPO_DIR" diff --name-only --diff-filter=U)
+  if [[ -n "$conflicts" ]]; then
+    fail "merge conflict while integrating $TARGET: ${conflicts//$'\n'/, }"
+  fi
+  fail "git merge failed while integrating $TARGET"
+fi
 MERGE_STARTED=false
 merged_commit=$(git -C "$SYNC_REPO_DIR" rev-parse HEAD)
 git -C "$SYNC_REPO_DIR" push "$ORIGIN_REMOTE" "HEAD:refs/heads/$SOURCE_BRANCH"

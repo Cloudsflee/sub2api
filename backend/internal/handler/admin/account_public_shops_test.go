@@ -18,7 +18,7 @@ func TestPublicAccountImportShopsSubmitDeduplicatesAndPersists(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "shops.json")
 	t.Setenv(publicAccountImportShopLinksFileEnv, storePath)
 
-	h := NewAccountHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAccountHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/shops", h.ListPublicAccountImportShops)
@@ -67,7 +67,7 @@ func TestPublicAccountImportShopsRejectsUnsafeURLs(t *testing.T) {
 	t.Setenv(publicAccountImportEnabledEnv, "true")
 	t.Setenv(publicAccountImportShopLinksFileEnv, filepath.Join(t.TempDir(), "shops.json"))
 
-	h := NewAccountHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAccountHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/shops", h.SubmitPublicAccountImportShop)

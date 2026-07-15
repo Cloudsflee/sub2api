@@ -156,4 +156,35 @@ grep -Fx 'status=failed' "$DATA/upstream-sync-status" >/dev/null
 grep -F 'message=sync repository not found:' "$DATA/upstream-sync-status" >/dev/null
 [[ ! -e "$DATA/upstream-sync-request.processing" ]]
 
+# A conflicting release must report the affected paths and restore the local
+# integration checkout to the remote custom commit.
+printf 'custom-conflict\n' >"$WORK/app.txt"
+git -C "$WORK" commit -am custom-conflict >/dev/null
+git -C "$WORK" push origin custom >/dev/null
+
+git -C "$SEED" switch main >/dev/null
+printf 'release-156\n' >"$SEED/app.txt"
+git -C "$SEED" commit -am release-156 >/dev/null
+git -C "$SEED" tag -a v0.1.156 -m v0.1.156
+git -C "$SEED" push upstream main refs/tags/v0.1.156 >/dev/null
+
+before_conflict=$(git --git-dir="$ORIGIN" rev-parse refs/heads/custom)
+printf 'v0.1.156\n' >"$DATA/upstream-sync-request"
+if run_sync; then
+  echo 'conflicting release unexpectedly succeeded' >&2
+  exit 1
+fi
+after_conflict=$(git --git-dir="$ORIGIN" rev-parse refs/heads/custom)
+local_after_conflict=$(git -C "$WORK" rev-parse HEAD)
+[[ "$before_conflict" == "$after_conflict" ]]
+[[ "$local_after_conflict" == "$after_conflict" ]]
+grep -Fx 'status=failed' "$DATA/upstream-sync-status" >/dev/null
+grep -F 'message=merge conflict while integrating v0.1.156: app.txt (line ' \
+  "$DATA/upstream-sync-status" >/dev/null
+if git -C "$WORK" rev-parse --verify -q MERGE_HEAD >/dev/null; then
+  echo 'conflicting release left MERGE_HEAD behind' >&2
+  exit 1
+fi
+[[ ! -e "$DATA/upstream-sync-request.processing" ]]
+
 echo 'upstream sync tests passed'

@@ -25,7 +25,7 @@ func TestListPublicAccountImportGroupsFiltersAllowlist(t *testing.T) {
 		{ID: 13, Name: "not-allowed", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 14, Name: "wrong-platform", Platform: service.PlatformAnthropic, Status: service.StatusActive},
 	}
-	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -56,7 +56,7 @@ func TestListPublicAccountImportGroupsAutoSyncsActiveOpenAIGroups(t *testing.T) 
 		{ID: 12, Name: "inactive", Platform: service.PlatformOpenAI, Status: service.StatusDisabled},
 		{ID: 14, Name: "wrong-platform", Platform: service.PlatformAnthropic, Status: service.StatusActive},
 	}
-	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	groups, err := h.listPublicAccountImportGroups(t.Context())
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ func TestPublicImportCodexSessionsBindsMultipleAllowedGroups(t *testing.T) {
 		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 	}
-	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	accountJSON, err := json.Marshal(buildCodexAccessOnlyImportValue(t, "workspace-public", "user-public"))
 	require.NoError(t, err)
@@ -138,7 +138,7 @@ func TestPublicImportCodexSessionsMergesGroupsWithoutOverwritingExistingAccount(
 		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 	}
-	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	accountJSON, err := json.Marshal(value)
 	require.NoError(t, err)
@@ -209,7 +209,7 @@ func TestPublicImportCodexSessionsSkipsExistingAccountWithAllGroupsBound(t *test
 		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 	}
-	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	accountJSON, err := json.Marshal(value)
 	require.NoError(t, err)
@@ -268,7 +268,7 @@ func TestImportCodexSessionsMergeExistingGroupsRequiresMatchingCredentials(t *te
 		Credentials: storedItem.Credentials,
 		GroupIDs:    []int64{6},
 	}})
-	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	updateExisting := false
 	skipExisting := true
 	result, err := h.importCodexSessions(t.Context(), CodexSessionImportRequest{
@@ -302,7 +302,7 @@ func TestResolvePublicAccountImportGroupsAddsAllAndSetsPriority(t *testing.T) {
 		{ID: 10, Name: "k12-ourselves", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 		{ID: 11, Name: "OTHER", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 	}
-	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	tests := []struct {
 		name         string
@@ -336,7 +336,7 @@ func TestPublicImportCodexSessionsRejectsGroupOutsideAllowlist(t *testing.T) {
 
 	svc := newStubAdminService()
 	svc.groups = []service.Group{{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive}}
-	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	body, err := json.Marshal(PublicAccountImportRequest{Contents: []string{"{}"}, GroupIDs: []int64{9}})
 	require.NoError(t, err)
@@ -365,7 +365,7 @@ func TestImportCodexSessionsSkipExistingDoesNotOverwrite(t *testing.T) {
 		Status:      service.StatusActive,
 		Credentials: item.Credentials,
 	}})
-	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	updateExisting := false
 	skipExisting := true
 	result, err := h.importCodexSessions(t.Context(), CodexSessionImportRequest{
