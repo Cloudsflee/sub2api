@@ -346,14 +346,26 @@
 
       <section v-show="activeMainTab === 'products'" class="pt-2">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 class="text-lg font-semibold">{{ t('publicAccountImport.productsTitle') }}</h2>
-            <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-              {{ t('publicAccountImport.productsHint') }}
-              <span v-if="pendingProductShops > 0">
-                · {{ t('publicAccountImport.productsSyncing', { count: pendingProductShops }) }}
-              </span>
-            </p>
+          <div class="flex flex-wrap items-start gap-3">
+            <div>
+              <h2 class="text-lg font-semibold">{{ t('publicAccountImport.productsTitle') }}</h2>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                {{ t('publicAccountImport.productsHint') }}
+                <span v-if="refreshingProductShops > 0">
+                  · {{ t('publicAccountImport.productsRefreshing', { count: refreshingProductShops }) }}
+                </span>
+              </p>
+            </div>
+            <button
+              type="button"
+              class="btn btn-secondary shrink-0"
+              :disabled="requestingProductSync || refreshingProductShops > 0"
+              @click="handleProductSync"
+            >
+              <span v-if="requestingProductSync || refreshingProductShops > 0" class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-primary-600 dark:border-dark-600 dark:border-t-primary-400"></span>
+              <Icon v-else name="sync" size="sm" class="mr-2" />
+              {{ refreshingProductShops > 0 ? t('publicAccountImport.syncingProducts') : t('publicAccountImport.syncProducts') }}
+            </button>
           </div>
           <div class="w-full sm:w-80">
             <label for="public-product-search" class="input-label">
@@ -393,6 +405,15 @@
           </div>
         </div>
 
+        <div
+          v-if="productSyncMessage"
+          class="mt-5 border-y px-4 py-3 text-sm"
+          :class="productSyncMessageError
+            ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300'
+            : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300'"
+        >
+          {{ productSyncMessage }}
+        </div>
         <div v-if="productVerificationMessage" class="mt-5 border-y border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
           {{ productVerificationMessage }}
         </div>
@@ -413,7 +434,7 @@
             target="_blank"
             rel="noopener noreferrer nofollow"
             class="flex min-h-32 gap-4 rounded-lg border border-gray-200 bg-white p-4 transition hover:border-primary-300 hover:shadow-sm dark:border-dark-700 dark:bg-dark-900 dark:hover:border-primary-700"
-            :aria-busy="['idle', 'checking'].includes(productPriceStatus(product.id))"
+            :aria-busy="productPriceStatus(product.id) === 'checking'"
             @click="handleProductClick($event, product)"
           >
             <img
@@ -440,7 +461,7 @@
               </div>
               <div class="mt-3 flex items-end justify-between gap-3">
                 <div>
-                  <span v-if="['idle', 'checking'].includes(productPriceStatus(product.id))" class="inline-flex h-7 items-center text-xs font-medium text-gray-500 dark:text-dark-400">
+                  <span v-if="productPriceStatus(product.id) === 'checking'" class="inline-flex h-7 items-center text-xs font-medium text-gray-500 dark:text-dark-400">
                     <span class="mr-2 h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-primary-600 dark:border-dark-600 dark:border-t-primary-400"></span>
                     {{ t('publicAccountImport.priceChecking') }}
                   </span>
@@ -482,15 +503,13 @@ import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import {
   getPublicAccountImportGroups,
-  getPublicAccountImportProductSyncJob,
   getPublicAccountImportProducts,
   getPublicAccountImportShops,
+  requestPublicAccountImportProductRefresh,
   submitPublicAccountImport,
-  submitPublicAccountImportProductSync,
   submitPublicAccountImportShop,
   type PublicAccountImportGroup,
   type PublicAccountImportProduct,
-  type PublicAccountImportProductSyncItem,
   type PublicAccountImportResult,
   type PublicAccountImportShop,
 } from '@/api/publicAccountImport'
@@ -505,7 +524,6 @@ const MAX_FILE_BYTES = 512 * 1024
 const CATALOG_PAGE_SIZE = 10
 const PRODUCT_PRICE_VERIFICATION_TTL_MS = 60_000
 const PRODUCT_PRICE_FAILURE_RETRY_MS = 15_000
-const PRODUCT_PRICE_VERIFY_CONCURRENCY = 3
 
 type ProductPriceStatus = 'checking' | 'verified' | 'unavailable' | 'failed'
 
@@ -545,13 +563,15 @@ const productErrorMessage = ref('')
 const productVerificationMessage = ref('')
 const productPriceVerifications = ref<Record<string, ProductPriceVerification>>({})
 const productSortPrices = new Map<string, number>()
-const pendingProductShops = ref(0)
+const refreshingProductShops = ref(0)
+const requestingProductSync = ref(false)
+const productSyncMessage = ref('')
+const productSyncMessageError = ref(false)
 const productSearch = ref('')
 const productPriceOrder = ref<'desc' | 'asc'>('desc')
 const productPage = ref(1)
 let shopRefreshTimer: number | undefined
 let productRefreshTimer: number | undefined
-let productSyncInProgress = false
 const productVerificationPromises = new Map<string, Promise<boolean>>()
 
 const dragActive = computed(() => dragDepth.value > 0)
@@ -593,12 +613,9 @@ onMounted(async () => {
   void appStore.fetchPublicSettings()
   void loadPublicShops(true)
   void loadPublicProducts(true)
-  void syncNextPublicShop()
   shopRefreshTimer = window.setInterval(() => void loadPublicShops(false), 30_000)
   productRefreshTimer = window.setInterval(() => {
-    void syncNextPublicShop()
     void loadPublicProducts(false)
-    if (activeMainTab.value === 'products') void verifyVisiblePublicProducts()
   }, 10_000)
   try {
     groups.value = await getPublicAccountImportGroups()
@@ -619,9 +636,6 @@ watch(productSearch, () => { productPage.value = 1 })
 watch(productPriceOrder, () => { productPage.value = 1 })
 watch(shopPageCount, (count) => { shopPage.value = Math.min(shopPage.value, count) })
 watch(productPageCount, (count) => { productPage.value = Math.min(productPage.value, count) })
-watch([activeMainTab, productPage, productSearch, productPriceOrder, () => products.value.length], ([tab]) => {
-  if (tab === 'products') void verifyVisiblePublicProducts()
-}, { flush: 'post' })
 
 function createIdempotencyKey(): string {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
@@ -762,15 +776,19 @@ async function loadPublicProducts(showLoading: boolean) {
   if (showLoading) loadingProducts.value = true
   try {
     const catalog = await getPublicAccountImportProducts()
+    const wasRefreshing = refreshingProductShops.value > 0
     const nextProducts = catalog.products
       .filter((product) => !recentProductVerification(product.id, 'unavailable'))
       .map(mergeRecentProductVerification)
     productSortPrices.clear()
     for (const product of nextProducts) productSortPrices.set(product.id, product.price)
     products.value = nextProducts
-    pendingProductShops.value = catalog.pending_shops
+    refreshingProductShops.value = catalog.refreshing_shops
+    if (wasRefreshing && refreshingProductShops.value === 0) {
+      productSyncMessage.value = t('publicAccountImport.productsSyncComplete')
+      productSyncMessageError.value = false
+    }
     productErrorMessage.value = ''
-    if (activeMainTab.value === 'products') void verifyVisiblePublicProducts()
   } catch (error: any) {
     if (showLoading || products.value.length === 0) {
       productErrorMessage.value = error?.message || t('publicAccountImport.productLoadFailed')
@@ -882,22 +900,6 @@ async function verifyPublicProduct(product: PublicAccountImportProduct, force = 
   return task
 }
 
-async function verifyVisiblePublicProducts() {
-  const visible = [...pagedProducts.value]
-  let cursor = 0
-  const verifyNext = async () => {
-    while (cursor < visible.length) {
-      const product = visible[cursor]
-      cursor += 1
-      await verifyPublicProduct(product)
-    }
-  }
-  await Promise.all(Array.from(
-    { length: Math.min(PRODUCT_PRICE_VERIFY_CONCURRENCY, visible.length) },
-    () => verifyNext()
-  ))
-}
-
 async function handleProductClick(event: MouseEvent, product: PublicAccountImportProduct) {
   event.preventDefault()
   productVerificationMessage.value = ''
@@ -927,62 +929,29 @@ async function handleProductClick(event: MouseEvent, product: PublicAccountImpor
   else window.location.assign(destination)
 }
 
-async function syncNextPublicShop() {
-  if (productSyncInProgress) return
-  productSyncInProgress = true
+async function handleProductSync() {
+  if (requestingProductSync.value || refreshingProductShops.value > 0) return
+  requestingProductSync.value = true
+  productSyncMessage.value = ''
+  productSyncMessageError.value = false
   try {
-    const job = await getPublicAccountImportProductSyncJob()
-    if (!job) return
-    const info = await postPublicShopAPI('/shopApi/Shop/info', {
-      token: job.token,
-      category_key: null,
-    })
-    if (info.code !== 1) throw new Error(info.msg || 'Shop info request failed')
-    const counts: Record<string, number> = {
-      card: Number(info.data?.card_count || 0),
-      article: Number(info.data?.article_count || 0),
-      resource: Number(info.data?.resource_count || 0),
-      equity: Number(info.data?.equity_count || 0),
+    const refresh = await requestPublicAccountImportProductRefresh()
+    refreshingProductShops.value = refresh.refreshing_shops
+    if (refresh.accepted) {
+      productSyncMessage.value = t('publicAccountImport.productsSyncQueued', { count: refresh.queued_shops })
+    } else if (refresh.refreshing_shops > 0) {
+      productSyncMessage.value = t('publicAccountImport.productsSyncAlreadyRunning')
+    } else {
+      productSyncMessage.value = t('publicAccountImport.productsSyncRecent', {
+        seconds: refresh.retry_after_seconds,
+      })
     }
-    const products: PublicAccountImportProductSyncItem[] = []
-    for (const [goodsType, count] of Object.entries(counts)) {
-      if (count <= 0) continue
-      for (let current = 1; current <= 10; current += 1) {
-        const result = await postPublicShopAPI('/shopApi/Shop/goodsList', {
-          token: job.token,
-          keywords: '',
-          category_id: 0,
-          goods_type: goodsType,
-          current,
-          pageSize: 100,
-        })
-        if (result.code !== 1) throw new Error(result.msg || 'Product request failed')
-        const list = Array.isArray(result.data?.list) ? result.data.list : []
-        for (const item of list) {
-          const stock = Number(item.extend?.stock_count || 0)
-          if (stock <= 0) continue
-          products.push({
-            goods_key: String(item.goods_key || ''),
-            name: String(item.name || ''),
-            url: String(item.link || ''),
-            image: String(item.image || ''),
-            category: String(item.category?.name || ''),
-            goods_type: String(item.goods_type || goodsType),
-            price: Number(item.price || 0),
-            market_price: Number(item.market_price || 0),
-            stock,
-          })
-        }
-        const total = Number(result.data?.total || 0)
-        if (list.length < 100 || current * 100 >= total) break
-      }
-    }
-    await submitPublicAccountImportProductSync(job.shop_id, products)
     await loadPublicProducts(false)
-  } catch {
-    // The backend reservation naturally retries this shop after its refresh window.
+  } catch (error: any) {
+    productSyncMessage.value = error?.message || t('publicAccountImport.productsSyncFailed')
+    productSyncMessageError.value = true
   } finally {
-    productSyncInProgress = false
+    requestingProductSync.value = false
   }
 }
 

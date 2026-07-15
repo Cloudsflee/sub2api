@@ -30,6 +30,26 @@ func TestPublicAccountImportProductCacheIsFresh(t *testing.T) {
 	}
 }
 
+func TestPublicAccountImportProductSnapshotKeepsLastSuccessfulStaleProducts(t *testing.T) {
+	now := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+	shops := []PublicAccountImportShop{{ID: "stale"}, {ID: "missing"}}
+	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+		"stale": {
+			UpdatedAt:          now.Add(-time.Hour).Format(time.RFC3339),
+			RefreshRequestedAt: now.Format(time.RFC3339),
+			Products: []PublicAccountImportProduct{
+				{ID: "available", Name: "Available", Price: 2, Stock: 1},
+				{ID: "sold-out", Name: "Sold out", Price: 3, Stock: 0},
+			},
+		},
+	}}
+
+	products, pending, refreshing := publicAccountImportProductSnapshot(shops, store, now)
+	require.Equal(t, []string{"available"}, []string{products[0].ID})
+	require.Equal(t, 2, pending)
+	require.Equal(t, 1, refreshing)
+}
+
 func TestSelectPublicAccountImportProductSyncShopUsesSuccessfulRefreshAndShortLease(t *testing.T) {
 	now := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
 	shops := []PublicAccountImportShop{
@@ -85,4 +105,46 @@ func TestSelectPublicAccountImportProductSyncShopRetriesInvalidFutureTimestamp(t
 	selected := selectPublicAccountImportProductSyncShop(shops, store, now)
 	require.NotNil(t, selected)
 	require.Equal(t, "future", selected.ID)
+}
+
+func TestSelectPublicAccountImportProductSyncShopsLeasesDistinctBatch(t *testing.T) {
+	now := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+	shops := []PublicAccountImportShop{
+		{ID: "stale"},
+		{ID: "requested"},
+		{ID: "leased"},
+		{ID: "fresh"},
+	}
+	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+		"stale": {
+			UpdatedAt:   now.Add(-time.Hour).Format(time.RFC3339),
+			LastAttempt: now.Add(-10 * time.Minute).Format(time.RFC3339),
+		},
+		"requested": {
+			UpdatedAt:          now.Add(-time.Minute).Format(time.RFC3339),
+			LastAttempt:        now.Add(-5 * time.Minute).Format(time.RFC3339),
+			RefreshRequestedAt: now.Format(time.RFC3339),
+		},
+		"leased": {
+			UpdatedAt:   now.Add(-time.Hour).Format(time.RFC3339),
+			LastAttempt: now.Add(-30 * time.Second).Format(time.RFC3339),
+		},
+		"fresh": {UpdatedAt: now.Add(-time.Minute).Format(time.RFC3339)},
+	}}
+
+	selected := selectPublicAccountImportProductSyncShops(shops, store, now, 2)
+	require.Equal(t, []string{"stale", "requested"}, []string{selected[0].ID, selected[1].ID})
+}
+
+func TestCountPublicAccountImportProductRefreshesIgnoresInvalidAndExpiredRequests(t *testing.T) {
+	shops := []PublicAccountImportShop{{ID: "pending"}, {ID: "invalid"}, {ID: "expired"}, {ID: "done"}}
+	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+		"pending": {RefreshRequestedAt: "2026-07-14T10:00:00Z"},
+		"invalid": {RefreshRequestedAt: "invalid"},
+		"expired": {RefreshRequestedAt: "2026-07-14T09:30:00Z"},
+		"done":    {},
+	}}
+
+	now := time.Date(2026, 7, 14, 10, 5, 0, 0, time.UTC)
+	require.Equal(t, 1, countPublicAccountImportProductRefreshes(shops, store, now))
 }

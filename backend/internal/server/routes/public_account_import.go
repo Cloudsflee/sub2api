@@ -14,6 +14,7 @@ func RegisterPublicAccountImportRoutes(v1 *gin.RouterGroup, h *handler.Handlers,
 		publicImport.POST("/shops", h.Admin.Account.SubmitPublicAccountImportShop)
 		publicImport.GET("/products", h.Admin.Account.ListPublicAccountImportProducts)
 		publicImport.GET("/products/sync-job", h.Admin.Account.GetPublicAccountImportProductSyncJob)
+		publicImport.POST("/products/refresh", h.Admin.Account.RequestPublicAccountImportProductRefresh)
 		publicImport.POST("/products/sync", h.Admin.Account.SubmitPublicAccountImportProductSync)
 		publicImport.POST("", h.Admin.Account.PublicImportCodexSessions)
 	}

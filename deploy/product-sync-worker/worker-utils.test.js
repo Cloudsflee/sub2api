@@ -5,6 +5,7 @@ const {
   isVerificationPageState,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
+  parseSyncConcurrency,
 } = require('./worker-utils')
 
 test('parseProxyConfiguration removes credentials from the Chromium proxy argument', () => {
@@ -42,4 +43,12 @@ test('parsePositiveMilliseconds validates timing configuration', () => {
   assert.equal(parsePositiveMilliseconds(undefined, 20000, 'TIMEOUT'), 20000)
   assert.equal(parsePositiveMilliseconds('1500.9', 20000, 'TIMEOUT'), 1500)
   assert.throws(() => parsePositiveMilliseconds('0', 20000, 'TIMEOUT'), /positive number/)
+})
+
+test('parseSyncConcurrency defaults to three and enforces the worker limit', () => {
+  assert.equal(parseSyncConcurrency(undefined), 3)
+  assert.equal(parseSyncConcurrency('5'), 5)
+  assert.throws(() => parseSyncConcurrency('0'), /between 1 and 5/)
+  assert.throws(() => parseSyncConcurrency('2.5'), /between 1 and 5/)
+  assert.throws(() => parseSyncConcurrency('6'), /between 1 and 5/)
 })

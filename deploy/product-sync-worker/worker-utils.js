@@ -9,6 +9,15 @@ function parsePositiveMilliseconds(value, fallback, name) {
   return Math.floor(parsed)
 }
 
+function parseSyncConcurrency(value, fallback = 3) {
+  if (value === undefined || value === null || value === '') return fallback
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 5) {
+    throw new Error('PRODUCT_SYNC_CONCURRENCY must be an integer between 1 and 5')
+  }
+  return parsed
+}
+
 function parseProxyConfiguration(value) {
   const raw = String(value || '').trim()
   if (!raw) return null
@@ -51,4 +60,5 @@ module.exports = {
   isVerificationPageState,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
+  parseSyncConcurrency,
 }

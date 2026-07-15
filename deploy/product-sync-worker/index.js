@@ -4,6 +4,7 @@ const {
   isVerificationPageState,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
+  parseSyncConcurrency,
 } = require('./worker-utils')
 
 const backendURL = process.env.BACKEND_URL || 'http://sub2api:8080'
@@ -12,6 +13,7 @@ const verificationCooldownMilliseconds = parsePositiveMilliseconds(process.env.V
 const shopRequestTimeoutMilliseconds = parsePositiveMilliseconds(process.env.SHOP_REQUEST_TIMEOUT_MILLISECONDS, 20000, 'SHOP_REQUEST_TIMEOUT_MILLISECONDS')
 const browserProtocolTimeoutMilliseconds = parsePositiveMilliseconds(process.env.BROWSER_PROTOCOL_TIMEOUT_MILLISECONDS, 45000, 'BROWSER_PROTOCOL_TIMEOUT_MILLISECONDS')
 const backendRequestTimeoutMilliseconds = parsePositiveMilliseconds(process.env.BACKEND_REQUEST_TIMEOUT_MILLISECONDS, 10000, 'BACKEND_REQUEST_TIMEOUT_MILLISECONDS')
+const syncConcurrency = parseSyncConcurrency(process.env.PRODUCT_SYNC_CONCURRENCY)
 const chromePath = process.env.CHROME_PATH || '/usr/bin/chromium-browser'
 const chromeProfileDirectory = process.env.CHROME_PROFILE_DIRECTORY || '/data/chrome-profile'
 const statusFile = process.env.STATUS_FILE || '/data/status.json'
@@ -155,7 +157,6 @@ async function syncJob(page, job) {
       })
       console.log(`${new Date().toISOString()} synced ${job.shop_name}: ${result.accepted} products`)
       publishStatus({
-        state: 'idle',
         last_success_at: new Date().toISOString(),
         last_shop_id: job.shop_id,
         last_error: '',
@@ -210,26 +211,51 @@ async function runBrowser() {
     if (['image', 'media', 'font'].includes(route.request().resourceType())) await route.abort()
     else await route.continue()
   })
-  const pages = context.pages()
-  const page = pages[0] || await context.newPage()
+  const existingPages = context.pages()
+  const pages = []
+  for (let index = 0; index < syncConcurrency; index += 1) {
+    pages.push(existingPages[index] || await context.newPage())
+  }
   const browser = context.browser()
   publishStatus({
     state: 'idle',
+    active_jobs: 0,
     browser_engine: 'playwright',
+    sync_concurrency: syncConcurrency,
     browser_started_at: new Date().toISOString(),
   })
 
   while (browser?.isConnected() && !stopping) {
     let nextPoll = pollMilliseconds
     try {
-      const data = await backend('/api/v1/public/account-import/products/sync-job')
-      publishStatus({ state: data.job ? 'syncing' : 'idle', last_poll_at: new Date().toISOString() })
-      if (data.job) await syncJob(page, data.job)
+      const data = await backend(`/api/v1/public/account-import/products/sync-job?limit=${syncConcurrency}`)
+      const jobs = Array.isArray(data.jobs) && data.jobs.length > 0
+        ? data.jobs.slice(0, syncConcurrency)
+        : data.job ? [data.job] : []
+      publishStatus({
+        state: jobs.length > 0 ? 'syncing' : 'idle',
+        active_jobs: jobs.length,
+        last_poll_at: new Date().toISOString(),
+      })
+      if (jobs.length > 0) {
+        const results = await Promise.allSettled(jobs.map((job, index) => syncJob(pages[index], job)))
+        const failures = results
+          .map((result, index) => ({ result, job: jobs[index] }))
+          .filter(({ result }) => result.status === 'rejected')
+        for (const { result, job } of failures) {
+          console.error(`${new Date().toISOString()} sync failed for ${job.shop_name}: ${errorMessage(result.reason)}`)
+        }
+        const verificationFailure = failures.find(({ result }) => isVerificationError(result.reason))
+        if (verificationFailure) throw verificationFailure.result.reason
+        if (failures.length > 0) throw failures[0].result.reason
+        publishStatus({ state: 'idle', active_jobs: 0 })
+      }
     } catch (error) {
       const message = errorMessage(error)
-      console.error(`${new Date().toISOString()} sync failed: ${message}`)
+      console.error(`${new Date().toISOString()} sync batch failed: ${message}`)
       publishStatus({
         state: isVerificationError(error) ? 'blocked' : 'error',
+        active_jobs: 0,
         last_error_at: new Date().toISOString(),
         last_error: message,
       })
