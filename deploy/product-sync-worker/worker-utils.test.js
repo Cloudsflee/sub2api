@@ -45,8 +45,8 @@ test('parsePositiveMilliseconds validates timing configuration', () => {
   assert.throws(() => parsePositiveMilliseconds('0', 20000, 'TIMEOUT'), /positive number/)
 })
 
-test('parseSyncConcurrency defaults to three and enforces the worker limit', () => {
-  assert.equal(parseSyncConcurrency(undefined), 3)
+test('parseSyncConcurrency defaults to two and enforces the worker limit', () => {
+  assert.equal(parseSyncConcurrency(undefined), 2)
   assert.equal(parseSyncConcurrency('5'), 5)
   assert.throws(() => parseSyncConcurrency('0'), /between 1 and 5/)
   assert.throws(() => parseSyncConcurrency('2.5'), /between 1 and 5/)

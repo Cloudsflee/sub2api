@@ -291,5 +291,6 @@ func TestCountPublicAccountImportProductActiveSyncsUsesValidLeasesOnly(t *testin
 	}}
 
 	require.Equal(t, 2, countPublicAccountImportProductActiveSyncs(shops, store, now))
-	require.Equal(t, 3, publicAccountImportProductMaxSyncJobs-countPublicAccountImportProductActiveSyncs(shops, store, now))
+	require.Equal(t, 2, publicAccountImportProductMaxSyncJobs)
+	require.Zero(t, publicAccountImportProductMaxSyncJobs-countPublicAccountImportProductActiveSyncs(shops, store, now))
 }

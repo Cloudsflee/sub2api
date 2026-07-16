@@ -77,14 +77,6 @@ export interface PublicAccountImportProductsResponse {
   refresh_seconds: number
 }
 
-export interface PublicAccountImportProductRefreshResponse {
-  accepted: boolean
-  queued_shops: number
-  refreshing_shops: number
-  failed_shops: number
-  retry_after_seconds: number
-}
-
 export interface PublicAccountImportProductSyncJob {
   shop_id: string
   shop_name: string
@@ -153,19 +145,6 @@ export async function getPublicAccountImportProducts(): Promise<PublicAccountImp
     refreshing_shops: data.refreshing_shops || 0,
     failed_shops: data.failed_shops || 0,
     refresh_seconds: data.refresh_seconds || 900,
-  }
-}
-
-export async function requestPublicAccountImportProductRefresh(): Promise<PublicAccountImportProductRefreshResponse> {
-  const { data } = await apiClient.post<PublicAccountImportProductRefreshResponse>(
-    '/public/account-import/products/refresh'
-  )
-  return {
-    accepted: Boolean(data.accepted),
-    queued_shops: data.queued_shops || 0,
-    refreshing_shops: data.refreshing_shops || 0,
-    failed_shops: data.failed_shops || 0,
-    retry_after_seconds: data.retry_after_seconds || 0,
   }
 }
 

@@ -16,9 +16,9 @@ describe('PublicAccountImportView product synchronization', () => {
     expect(source).not.toContain("['idle', 'checking'].includes(productPriceStatus(product.id))")
   })
 
-  it('queues synchronization only from the explicit product action', () => {
-    expect(source).toContain('@click="handleProductSync"')
-    expect(source).toContain('await requestPublicAccountImportProductRefresh()')
+  it('does not expose a manual full-catalog synchronization action', () => {
+    expect(source).not.toContain('@click="handleProductSync"')
+    expect(source).not.toContain('requestPublicAccountImportProductRefresh')
     expect(source).toContain("productPriceStatus(product.id) === 'checking'")
   })
 
@@ -26,6 +26,6 @@ describe('PublicAccountImportView product synchronization', () => {
     expect(source).toContain('queuedProductShops.value = catalog.queued_shops')
     expect(source).toContain('refreshingProductShops.value = catalog.refreshing_shops')
     expect(source).toContain("productsRefreshingQueued")
-    expect(source).toContain("productsSyncIncomplete")
+    expect(source).toContain('productRefreshTimer = window.setInterval')
   })
 })

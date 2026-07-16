@@ -9,7 +9,7 @@ function parsePositiveMilliseconds(value, fallback, name) {
   return Math.floor(parsed)
 }
 
-function parseSyncConcurrency(value, fallback = 3) {
+function parseSyncConcurrency(value, fallback = 2) {
   if (value === undefined || value === null || value === '') return fallback
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 5) {

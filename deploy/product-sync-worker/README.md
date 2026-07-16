@@ -22,13 +22,13 @@ BROWSER_PROTOCOL_TIMEOUT_MILLISECONDS=45000
 BACKEND_REQUEST_TIMEOUT_MILLISECONDS=10000
 VERIFICATION_COOLDOWN_MILLISECONDS=900000
 CHROME_PROFILE_DIRECTORY=/data/chrome-profile
-PRODUCT_SYNC_CONCURRENCY=3
+PRODUCT_SYNC_CONCURRENCY=2
 ```
 
-The worker leases up to three different shops per batch by default. The
+The worker leases up to two different shops per batch by default. The
 backend lease prevents another browser page from receiving the same shop while
-that job is active. Concurrency is capped at five to limit Chromium and ESA
-pressure.
+that job is active. The backend caps active jobs at two to limit Chromium and
+ESA pressure.
 
 Authenticated SOCKS5 proxies are not supported by Chromium directly; use an
 HTTP/HTTPS proxy for authenticated access.
