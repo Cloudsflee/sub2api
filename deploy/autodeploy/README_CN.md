@@ -29,6 +29,8 @@ sudo journalctl -u sub2api-autodeploy.service -n 200 --no-pager
 
 安装器会先确认 `/opt/sub2api-integration` 是位于 `custom` 分支的 Git 仓库；
 条件不满足时不会启用更新定时器，避免管理页接受更新后才发现宿主机没有集成仓库。
+更新服务通过固定 launcher 从该仓库读取当前版本的同步脚本，因此脚本修复不需要再次
+手工复制到 `/usr/local/sbin`。旧安装升级到此机制时需要重新执行一次安装命令。
 
 ## 常用命令
 
@@ -101,9 +103,9 @@ UPSTREAM_SYNC_LOCK_FILE=/run/lock/sub2api-upstream-sync.lock
 1. 后端原子写入只包含 `vX.Y.Z` 的更新请求。
 2. `sub2api-upstream-sync.timer` 在宿主机读取请求并持有独立的仓库同步锁。
 3. 同步脚本确认集成仓库干净、tag 属于官方 `main`，且 fork 的 `main` 可以快进。
-4. 脚本先将对应提交推送到 `Cloudsflee/sub2api` 的 `main`，并创建
+4. 脚本先在本地把该 tag 合并到 `custom`；冲突时会记录具体冲突文件并恢复工作区。
+5. 合并成功后，使用一次原子 push 同时推进 fork 的 `main`、`custom` 并创建
    `upstream/vX.Y.Z` 追踪 tag；不会推送 `v*` tag 误触发 fork 的 Release workflow。
-5. 再把该 tag 合并到 `custom` 并推送，从而触发 GitHub CI。
 6. CI 全绿后推进 `deploy/custom`，服务器按正常备份、健康检查和回滚流程部署。
 
 合并冲突、非快进、工作区修改或网络错误都会终止同步；此时不会推进

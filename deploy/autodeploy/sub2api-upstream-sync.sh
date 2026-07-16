@@ -135,12 +135,15 @@ git -C "$SYNC_REPO_DIR" merge-base --is-ancestor "$tag_commit" "$upstream_main" 
 git -C "$SYNC_REPO_DIR" merge-base --is-ancestor "$origin_main" "$tag_commit" \
   || fail "$ORIGIN_REMOTE/$MAIN_BRANCH cannot fast-forward to $TARGET"
 
-log "updating fork tracking tag and $MAIN_BRANCH before custom integration"
-git -C "$SYNC_REPO_DIR" push "$ORIGIN_REMOTE" \
-  "$tag_commit:refs/tags/${FORK_TAG_PREFIX}${TARGET}"
-git -C "$SYNC_REPO_DIR" push "$ORIGIN_REMOTE" "$tag_commit:refs/heads/$MAIN_BRANCH"
-
 if git -C "$SYNC_REPO_DIR" merge-base --is-ancestor "$tag_commit" HEAD; then
+  log "updating fork tracking refs for an already integrated release"
+  push_output=
+  if ! push_output=$(git -C "$SYNC_REPO_DIR" push --atomic "$ORIGIN_REMOTE" \
+    "$tag_commit:refs/tags/${FORK_TAG_PREFIX}${TARGET}" \
+    "$tag_commit:refs/heads/$MAIN_BRANCH" 2>&1); then
+    printf '%s\n' "$push_output" >&2
+    fail "git push failed while publishing tracking refs for $TARGET"
+  fi
   current=$(git -C "$SYNC_REPO_DIR" rev-parse HEAD)
   write_status current "$TARGET is already contained in $SOURCE_BRANCH" "$current"
   rm -f "$PROCESSING_FILE"
@@ -162,7 +165,15 @@ if ! merge_output=$(git -C "$SYNC_REPO_DIR" merge --no-ff --no-edit "$tag_commit
 fi
 MERGE_STARTED=false
 merged_commit=$(git -C "$SYNC_REPO_DIR" rev-parse HEAD)
-git -C "$SYNC_REPO_DIR" push "$ORIGIN_REMOTE" "HEAD:refs/heads/$SOURCE_BRANCH"
+log "pushing fork tracking refs and $SOURCE_BRANCH atomically"
+push_output=
+if ! push_output=$(git -C "$SYNC_REPO_DIR" push --atomic "$ORIGIN_REMOTE" \
+  "$tag_commit:refs/tags/${FORK_TAG_PREFIX}${TARGET}" \
+  "$tag_commit:refs/heads/$MAIN_BRANCH" \
+  "HEAD:refs/heads/$SOURCE_BRANCH" 2>&1); then
+  printf '%s\n' "$push_output" >&2
+  fail "git push failed while publishing $TARGET and $SOURCE_BRANCH"
+fi
 
 write_status pushed "$TARGET merged into $SOURCE_BRANCH; waiting for GitHub CI" "$merged_commit"
 rm -f "$PROCESSING_FILE"

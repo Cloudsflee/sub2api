@@ -29,7 +29,7 @@ git -C "$SYNC_REPO_DIR" rev-parse --show-toplevel >/dev/null 2>&1 || {
   exit 1
 }
 
-for script in sub2api-autodeploy.sh sub2api-health-restart.sh sub2api-backup.sh sub2api-upstream-sync.sh install.sh; do
+for script in sub2api-autodeploy.sh sub2api-health-restart.sh sub2api-backup.sh sub2api-upstream-sync.sh sub2api-upstream-sync-launcher.sh install.sh; do
   bash -n "$SCRIPT_DIR/$script"
 done
 python3 -m py_compile "$SCRIPT_DIR/configure-compose.py"
@@ -50,6 +50,7 @@ if [[ -f /usr/local/sbin/sub2api-backup.sh ]] \
 fi
 install -m 0755 "$SCRIPT_DIR/sub2api-backup.sh" /usr/local/sbin/sub2api-backup.sh
 install -m 0755 "$SCRIPT_DIR/sub2api-upstream-sync.sh" /usr/local/sbin/sub2api-upstream-sync.sh
+install -m 0755 "$SCRIPT_DIR/sub2api-upstream-sync-launcher.sh" /usr/local/sbin/sub2api-upstream-sync-launcher.sh
 
 install -m 0644 "$SCRIPT_DIR/sub2api-autodeploy.service" /etc/systemd/system/sub2api-autodeploy.service
 install -m 0644 "$SCRIPT_DIR/sub2api-autodeploy.timer" /etc/systemd/system/sub2api-autodeploy.timer

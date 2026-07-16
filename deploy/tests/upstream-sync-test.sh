@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 SYNC_SCRIPT=$ROOT_DIR/deploy/autodeploy/sub2api-upstream-sync.sh
+SYNC_LAUNCHER=$ROOT_DIR/deploy/autodeploy/sub2api-upstream-sync-launcher.sh
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
@@ -11,6 +12,16 @@ ORIGIN=$TEST_ROOT/origin.git
 SEED=$TEST_ROOT/seed
 WORK=$TEST_ROOT/work
 DATA=$TEST_ROOT/data
+
+LAUNCHER_REPO=$TEST_ROOT/launcher-repo
+LAUNCHER_MARKER=$TEST_ROOT/launcher-marker
+mkdir -p "$LAUNCHER_REPO/deploy/autodeploy"
+cat >"$LAUNCHER_REPO/deploy/autodeploy/sub2api-upstream-sync.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$SYNC_REPO_DIR" >"$LAUNCHER_MARKER"
+EOF
+SYNC_REPO_DIR=$LAUNCHER_REPO LAUNCHER_MARKER=$LAUNCHER_MARKER bash "$SYNC_LAUNCHER"
+grep -Fx "$LAUNCHER_REPO" "$LAUNCHER_MARKER" >/dev/null
 
 git init --bare --initial-branch=main "$UPSTREAM" >/dev/null
 git init --bare --initial-branch=main "$ORIGIN" >/dev/null
@@ -111,6 +122,8 @@ local_after_failure=$(git -C "$WORK" rev-parse HEAD)
 [[ "$before_failed_push" == "$after_failed_push" ]]
 [[ "$local_after_failure" == "$after_failed_push" ]]
 grep -Fx 'status=failed' "$DATA/upstream-sync-status" >/dev/null
+grep -F 'message=git push failed while publishing v0.1.155 and custom' \
+  "$DATA/upstream-sync-status" >/dev/null
 [[ ! -e "$DATA/upstream-sync-request.processing" ]]
 
 printf 'v0.1.155\n' >"$DATA/upstream-sync-request"

@@ -6,7 +6,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/sub2api-autodeploy
-ExecStart=/usr/local/sbin/sub2api-upstream-sync.sh
+ExecStart=/usr/local/sbin/sub2api-upstream-sync-launcher.sh
 TimeoutStartSec=15min
 Nice=10
 IOSchedulingClass=best-effort
