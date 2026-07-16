@@ -243,6 +243,7 @@ prune_build_cache() {
   log "pruning unused Docker build cache (max ${BUILD_CACHE_MAX_USED_SPACE}, min free ${BUILD_CACHE_MIN_FREE_SPACE})"
   set +e
   output=$(docker buildx prune --all --force \
+    --filter 'type!=exec.cachemount' \
     --max-used-space "$BUILD_CACHE_MAX_USED_SPACE" \
     --min-free-space "$BUILD_CACHE_MIN_FREE_SPACE" 2>&1)
   rc=$?

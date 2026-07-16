@@ -47,4 +47,28 @@ git -C "$REPO" update-ref -d refs/tags/upstream/v9.0.0-rc1
 git -C "$REPO" tag -d v0.1.153 >/dev/null
 [[ "$(resolve_official_version)" == 0.1.152 ]]
 
+FAKE_BIN=$TEST_ROOT/bin
+DOCKER_ARGS_FILE=$TEST_ROOT/docker-args
+mkdir -p "$FAKE_BIN"
+cat >"$FAKE_BIN/docker" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$DOCKER_ARGS_FILE"
+printf 'Total:\t0B\n'
+EOF
+chmod +x "$FAKE_BIN/docker"
+export DOCKER_ARGS_FILE
+PATH="$FAKE_BIN:$PATH"
+PRUNE_BUILD_CACHE=true
+BUILD_CACHE_MAX_USED_SPACE=6gb
+BUILD_CACHE_MIN_FREE_SPACE=8gb
+prune_build_cache >/dev/null
+mapfile -t docker_args <"$DOCKER_ARGS_FILE"
+expected_docker_args=(
+  buildx prune --all --force
+  --filter 'type!=exec.cachemount'
+  --max-used-space 6gb
+  --min-free-space 8gb
+)
+[[ "${docker_args[*]}" == "${expected_docker_args[*]}" ]]
+
 echo 'autodeploy version tests passed'
