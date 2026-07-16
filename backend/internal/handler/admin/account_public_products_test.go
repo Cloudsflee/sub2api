@@ -107,6 +107,18 @@ func TestSelectPublicAccountImportProductSyncShopReturnsNilWhenNothingIsDue(t *t
 	require.Nil(t, selectPublicAccountImportProductSyncShop(shops, store, now))
 }
 
+func TestSelectPublicAccountImportProductSyncShopKeepsTenMinuteCacheFresh(t *testing.T) {
+	now := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+	shops := []PublicAccountImportShop{{ID: "ten-minutes-old"}, {ID: "stale"}}
+	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+		"ten-minutes-old": {UpdatedAt: now.Add(-10 * time.Minute).Format(time.RFC3339Nano)},
+		"stale":           {UpdatedAt: now.Add(-publicAccountImportProductRefreshAge - time.Second).Format(time.RFC3339Nano)},
+	}}
+
+	selected := selectPublicAccountImportProductSyncShops(shops, store, now, 2)
+	require.Equal(t, []string{"stale"}, []string{selected[0].ID})
+}
+
 func TestSelectPublicAccountImportProductSyncShopRetriesInvalidFutureTimestamp(t *testing.T) {
 	now := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
 	shops := []PublicAccountImportShop{{ID: "future"}}

@@ -152,7 +152,7 @@ export async function getPublicAccountImportProducts(): Promise<PublicAccountImp
     queued_shops: data.queued_shops || 0,
     refreshing_shops: data.refreshing_shops || 0,
     failed_shops: data.failed_shops || 0,
-    refresh_seconds: data.refresh_seconds || 300,
+    refresh_seconds: data.refresh_seconds || 900,
   }
 }
 

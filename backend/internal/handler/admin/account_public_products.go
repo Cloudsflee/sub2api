@@ -25,7 +25,7 @@ const (
 	publicAccountImportProductsFile           = "/app/data/public-account-import-products.json"
 	publicAccountImportProductStoreVersion    = 1
 	publicAccountImportProductSyncInterval    = 10 * time.Second
-	publicAccountImportProductRefreshAge      = 5 * time.Minute
+	publicAccountImportProductRefreshAge      = 15 * time.Minute
 	publicAccountImportProductRetryAge        = 1 * time.Minute
 	publicAccountImportProductSyncLeaseAge    = 5 * time.Minute
 	publicAccountImportProductMaxCacheAge     = 15 * time.Minute
