@@ -19,6 +19,7 @@ jobs:
           /bin/bash -n deploy/autodeploy/sub2api-health-restart.sh
           /bin/bash -n deploy/autodeploy/sub2api-backup.sh
           /bin/bash -n deploy/autodeploy/sub2api-upstream-sync.sh
+          /bin/bash -n deploy/autodeploy/sub2api-upstream-sync-launcher.sh
           /bin/bash -n deploy/autodeploy/install.sh
           python3 -m py_compile deploy/autodeploy/configure-compose.py
           /bin/bash deploy/tests/apple-container-test.sh
@@ -30,6 +31,7 @@ jobs:
       - name: Test managed upstream sync
         run: |
           /bin/bash -n deploy/autodeploy/sub2api-upstream-sync.sh
+          /bin/bash -n deploy/autodeploy/sub2api-upstream-sync-launcher.sh
           /bin/bash deploy/tests/autodeploy-version-test.sh
           /bin/bash deploy/tests/upstream-sync-test.sh
 
