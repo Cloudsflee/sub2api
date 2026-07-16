@@ -71,7 +71,9 @@ export interface PublicAccountImportProductsResponse {
   products: PublicAccountImportProduct[]
   shop_count: number
   pending_shops: number
+  queued_shops: number
   refreshing_shops: number
+  failed_shops: number
   refresh_seconds: number
 }
 
@@ -79,6 +81,7 @@ export interface PublicAccountImportProductRefreshResponse {
   accepted: boolean
   queued_shops: number
   refreshing_shops: number
+  failed_shops: number
   retry_after_seconds: number
 }
 
@@ -87,6 +90,7 @@ export interface PublicAccountImportProductSyncJob {
   shop_name: string
   shop_url: string
   token: string
+  attempt_id: string
 }
 
 export interface PublicAccountImportProductSyncItem {
@@ -145,7 +149,9 @@ export async function getPublicAccountImportProducts(): Promise<PublicAccountImp
     products: data.products || [],
     shop_count: data.shop_count || 0,
     pending_shops: data.pending_shops || 0,
+    queued_shops: data.queued_shops || 0,
     refreshing_shops: data.refreshing_shops || 0,
+    failed_shops: data.failed_shops || 0,
     refresh_seconds: data.refresh_seconds || 300,
   }
 }
@@ -158,6 +164,7 @@ export async function requestPublicAccountImportProductRefresh(): Promise<Public
     accepted: Boolean(data.accepted),
     queued_shops: data.queued_shops || 0,
     refreshing_shops: data.refreshing_shops || 0,
+    failed_shops: data.failed_shops || 0,
     retry_after_seconds: data.retry_after_seconds || 0,
   }
 }
@@ -171,10 +178,12 @@ export async function getPublicAccountImportProductSyncJob(): Promise<PublicAcco
 
 export async function submitPublicAccountImportProductSync(
   shopId: string,
-  products: PublicAccountImportProductSyncItem[]
+  products: PublicAccountImportProductSyncItem[],
+  attemptId = ''
 ): Promise<void> {
   await apiClient.post('/public/account-import/products/sync', {
     shop_id: shopId,
+    attempt_id: attemptId,
     products,
   })
 }

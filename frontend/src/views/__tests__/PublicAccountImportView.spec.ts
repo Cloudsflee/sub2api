@@ -21,4 +21,11 @@ describe('PublicAccountImportView product synchronization', () => {
     expect(source).toContain('await requestPublicAccountImportProductRefresh()')
     expect(source).toContain("productPriceStatus(product.id) === 'checking'")
   })
+
+  it('separates queued shops from jobs that are actually running', () => {
+    expect(source).toContain('queuedProductShops.value = catalog.queued_shops')
+    expect(source).toContain('refreshingProductShops.value = catalog.refreshing_shops')
+    expect(source).toContain("productsRefreshingQueued")
+    expect(source).toContain("productsSyncIncomplete")
+  })
 })

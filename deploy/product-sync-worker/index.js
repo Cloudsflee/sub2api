@@ -153,7 +153,7 @@ async function syncJob(page, job) {
       const products = await collectProducts(page, job.token)
       const result = await backend('/api/v1/public/account-import/products/sync', {
         method: 'POST',
-        body: JSON.stringify({ shop_id: job.shop_id, products }),
+        body: JSON.stringify({ shop_id: job.shop_id, attempt_id: job.attempt_id, products }),
       })
       console.log(`${new Date().toISOString()} synced ${job.shop_name}: ${result.accepted} products`)
       publishStatus({
@@ -169,6 +169,26 @@ async function syncJob(page, job) {
     }
   }
   throw lastError
+}
+
+async function syncJobWithFailureReport(page, job) {
+  try {
+    await syncJob(page, job)
+  } catch (error) {
+    try {
+      await backend('/api/v1/public/account-import/products/sync-failure', {
+        method: 'POST',
+        body: JSON.stringify({
+          shop_id: job.shop_id,
+          attempt_id: job.attempt_id,
+          error: errorMessage(error),
+        }),
+      })
+    } catch (reportError) {
+      console.error(`${new Date().toISOString()} failed to report sync failure for ${job.shop_name}: ${errorMessage(reportError)}`)
+    }
+    throw error
+  }
 }
 
 async function runBrowser() {
@@ -238,7 +258,7 @@ async function runBrowser() {
         last_poll_at: new Date().toISOString(),
       })
       if (jobs.length > 0) {
-        const results = await Promise.allSettled(jobs.map((job, index) => syncJob(pages[index], job)))
+        const results = await Promise.allSettled(jobs.map((job, index) => syncJobWithFailureReport(pages[index], job)))
         const failures = results
           .map((result, index) => ({ result, job: jobs[index] }))
           .filter(({ result }) => result.status === 'rejected')
