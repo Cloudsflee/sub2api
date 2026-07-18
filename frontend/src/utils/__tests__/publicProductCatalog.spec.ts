@@ -71,6 +71,41 @@ describe('filterAndSortPublicProducts', () => {
     expect(result).toEqual([])
   })
 
+  it('excludes product names containing a minus-prefixed keyword', () => {
+    const catalog = [
+      createProduct('positive', { name: 'GPT Plus Account', price: 5 }),
+      createProduct('negative', { name: 'GPT Free Account - 非PLUS', price: 1 }),
+      createProduct('legitimate-negative-detail', { name: 'GPT Plus Account - 非日抛', price: 4 }),
+    ]
+
+    const result = filterAndSortPublicProducts(catalog, 'plus -非plus', 'asc', new Map())
+    expect(result.map(({ id }) => id)).toEqual(['legitimate-negative-detail', 'positive'])
+  })
+
+  it('supports multiple exclusions and exclusion-only queries', () => {
+    const catalog = [
+      createProduct('free', { name: 'GPT Plus Free Trial', price: 1 }),
+      createProduct('proxy', { name: 'GPT Plus Proxy', price: 2 }),
+      createProduct('account', { name: 'GPT Plus Account', price: 3 }),
+      createProduct('k12', { name: 'GPT K12 Account', price: 4 }),
+    ]
+
+    expect(filterAndSortPublicProducts(catalog, 'plus -free -proxy', 'asc', new Map()).map(({ id }) => id))
+      .toEqual(['account'])
+    expect(filterAndSortPublicProducts(catalog, '-free -proxy', 'asc', new Map()).map(({ id }) => id))
+      .toEqual(['account', 'k12'])
+  })
+
+  it('normalizes full-width exclusion keywords and only excludes by product name', () => {
+    const catalog = [
+      createProduct('name-match', { name: 'GPT Plus FREE', price: 1 }),
+      createProduct('shop-match', { name: 'GPT Plus Account', shop_name: 'Free Shop', price: 2 }),
+    ]
+
+    const result = filterAndSortPublicProducts(catalog, 'plus －ＦＲＥＥ', 'asc', new Map())
+    expect(result.map(({ id }) => id)).toEqual(['shop-match'])
+  })
+
   it('orders matches by price regardless of match completeness', () => {
     const catalog = [
       createProduct('name-exact', { name: 'K12', price: 100 }),

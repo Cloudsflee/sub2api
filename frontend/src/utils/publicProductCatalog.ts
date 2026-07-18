@@ -21,10 +21,12 @@ function normalizeSearchText(value: string | undefined): string {
 
 function publicProductNameMatches(
   product: PublicAccountImportProduct,
-  keywords: string[]
+  includedKeywords: string[],
+  excludedKeywords: string[]
 ): boolean {
   const name = normalizeSearchText(product.name)
-  return keywords.every((keyword) => name.includes(keyword))
+  return includedKeywords.every((keyword) => name.includes(keyword))
+    && excludedKeywords.every((keyword) => !name.includes(keyword))
 }
 
 export function filterAndSortPublicProducts(
@@ -34,9 +36,20 @@ export function filterAndSortPublicProducts(
   sortPrices: ReadonlyMap<string, number>
 ): PublicAccountImportProduct[] {
   const normalizedQuery = normalizeSearchText(query)
-  const keywords = [...new Set(normalizedQuery.split(' ').filter(Boolean))]
+  const includedKeywords = new Set<string>()
+  const excludedKeywords = new Set<string>()
+  for (const keyword of normalizedQuery.split(' ').filter(Boolean)) {
+    if (keyword.startsWith('-') && keyword.length > 1) {
+      excludedKeywords.add(keyword.slice(1))
+    } else if (keyword !== '-') {
+      includedKeywords.add(keyword)
+    }
+  }
+
+  const included = [...includedKeywords]
+  const excluded = [...excludedKeywords]
   const matchedProducts = products.filter((product) => product.stock > 0
-    && (!normalizedQuery || publicProductNameMatches(product, keywords)))
+    && publicProductNameMatches(product, included, excluded))
 
   matchedProducts.sort((left, right) => {
     const leftPrice = sortPrices.get(left.id) ?? left.price
