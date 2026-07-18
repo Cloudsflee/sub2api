@@ -22,6 +22,12 @@ describe('PublicAccountImportView product synchronization', () => {
     expect(source).toContain("productPriceStatus(product.id) === 'checking'")
   })
 
+  it('provides exclusion syntax help beside the product search field', () => {
+    expect(source).toContain('<HelpTooltip trigger="click"')
+    expect(source).toContain('productSearchHelpDescription')
+    expect(source).toContain('productSearchHelpExample')
+  })
+
   it('separates queued shops from jobs that are actually running', () => {
     expect(source).toContain('queuedProductShops.value = catalog.queued_shops')
     expect(source).toContain('refreshingProductShops.value = catalog.refreshing_shops')

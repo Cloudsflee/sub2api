@@ -370,9 +370,34 @@
             </div>
           </div>
           <div class="w-full sm:w-80">
-            <label for="public-product-search" class="input-label">
-              {{ t('publicAccountImport.productSearchLabel') }}
-            </label>
+            <div class="mb-1.5 flex items-center">
+              <label for="public-product-search" class="input-label mb-0">
+                {{ t('publicAccountImport.productSearchLabel') }}
+              </label>
+              <HelpTooltip trigger="click" width-class="w-40 sm:w-72">
+                <template #trigger>
+                  <button
+                    type="button"
+                    class="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 transition-colors hover:text-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:text-dark-400 dark:hover:text-primary-400"
+                    :aria-label="t('publicAccountImport.productSearchHelpLabel')"
+                    :title="t('publicAccountImport.productSearchHelpLabel')"
+                  >
+                    <Icon name="questionCircle" size="sm" />
+                  </button>
+                </template>
+                <div class="space-y-2">
+                  <p class="font-medium text-white">
+                    {{ t('publicAccountImport.productSearchHelpTitle') }}
+                  </p>
+                  <p class="text-gray-200">
+                    {{ t('publicAccountImport.productSearchHelpDescription') }}
+                  </p>
+                  <code class="block rounded bg-white/10 px-2 py-1.5 font-mono text-[11px] text-white">
+                    {{ t('publicAccountImport.productSearchHelpExample') }}
+                  </code>
+                </div>
+              </HelpTooltip>
+            </div>
             <input
               id="public-product-search"
               v-model="productSearch"
@@ -493,6 +518,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import { useAppStore } from '@/stores/app'
 import {
   getPublicAccountImportGroups,
