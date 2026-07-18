@@ -506,6 +506,7 @@ import {
   type PublicAccountImportShop,
 } from '@/api/publicAccountImport'
 import {
+  filterAndSortPublicProducts,
   livePublicProductAvailability,
   normalizeLivePublicProduct,
   publicProductGoodsKey,
@@ -578,20 +579,12 @@ const pagedShops = computed(() => {
   const start = (shopPage.value - 1) * CATALOG_PAGE_SIZE
   return shops.value.slice(start, start + CATALOG_PAGE_SIZE)
 })
-const filteredProducts = computed(() => {
-  const keyword = productSearch.value.trim().toLocaleLowerCase()
-  const available = products.value.filter((product) => product.stock > 0)
-  const matched = keyword
-    ? available.filter((product) => [product.name, product.shop_name, product.category, product.goods_type]
-        .some((value) => value?.toLocaleLowerCase().includes(keyword)))
-    : available
-  return [...matched].sort((a, b) => {
-    const priceA = productSortPrices.get(a.id) ?? a.price
-    const priceB = productSortPrices.get(b.id) ?? b.price
-    const priceDifference = productPriceOrder.value === 'desc' ? priceB - priceA : priceA - priceB
-    return priceDifference || a.name.localeCompare(b.name)
-  })
-})
+const filteredProducts = computed(() => filterAndSortPublicProducts(
+  products.value,
+  productSearch.value,
+  productPriceOrder.value,
+  productSortPrices
+))
 const productPageCount = computed(() => Math.max(1, Math.ceil(filteredProducts.value.length / CATALOG_PAGE_SIZE)))
 const pagedProducts = computed(() => {
   const start = (productPage.value - 1) * CATALOG_PAGE_SIZE
