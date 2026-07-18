@@ -36,80 +36,63 @@ function createProduct(
 
 describe('filterAndSortPublicProducts', () => {
   const matchingCatalog = [
-    createProduct('cross-field', {
-      name: 'Alpha Bundle',
+    createProduct('product-name', {
+      name: 'Alpha Cloud Bundle',
       shop_name: 'Cloud Store',
       category: 'Developer Tools',
       goods_type: 'card',
     }),
-    createProduct('partial-match', {
+    createProduct('shop-only', {
       name: 'Alpha Basic',
-      shop_name: 'Local Store',
-      category: undefined,
-      goods_type: 'article',
+      shop_name: 'Cloud Store',
     }),
-    createProduct('optional-field', {
-      name: 'Cloud Resource',
-      shop_name: 'Other Store',
-      category: undefined,
-      goods_type: 'resource',
+    createProduct('metadata-only', {
+      name: 'Budget Account',
+      shop_name: 'K12 Shop',
+      category: 'K12',
+      goods_type: 'k12',
     }),
   ]
 
   it.each([
-    { label: 'matches keywords across product and shop names', query: 'alpha cloud', expected: ['cross-field'] },
-    { label: 'normalizes letter case', query: 'ALPHA CLOUD', expected: ['cross-field'] },
-    { label: 'normalizes full-width characters', query: 'ＡＬＰＨＡ　ＣＬＯＵＤ', expected: ['cross-field'] },
-    { label: 'collapses consecutive whitespace', query: '  alpha \t  cloud  ', expected: ['cross-field'] },
-    { label: 'deduplicates keywords', query: 'alpha alpha cloud', expected: ['cross-field'] },
-    { label: 'supports an omitted optional category', query: 'cloud resource', expected: ['optional-field'] },
+    { label: 'matches multiple keywords in the product name', query: 'alpha cloud', expected: ['product-name'] },
+    { label: 'normalizes letter case', query: 'ALPHA CLOUD', expected: ['product-name'] },
+    { label: 'normalizes full-width characters', query: 'ＡＬＰＨＡ　ＣＬＯＵＤ', expected: ['product-name'] },
+    { label: 'collapses consecutive whitespace', query: '  alpha \t  cloud  ', expected: ['product-name'] },
+    { label: 'deduplicates keywords', query: 'alpha alpha cloud', expected: ['product-name'] },
     { label: 'requires every keyword to match', query: 'alpha missing', expected: [] },
   ])('$label', ({ query, expected }) => {
     const result = filterAndSortPublicProducts(matchingCatalog, query, 'asc', new Map())
     expect(result.map(({ id }) => id)).toEqual(expected)
   })
 
-  it.each([
-    ['card', '卡密'],
-    ['article', '文章'],
-    ['resource', '资源'],
-    ['equity', '权益'],
-  ] as const)('matches the %s product type through its Chinese alias', (goodsType, alias) => {
-    const catalog = ['card', 'article', 'resource', 'equity'].map((type) => createProduct(type, {
-      name: `Catalog ${type}`,
-      goods_type: type,
-    }))
-
-    const result = filterAndSortPublicProducts(catalog, alias, 'asc', new Map())
-    expect(result.map(({ id }) => id)).toEqual([goodsType])
+  it('does not match shop names, categories, or product types', () => {
+    const result = filterAndSortPublicProducts(matchingCatalog, 'k12', 'asc', new Map())
+    expect(result).toEqual([])
   })
 
-  it('orders matches by field relevance and full-name match quality', () => {
+  it('orders matches by price regardless of match completeness', () => {
     const catalog = [
-      createProduct('type', { name: 'Gamma', goods_type: 'target', price: 100 }),
-      createProduct('category', { name: 'Beta', category: 'target', price: 100 }),
-      createProduct('shop', { name: 'Alpha', shop_name: 'target', price: 100 }),
-      createProduct('name-substring', { name: 'Best Target Pack', price: 100 }),
-      createProduct('name-prefix', { name: 'Target Pack', price: 100 }),
-      createProduct('name-exact', { name: 'TARGET', price: 100 }),
+      createProduct('name-exact', { name: 'K12', price: 100 }),
+      createProduct('name-prefix', { name: 'K12 Team', price: 50 }),
+      createProduct('name-substring', { name: 'GPT K12 Team', price: 20 }),
+      createProduct('cheapest', { name: 'Budget K12 Account', price: 1 }),
     ]
 
-    const result = filterAndSortPublicProducts(catalog, 'target', 'desc', new Map())
+    const result = filterAndSortPublicProducts(catalog, 'k12', 'asc', new Map())
     expect(result.map(({ id }) => id)).toEqual([
-      'name-exact',
-      'name-prefix',
+      'cheapest',
       'name-substring',
-      'shop',
-      'category',
-      'type',
+      'name-prefix',
+      'name-exact',
     ])
   })
 
-  it('uses current sort prices to break equal-relevance ties in either direction', () => {
+  it('uses current sort prices to order matches in either direction', () => {
     const catalog = [
-      createProduct('low', { name: 'Zeta', shop_name: 'match', price: 100 }),
-      createProduct('high', { name: 'Alpha', shop_name: 'match', price: 100 }),
-      createProduct('middle', { name: 'Beta', shop_name: 'match', price: 100 }),
+      createProduct('low', { name: 'Match Zeta', price: 100 }),
+      createProduct('high', { name: 'Match Alpha', price: 100 }),
+      createProduct('middle', { name: 'Match Beta', price: 100 }),
     ]
     const sortPrices = new Map([
       ['low', 5],
@@ -141,10 +124,10 @@ describe('filterAndSortPublicProducts', () => {
 
   it('excludes unavailable products and returns a stable new array without mutating its input', () => {
     const catalog = [
-      createProduct('out-of-stock', { name: 'Item 1', shop_name: 'shared', stock: 0, price: 10 }),
-      createProduct('c', { name: 'Item 10', shop_name: 'shared', price: 10 }),
-      createProduct('b', { name: 'Item 2', shop_name: 'shared', price: 10 }),
-      createProduct('a', { name: 'Item 2', shop_name: 'shared', price: 10 }),
+      createProduct('out-of-stock', { name: 'Shared Item 1', stock: 0, price: 10 }),
+      createProduct('c', { name: 'Shared Item 10', price: 10 }),
+      createProduct('b', { name: 'Shared Item 2', price: 10 }),
+      createProduct('a', { name: 'Shared Item 2', price: 10 }),
     ]
     const originalValue = JSON.stringify(catalog)
 

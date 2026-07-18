@@ -560,7 +560,7 @@ const queuedProductShops = ref(0)
 const refreshingProductShops = ref(0)
 const failedProductShops = ref(0)
 const productSearch = ref('')
-const productPriceOrder = ref<'desc' | 'asc'>('desc')
+const productPriceOrder = ref<'desc' | 'asc'>('asc')
 const productPage = ref(1)
 let shopRefreshTimer: number | undefined
 let productRefreshTimer: number | undefined
