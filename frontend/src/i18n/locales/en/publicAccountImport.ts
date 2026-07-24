@@ -65,7 +65,7 @@ export default {
     priceChecking: 'Checking live price',
     priceVerified: 'Live price verified',
     priceCheckFailed: 'Live price pending',
-    productUnavailable: 'This product is unavailable or out of stock and was removed from the current catalog.',
+    productUnavailable: 'This product cannot currently be purchased and was removed from the catalog.',
     productVerificationFailed: 'The live price could not be verified. Confirm it on the shop page.',
     submitShop: 'Submit shop',
     submittingShop: 'Submitting…',

@@ -22,6 +22,13 @@ describe('PublicAccountImportView product synchronization', () => {
     expect(source).toContain("productPriceStatus(product.id) === 'checking'")
   })
 
+  it('preflights the minimum purchasable quantity before opening a product', () => {
+    expect(source).toContain("'/shopApi/Shop/getUserChannel'")
+    expect(source).toContain("'/shopApi/Shop/getGoodsPrice'")
+    expect(source).toContain('quantity: snapshot.minimumQuantity')
+    expect(source).toContain('markPublicProductUnavailable(product.id)')
+  })
+
   it('provides exclusion syntax help beside the product search field', () => {
     expect(source).toContain('<HelpTooltip trigger="click"')
     expect(source).toContain('productSearchHelpDescription')

@@ -543,6 +543,7 @@ const MAX_FILE_BYTES = 512 * 1024
 const CATALOG_PAGE_SIZE = 10
 const PRODUCT_PRICE_VERIFICATION_TTL_MS = 60_000
 const PRODUCT_PRICE_FAILURE_RETRY_MS = 15_000
+const PRODUCT_UNAVAILABLE_TTL_MS = 15 * 60_000
 
 type ProductPriceStatus = 'checking' | 'verified' | 'unavailable' | 'failed'
 
@@ -552,6 +553,7 @@ interface ProductPriceVerification {
   price?: number
   marketPrice?: number
   stock?: number
+  minimumQuantity?: number
   updatedAt?: string
 }
 
@@ -831,7 +833,9 @@ function recentProductVerification(productId: string, status?: ProductPriceStatu
   if (!verification || (status && verification.status !== status)) return null
   const maxAge = verification.status === 'failed'
     ? PRODUCT_PRICE_FAILURE_RETRY_MS
-    : PRODUCT_PRICE_VERIFICATION_TTL_MS
+    : verification.status === 'unavailable'
+      ? PRODUCT_UNAVAILABLE_TTL_MS
+      : PRODUCT_PRICE_VERIFICATION_TTL_MS
   return Date.now() - verification.checkedAt <= maxAge ? verification : null
 }
 
@@ -850,8 +854,14 @@ function mergeRecentProductVerification(product: PublicAccountImportProduct): Pu
     price: verification.price ?? product.price,
     market_price: verification.marketPrice ?? product.market_price,
     stock: verification.stock ?? product.stock,
+    minimum_quantity: verification.minimumQuantity ?? product.minimum_quantity,
     updated_at: verification.updatedAt || product.updated_at,
   }
+}
+
+function markPublicProductUnavailable(productId: string) {
+  setProductPriceVerification(productId, { status: 'unavailable', checkedAt: Date.now() })
+  products.value = products.value.filter((item) => item.id !== productId)
 }
 
 async function verifyPublicProduct(product: PublicAccountImportProduct, force = false): Promise<boolean> {
@@ -870,16 +880,39 @@ async function verifyPublicProduct(product: PublicAccountImportProduct, force = 
         goods_key: goodsKey,
         trade_no: null,
       })
-      const availability = livePublicProductAvailability(response)
+      const availability = livePublicProductAvailability(response, product.stock)
       if (availability === 'unavailable') {
-        setProductPriceVerification(product.id, { status: 'unavailable', checkedAt: Date.now() })
-        products.value = products.value.filter((item) => item.id !== product.id)
+        markPublicProductUnavailable(product.id)
         return false
       }
       if (availability !== 'available') throw new Error(response?.msg || 'Invalid product response')
 
       const snapshot = normalizeLivePublicProduct(product, response.data)
       if (!snapshot) throw new Error('Invalid product details')
+
+      const shopToken = String(response.data?.user?.token || '').trim()
+      if (!shopToken) throw new Error('Invalid product shop')
+      const channelResponse = await postPublicShopAPI('/shopApi/Shop/getUserChannel', {
+        token: shopToken,
+      })
+      if (channelResponse?.code !== 1 || !Array.isArray(channelResponse.data)) {
+        throw new Error(channelResponse?.msg || 'Invalid payment channels')
+      }
+      const quoteResponse = await postPublicShopAPI('/shopApi/Shop/getGoodsPrice', {
+        goods_key: goodsKey,
+        quantity: snapshot.minimumQuantity,
+        coupon_code: '',
+        channel_id: channelResponse.data[0]?.id || 0,
+      })
+      const quoteAvailability = livePublicProductAvailability(quoteResponse)
+      if (quoteAvailability === 'unavailable') {
+        markPublicProductUnavailable(product.id)
+        return false
+      }
+      if (quoteAvailability !== 'available') {
+        throw new Error(quoteResponse?.msg || 'Invalid product quote')
+      }
+
       const verification: ProductPriceVerification = {
         status: 'verified',
         checkedAt: Date.now(),
@@ -892,6 +925,7 @@ async function verifyPublicProduct(product: PublicAccountImportProduct, force = 
             price: snapshot.price,
             market_price: verification.marketPrice,
             stock: snapshot.stock,
+            minimum_quantity: snapshot.minimumQuantity,
             updated_at: snapshot.updatedAt,
           }
         : item)

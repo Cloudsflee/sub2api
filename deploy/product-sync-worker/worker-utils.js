@@ -56,7 +56,17 @@ function isVerificationPageState(state) {
     || value.includes('滑动验证')
 }
 
+function isCatalogProductPurchasable(product) {
+  const stock = Number(product?.stock)
+  const minimumQuantity = Number(product?.minimum_quantity)
+  return Number.isInteger(stock)
+    && Number.isInteger(minimumQuantity)
+    && minimumQuantity > 0
+    && stock >= minimumQuantity
+}
+
 module.exports = {
+  isCatalogProductPurchasable,
   isVerificationPageState,
   parsePositiveMilliseconds,
   parseProxyConfiguration,

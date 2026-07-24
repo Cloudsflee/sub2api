@@ -1,6 +1,7 @@
 const { chromium } = require('playwright-core')
 const fs = require('node:fs')
 const {
+  isCatalogProductPurchasable,
   isVerificationPageState,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
@@ -56,7 +57,7 @@ async function backend(path, options = {}) {
 }
 
 async function collectProducts(page, token) {
-  return page.evaluate(async ({ shopToken, requestTimeoutMilliseconds }) => {
+  const products = await page.evaluate(async ({ shopToken, requestTimeoutMilliseconds }) => {
     const post = async (path, body) => {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), requestTimeoutMilliseconds)
@@ -106,7 +107,7 @@ async function collectProducts(page, token) {
         const list = Array.isArray(data.list) ? data.list : []
         for (const item of list) {
           const stock = Number(item.extend?.stock_count || 0)
-          if (stock <= 0) continue
+          const minimumQuantity = Number(item.extend?.limit_count || 1)
           products.push({
             goods_key: String(item.goods_key || ''),
             name: String(item.name || ''),
@@ -117,6 +118,7 @@ async function collectProducts(page, token) {
             price: Number(item.price || 0),
             market_price: Number(item.market_price || 0),
             stock,
+            minimum_quantity: minimumQuantity,
           })
         }
         const total = Number(data.total || 0)
@@ -125,6 +127,7 @@ async function collectProducts(page, token) {
     }
     return products
   }, { shopToken: token, requestTimeoutMilliseconds: shopRequestTimeoutMilliseconds })
+  return products.filter(isCatalogProductPurchasable)
 }
 
 async function rejectVerificationPage(page) {

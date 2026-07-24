@@ -65,7 +65,7 @@ export default {
     priceChecking: '正在核对实时价格',
     priceVerified: '实时价已核验',
     priceCheckFailed: '实时价待核验',
-    productUnavailable: '该商品已下架或售罄，已从当前目录移除。',
+    productUnavailable: '该商品当前不可购买，已从当前目录移除。',
     productVerificationFailed: '暂时无法核对该商品的实时价格，请在店铺页面确认。',
     submitShop: '提交店铺',
     submittingShop: '正在提交…',

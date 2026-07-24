@@ -36,19 +36,20 @@ const (
 )
 
 type PublicAccountImportProduct struct {
-	ID          string  `json:"id"`
-	ShopID      string  `json:"shop_id"`
-	ShopName    string  `json:"shop_name"`
-	ShopURL     string  `json:"shop_url"`
-	Name        string  `json:"name"`
-	URL         string  `json:"url"`
-	Image       string  `json:"image,omitempty"`
-	Category    string  `json:"category,omitempty"`
-	GoodsType   string  `json:"goods_type"`
-	Price       float64 `json:"price"`
-	MarketPrice float64 `json:"market_price,omitempty"`
-	Stock       int     `json:"stock"`
-	UpdatedAt   string  `json:"updated_at"`
+	ID              string  `json:"id"`
+	ShopID          string  `json:"shop_id"`
+	ShopName        string  `json:"shop_name"`
+	ShopURL         string  `json:"shop_url"`
+	Name            string  `json:"name"`
+	URL             string  `json:"url"`
+	Image           string  `json:"image,omitempty"`
+	Category        string  `json:"category,omitempty"`
+	GoodsType       string  `json:"goods_type"`
+	Price           float64 `json:"price"`
+	MarketPrice     float64 `json:"market_price,omitempty"`
+	Stock           int     `json:"stock"`
+	MinimumQuantity int     `json:"minimum_quantity"`
+	UpdatedAt       string  `json:"updated_at"`
 }
 
 type PublicAccountImportProductsResponse struct {
@@ -75,15 +76,16 @@ type PublicAccountImportProductSyncJobResponse struct {
 }
 
 type PublicAccountImportProductSyncItem struct {
-	GoodsKey    string  `json:"goods_key"`
-	Name        string  `json:"name"`
-	URL         string  `json:"url"`
-	Image       string  `json:"image"`
-	Category    string  `json:"category"`
-	GoodsType   string  `json:"goods_type"`
-	Price       float64 `json:"price"`
-	MarketPrice float64 `json:"market_price"`
-	Stock       int     `json:"stock"`
+	GoodsKey        string  `json:"goods_key"`
+	Name            string  `json:"name"`
+	URL             string  `json:"url"`
+	Image           string  `json:"image"`
+	Category        string  `json:"category"`
+	GoodsType       string  `json:"goods_type"`
+	Price           float64 `json:"price"`
+	MarketPrice     float64 `json:"market_price"`
+	Stock           int     `json:"stock"`
+	MinimumQuantity int     `json:"minimum_quantity"`
 }
 
 type PublicAccountImportProductSyncRequest struct {
@@ -355,7 +357,11 @@ func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 func normalizePublicProductSyncItem(shop PublicAccountImportShop, item PublicAccountImportProductSyncItem, updatedAt string) (PublicAccountImportProduct, bool) {
 	item.GoodsKey = strings.TrimSpace(item.GoodsKey)
 	item.Name = strings.TrimSpace(item.Name)
-	if item.GoodsKey == "" || len(item.GoodsKey) > 100 || item.Name == "" || len(item.Name) > 500 || item.Stock <= 0 || item.Price < 0 || item.Price > 1_000_000 || item.MarketPrice < 0 || item.MarketPrice > 1_000_000 {
+	minimumQuantity := item.MinimumQuantity
+	if minimumQuantity == 0 {
+		minimumQuantity = 1
+	}
+	if item.GoodsKey == "" || len(item.GoodsKey) > 100 || item.Name == "" || len(item.Name) > 500 || minimumQuantity < 1 || item.Stock < minimumQuantity || item.Price < 0 || item.Price > 1_000_000 || item.MarketPrice < 0 || item.MarketPrice > 1_000_000 {
 		return PublicAccountImportProduct{}, false
 	}
 	productURL, err := url.Parse(strings.TrimSpace(item.URL))
@@ -378,7 +384,7 @@ func normalizePublicProductSyncItem(shop PublicAccountImportShop, item PublicAcc
 		ID: publicAccountImportProductID(shop.ID, item.GoodsKey), ShopID: shop.ID,
 		ShopName: shop.Name, ShopURL: shop.URL, Name: item.Name, URL: productURL.String(),
 		Image: image, Category: strings.TrimSpace(item.Category), GoodsType: goodsType,
-		Price: item.Price, MarketPrice: item.MarketPrice, Stock: item.Stock, UpdatedAt: updatedAt,
+		Price: item.Price, MarketPrice: item.MarketPrice, Stock: item.Stock, MinimumQuantity: minimumQuantity, UpdatedAt: updatedAt,
 	}, true
 }
 
@@ -426,7 +432,8 @@ func publicAccountImportProductSnapshot(shops []PublicAccountImportShop, store p
 			pending++
 		}
 		for _, product := range cached.Products {
-			if product.Stock > 0 {
+			product.MinimumQuantity = max(product.MinimumQuantity, 1)
+			if product.Stock >= product.MinimumQuantity {
 				products = append(products, product)
 			}
 		}

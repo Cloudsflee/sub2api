@@ -18,6 +18,7 @@ const product: PublicAccountImportProduct = {
   price: 1.3,
   market_price: 2,
   stock: 8,
+  minimum_quantity: 1,
   updated_at: '2026-07-14T09:00:00Z',
 }
 
@@ -160,6 +161,12 @@ describe('filterAndSortPublicProducts', () => {
   it('excludes unavailable products and returns a stable new array without mutating its input', () => {
     const catalog = [
       createProduct('out-of-stock', { name: 'Shared Item 1', stock: 0, price: 10 }),
+      createProduct('below-minimum', {
+        name: 'Shared Item 1',
+        stock: 7,
+        minimum_quantity: 50,
+        price: 10,
+      }),
       createProduct('c', { name: 'Shared Item 10', price: 10 }),
       createProduct('b', { name: 'Shared Item 2', price: 10 }),
       createProduct('a', { name: 'Shared Item 2', price: 10 }),
@@ -196,6 +203,7 @@ describe('normalizeLivePublicProduct', () => {
       price: 0.75,
       marketPrice: 1,
       stock: 20,
+      minimumQuantity: 1,
       updatedAt: '2026-07-14T10:00:00.000Z',
     })
   })
@@ -207,6 +215,10 @@ describe('normalizeLivePublicProduct', () => {
   it('rejects missing prices and unavailable stock', () => {
     expect(normalizeLivePublicProduct(product, { extend: { stock_count: 2 } })).toBeNull()
     expect(normalizeLivePublicProduct(product, { price: 1, extend: { stock_count: 0 } })).toBeNull()
+    expect(normalizeLivePublicProduct(product, {
+      price: 1,
+      extend: { limit_count: 50 },
+    })).toBeNull()
   })
 })
 
@@ -222,6 +234,27 @@ describe('livePublicProductAvailability', () => {
       code: 1,
       data: { status: 1, price: 1, extend: { stock_count: 0 } },
     })).toBe('unavailable')
+    expect(livePublicProductAvailability({
+      code: 1,
+      data: { status: 1, price: 1, extend: { limit_count: 50 } },
+    }, 7)).toBe('unavailable')
+    expect(livePublicProductAvailability({
+      code: 0,
+      msg: '库存不足，无法购买',
+      data: null,
+    })).toBe('unavailable')
+    expect(livePublicProductAvailability({
+      code: 0,
+      msg: '商品价格低于成本价无法购买',
+      data: null,
+    })).toBe('unavailable')
+  })
+
+  it('accepts a successful read-only quote without stock fields', () => {
+    expect(livePublicProductAvailability({
+      code: 1,
+      data: { original_amount: 1, total_amount: 1 },
+    })).toBe('available')
   })
 
   it('does not mistake transient API failures for delisted products', () => {

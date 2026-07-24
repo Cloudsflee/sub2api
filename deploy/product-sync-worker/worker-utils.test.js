@@ -2,11 +2,20 @@ const assert = require('node:assert/strict')
 const test = require('node:test')
 
 const {
+  isCatalogProductPurchasable,
   isVerificationPageState,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
   parseSyncConcurrency,
 } = require('./worker-utils')
+
+test('isCatalogProductPurchasable requires enough stock for the minimum order', () => {
+  assert.equal(isCatalogProductPurchasable({ stock: 50, minimum_quantity: 50 }), true)
+  assert.equal(isCatalogProductPurchasable({ stock: 7, minimum_quantity: 50 }), false)
+  assert.equal(isCatalogProductPurchasable({ stock: 1, minimum_quantity: 1 }), true)
+  assert.equal(isCatalogProductPurchasable({ stock: Number.NaN, minimum_quantity: 1 }), false)
+  assert.equal(isCatalogProductPurchasable({ stock: 10, minimum_quantity: 0 }), false)
+})
 
 test('parseProxyConfiguration removes credentials from the Chromium proxy argument', () => {
   assert.deepEqual(parseProxyConfiguration('http://user:p%40ss@proxy.example:8080'), {

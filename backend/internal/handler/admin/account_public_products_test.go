@@ -51,18 +51,45 @@ func TestPublicAccountImportProductSnapshotKeepsLastSuccessfulStaleProducts(t *t
 			UpdatedAt:          now.Add(-time.Hour).Format(time.RFC3339),
 			RefreshRequestedAt: now.Format(time.RFC3339),
 			Products: []PublicAccountImportProduct{
-				{ID: "available", Name: "Available", Price: 2, Stock: 1},
+				{ID: "available", Name: "Available", Price: 2, Stock: 1, MinimumQuantity: 1},
+				{ID: "legacy", Name: "Legacy", Price: 1, Stock: 1},
+				{ID: "below-minimum", Name: "Below minimum", Price: 2, Stock: 1, MinimumQuantity: 2},
 				{ID: "sold-out", Name: "Sold out", Price: 3, Stock: 0},
 			},
 		},
 	}}
 
 	products, pending, queued, refreshing, failed := publicAccountImportProductSnapshot(shops, store, now)
-	require.Equal(t, []string{"available"}, []string{products[0].ID})
+	require.Equal(t, []PublicAccountImportProduct{
+		{ID: "available", Name: "Available", Price: 2, Stock: 1, MinimumQuantity: 1},
+		{ID: "legacy", Name: "Legacy", Price: 1, Stock: 1, MinimumQuantity: 1},
+	}, products)
 	require.Equal(t, 2, pending)
 	require.Equal(t, 1, queued)
 	require.Zero(t, refreshing)
 	require.Zero(t, failed)
+}
+
+func TestNormalizePublicProductSyncItemRequiresEnoughStockForMinimumQuantity(t *testing.T) {
+	shop := PublicAccountImportShop{ID: "shop", Name: "Shop", URL: "https://pay.ldxp.cn/shop/token"}
+	item := PublicAccountImportProductSyncItem{
+		GoodsKey: "goods", Name: "Product", URL: "https://pay.ldxp.cn/item/goods",
+		GoodsType: "card", Price: 1, Stock: 50, MinimumQuantity: 50,
+	}
+
+	product, ok := normalizePublicProductSyncItem(shop, item, "2026-07-24T00:00:00Z")
+	require.True(t, ok)
+	require.Equal(t, 50, product.MinimumQuantity)
+
+	item.Stock = 49
+	_, ok = normalizePublicProductSyncItem(shop, item, "2026-07-24T00:00:00Z")
+	require.False(t, ok)
+
+	item.Stock = 1
+	item.MinimumQuantity = 0
+	product, ok = normalizePublicProductSyncItem(shop, item, "2026-07-24T00:00:00Z")
+	require.True(t, ok)
+	require.Equal(t, 1, product.MinimumQuantity)
 }
 
 func TestSelectPublicAccountImportProductSyncShopUsesSuccessfulRefreshAndShortLease(t *testing.T) {

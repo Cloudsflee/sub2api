@@ -64,6 +64,7 @@ export interface PublicAccountImportProduct {
   price: number
   market_price?: number
   stock: number
+  minimum_quantity: number
   updated_at: string
 }
 
@@ -95,6 +96,7 @@ export interface PublicAccountImportProductSyncItem {
   price: number
   market_price: number
   stock: number
+  minimum_quantity: number
 }
 
 export async function getPublicAccountImportGroups(): Promise<PublicAccountImportGroup[]> {

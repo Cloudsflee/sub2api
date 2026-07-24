@@ -6,6 +6,7 @@ export interface LivePublicProductSnapshot {
   price: number
   marketPrice?: number
   stock: number
+  minimumQuantity: number
   updatedAt: string
 }
 
@@ -17,6 +18,15 @@ function normalizeSearchText(value: string | undefined): string {
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function normalizeMinimumQuantity(value: unknown): number {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1
+}
+
+export function publicProductMinimumQuantity(product: PublicAccountImportProduct): number {
+  return normalizeMinimumQuantity(product.minimum_quantity)
 }
 
 function publicProductNameMatches(
@@ -48,7 +58,7 @@ export function filterAndSortPublicProducts(
 
   const included = [...includedKeywords]
   const excluded = [...excludedKeywords]
-  const matchedProducts = products.filter((product) => product.stock > 0
+  const matchedProducts = products.filter((product) => product.stock >= publicProductMinimumQuantity(product)
     && publicProductNameMatches(product, included, excluded))
 
   matchedProducts.sort((left, right) => {
@@ -65,24 +75,34 @@ export function filterAndSortPublicProducts(
   return matchedProducts
 }
 
-export function livePublicProductAvailability(response: any): LivePublicProductAvailability {
+export function livePublicProductAvailability(
+  response: any,
+  fallbackStock?: number
+): LivePublicProductAvailability {
   const data = response?.data
   if (response?.code === 1 && data) {
     const rawStatus = data.status
     if (rawStatus !== undefined && rawStatus !== null && Number(rawStatus) !== 1) return 'unavailable'
 
     const rawStock = data.extend?.stock_count
+    let stock = Number(fallbackStock)
     if (rawStock !== undefined && rawStock !== null && rawStock !== '') {
-      const stock = Number(rawStock)
-      if (Number.isFinite(stock) && stock <= 0) return 'unavailable'
+      stock = Number(rawStock)
     }
+    const minimumQuantity = normalizeMinimumQuantity(data.extend?.limit_count)
+    if (Number.isFinite(stock) && stock < minimumQuantity) return 'unavailable'
     return 'available'
   }
 
   const message = String(response?.msg || '').toLocaleLowerCase()
   const explicitlyUnavailable = /商品.*(?:不存在|未上架|下架|售罄|删除)/.test(message)
+    || /(?:库存|存货).*(?:不足|不够|售罄|无货)/.test(message)
+    || /(?:低于|小于).*成本价.*(?:无法|不能|不可)?.*购买/.test(message)
+    || /(?:无法|不能|不可).*购买.*(?:库存|成本价)/.test(message)
     || /(?:product|goods).*(?:not found|unavailable|off shelf|sold out|deleted)/.test(message)
-  return response?.code === 0 && data == null && explicitlyUnavailable ? 'unavailable' : 'unknown'
+    || /(?:insufficient|not enough|out of) stock/.test(message)
+    || /(?:below|lower than).*(?:cost|cost price)/.test(message)
+  return response?.code === 0 && explicitlyUnavailable ? 'unavailable' : 'unknown'
 }
 
 export function publicProductGoodsKey(productURL: string): string {
@@ -110,7 +130,10 @@ export function normalizeLivePublicProduct(
     ? Number.NaN
     : Number(rawStock)
   const stock = Number.isFinite(reportedStock) ? reportedStock : product.stock
-  if (!Number.isFinite(price) || price < 0 || price > 1_000_000 || stock <= 0) return null
+  const minimumQuantity = normalizeMinimumQuantity(
+    data.extend?.limit_count ?? product.minimum_quantity
+  )
+  if (!Number.isFinite(price) || price < 0 || price > 1_000_000 || stock < minimumQuantity) return null
 
   const marketPrice = Number.isFinite(rawMarketPrice) && rawMarketPrice >= 0 && rawMarketPrice <= 1_000_000
     ? rawMarketPrice
@@ -119,6 +142,7 @@ export function normalizeLivePublicProduct(
     price,
     marketPrice,
     stock,
+    minimumQuantity,
     updatedAt: verifiedAt.toISOString(),
   }
 }
