@@ -159,6 +159,76 @@ func TestClassifyPublicAccountStatusCreditsAndMultipleQuotaRecovery(t *testing.T
 	require.Equal(t, weeklyReset, *recovery, "recovery is when every exhausted quota can be used again")
 }
 
+func TestClassifyPublicAccountStatusUsesPassiveGlobalUsageWindows(t *testing.T) {
+	now := time.Date(2026, time.July, 25, 16, 0, 0, 0, time.UTC)
+	fiveHourReset := now.Add(2 * time.Hour)
+	sevenDayReset := now.Add(4 * time.Hour)
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Status:      StatusActive,
+		Schedulable: false,
+		Extra: map[string]any{
+			"codex_5h_used_percent": 100.0,
+			"codex_5h_reset_at":     fiveHourReset.Format(time.RFC3339),
+			"codex_7d_used_percent": 100.0,
+			"codex_7d_reset_at":     sevenDayReset.Format(time.RFC3339),
+		},
+	}
+
+	status, recovery := classifyPublicAccountStatus(account, now)
+	require.Equal(t, "quota_exhausted", status, "quota exhaustion takes priority over manual pause")
+	require.Equal(t, sevenDayReset, *recovery, "recovery waits until every exhausted global window resets")
+
+	account.Extra["codex_5h_used_percent"] = 99.9
+	account.Extra["codex_7d_used_percent"] = 99.9
+	account.Schedulable = true
+	status, recovery = classifyPublicAccountStatus(account, now)
+	require.Equal(t, "available", status)
+	require.Nil(t, recovery)
+
+	expiredReset := now.Add(-time.Minute)
+	usage := &UsageInfo{FiveHour: &UsageProgress{Utilization: 100, ResetsAt: &expiredReset}}
+	status, recovery = classifyPublicAccountStatusWithUsage(account, usage, now)
+	require.Equal(t, "available", status, "an expired snapshot must not keep the account exhausted")
+	require.Nil(t, recovery)
+
+	account.Extra = nil
+	usage.FiveHour.ResetsAt = &fiveHourReset
+	status, recovery = classifyPublicAccountStatusWithUsage(account, usage, now)
+	require.Equal(t, "quota_exhausted", status, "the current-page usage snapshot participates in classification")
+	require.Equal(t, fiveHourReset, *recovery)
+
+	account.Platform = PlatformAntigravity
+	status, recovery = classifyPublicAccountStatusWithUsage(account, usage, now)
+	require.Equal(t, "available", status, "a model-specific compatibility window is not a global account quota")
+	require.Nil(t, recovery)
+}
+
+func TestPublicAccountStatusGroupSummaryUsesPassiveQuotaWindow(t *testing.T) {
+	now := time.Now()
+	resetAt := now.Add(time.Hour)
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Status:      StatusActive,
+		Schedulable: true,
+		Extra: map[string]any{
+			"codex_5h_used_percent": 100.0,
+			"codex_5h_reset_at":     resetAt.Format(time.RFC3339),
+		},
+	}
+	repo := &publicAccountStatusRepoStub{
+		groups:    []PublicStatusGroupRecord{{ID: 1, Name: "Public", Platform: PlatformOpenAI, Status: StatusActive}},
+		groupRows: []PublicStatusGroupAccountRecord{{GroupID: 1, Account: account}},
+	}
+	statusService := NewPublicAccountStatusService(repo, nil, nil)
+
+	groups, _, err := statusService.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	require.Equal(t, 1, groups[0].StatusSummary.Statuses["quota_exhausted"])
+	require.Zero(t, groups[0].StatusSummary.Statuses["available"])
+}
+
 func TestPublicAccountStatusProjectionDoesNotLeakSensitiveFields(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	repo := &publicAccountStatusRepoStub{

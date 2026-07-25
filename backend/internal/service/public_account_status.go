@@ -246,11 +246,11 @@ func (s *PublicAccountStatusService) ListAccounts(ctx context.Context, groupID i
 			if account == nil {
 				return nil
 			}
-			status, recoveryAt := classifyPublicAccountStatus(account, now)
 			var usage *UsageInfo
 			if s.usageService != nil {
 				usage, _ = s.usageService.GetReadOnlyUsage(groupCtx, account)
 			}
+			status, recoveryAt := classifyPublicAccountStatusWithUsage(account, usage, now)
 			out[i] = PublicAccountStatusAccount{
 				Name:               MaskPublicAccountName(account.Name),
 				Platform:           account.Platform,
@@ -348,6 +348,10 @@ func emptyPublicAccountStatusCounts() map[string]int {
 }
 
 func classifyPublicAccountStatus(account *Account, now time.Time) (string, *time.Time) {
+	return classifyPublicAccountStatusWithUsage(account, nil, now)
+}
+
+func classifyPublicAccountStatusWithUsage(account *Account, usage *UsageInfo, now time.Time) (string, *time.Time) {
 	if account == nil {
 		return "inactive", nil
 	}
@@ -369,7 +373,7 @@ func classifyPublicAccountStatus(account *Account, now time.Time) (string, *time
 	if account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) {
 		return "temporarily_unavailable", cloneTimePointer(account.TempUnschedulableUntil)
 	}
-	if recoveryAt, exhausted := publicQuotaRecoveryAt(account, now); exhausted {
+	if recoveryAt, exhausted := publicQuotaRecoveryAt(account, usage, now); exhausted {
 		return "quota_exhausted", recoveryAt
 	}
 	if !account.Schedulable {
@@ -381,7 +385,7 @@ func classifyPublicAccountStatus(account *Account, now time.Time) (string, *time
 	return "available", nil
 }
 
-func publicQuotaRecoveryAt(account *Account, now time.Time) (*time.Time, bool) {
+func publicQuotaRecoveryAt(account *Account, usage *UsageInfo, now time.Time) (*time.Time, bool) {
 	if account == nil {
 		return nil, false
 	}
@@ -402,7 +406,100 @@ func publicQuotaRecoveryAt(account *Account, now time.Time) (*time.Time, bool) {
 		exhausted = true
 		recovery = laterTime(recovery, creditsRecovery)
 	}
+	if usageRecovery, usageExhausted := publicUsageQuotaRecoveryAt(account, usage, now); usageExhausted {
+		exhausted = true
+		recovery = laterTime(recovery, usageRecovery)
+	}
 	return recovery, exhausted
+}
+
+func publicUsageQuotaRecoveryAt(account *Account, usage *UsageInfo, now time.Time) (*time.Time, bool) {
+	usage = publicStatusUsageForClassification(account, usage, now)
+	if account == nil || usage == nil {
+		return nil, false
+	}
+
+	var windows []*UsageProgress
+	switch account.Platform {
+	case PlatformOpenAI, PlatformAnthropic:
+		windows = []*UsageProgress{usage.FiveHour, usage.SevenDay}
+	case PlatformGemini:
+		windows = []*UsageProgress{usage.GeminiSharedDaily, usage.GeminiSharedMinute}
+	default:
+		return nil, false
+	}
+
+	var recovery *time.Time
+	exhausted := false
+	for _, window := range windows {
+		if !publicUsageWindowExhausted(window, now) {
+			continue
+		}
+		exhausted = true
+		recovery = laterTime(recovery, window.ResetsAt)
+	}
+	return recovery, exhausted
+}
+
+func publicStatusUsageForClassification(account *Account, usage *UsageInfo, now time.Time) *UsageInfo {
+	var snapshot UsageInfo
+	if usage != nil {
+		snapshot = *usage
+	}
+	if account == nil {
+		return usage
+	}
+
+	switch account.Platform {
+	case PlatformOpenAI:
+		if snapshot.FiveHour == nil {
+			snapshot.FiveHour = buildCodexUsageProgressFromExtra(account.Extra, "5h", now)
+		}
+		if snapshot.SevenDay == nil {
+			snapshot.SevenDay = buildCodexUsageProgressFromExtra(account.Extra, "7d", now)
+		}
+	case PlatformAnthropic:
+		if snapshot.FiveHour == nil {
+			snapshot.FiveHour = publicAnthropicFiveHourUsage(account, now)
+		}
+		if snapshot.SevenDay == nil {
+			snapshot.SevenDay = buildPassiveUsageWindow(account.Extra, "passive_usage_7d_utilization", "passive_usage_7d_reset")
+		}
+	}
+
+	if usage == nil && snapshot.FiveHour == nil && snapshot.SevenDay == nil &&
+		snapshot.GeminiSharedDaily == nil && snapshot.GeminiSharedMinute == nil {
+		return nil
+	}
+	return &snapshot
+}
+
+func publicAnthropicFiveHourUsage(account *Account, now time.Time) *UsageProgress {
+	if account == nil || account.SessionWindowEnd == nil || !now.Before(*account.SessionWindowEnd) {
+		return nil
+	}
+	utilization, found := resolveAccountExtraNumber(account.Extra, "session_window_utilization")
+	utilization *= 100
+	if !found {
+		switch account.SessionWindowStatus {
+		case "rejected":
+			utilization = 100
+		case "allowed_warning":
+			utilization = 80
+		}
+	}
+	return &UsageProgress{
+		Utilization:      utilization,
+		ResetsAt:         cloneTimePointer(account.SessionWindowEnd),
+		RemainingSeconds: max(0, int(account.SessionWindowEnd.Sub(now).Seconds())),
+	}
+}
+
+func publicUsageWindowExhausted(window *UsageProgress, now time.Time) bool {
+	if window == nil || window.Utilization < 100 {
+		return false
+	}
+	return window.ResetsAt == nil || now.Before(*window.ResetsAt)
 }
 
 func publicModelLimitRecoveryAt(extra map[string]any, now time.Time, creditsOnly bool) *time.Time {
