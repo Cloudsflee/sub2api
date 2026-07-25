@@ -89,6 +89,7 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 		PeakEnd:                         source.PeakEnd,
 		PeakRateMultiplier:              source.PeakRateMultiplier,
 		IsExclusive:                     source.IsExclusive,
+		PublicStatusEnabled:             false,
 		Status:                          duplicateGroupInactiveStatus,
 		DuplicateOperationID:            operationID,
 		SubscriptionType:                source.SubscriptionType,

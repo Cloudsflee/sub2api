@@ -512,6 +512,105 @@ func (s *AccountUsageService) GetPassiveUsage(ctx context.Context, accountID int
 	return info, nil
 }
 
+// GetReadOnlyUsage builds the best locally available usage projection without
+// contacting an upstream provider or mutating account state. It is the only
+// usage entry point allowed on anonymous status routes.
+func (s *AccountUsageService) GetReadOnlyUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+	if account == nil {
+		return nil, nil
+	}
+	now := time.Now()
+	switch account.Platform {
+	case PlatformOpenAI:
+		usage := &UsageInfo{Source: "passive"}
+		applyExtraToUsage(usage, account.Extra, now)
+		if raw, ok := account.Extra["codex_usage_updated_at"]; ok {
+			if updatedAt, err := parseTime(fmt.Sprint(raw)); err == nil {
+				usage.UpdatedAt = &updatedAt
+			}
+		}
+		if s.usageLogRepo != nil {
+			if stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, codexWindowStatsStart(usage.FiveHour, 5*time.Hour, now)); err == nil {
+				if usage.FiveHour == nil {
+					usage.FiveHour = &UsageProgress{}
+				}
+				usage.FiveHour.WindowStats = windowStatsFromAccountStats(stats)
+			}
+			if stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, codexWindowStatsStart(usage.SevenDay, 7*24*time.Hour, now)); err == nil {
+				if usage.SevenDay == nil {
+					usage.SevenDay = &UsageProgress{}
+				}
+				usage.SevenDay.WindowStats = windowStatsFromAccountStats(stats)
+			}
+		}
+		return usage, nil
+
+	case PlatformAnthropic:
+		if !account.IsAnthropicOAuthOrSetupToken() {
+			return nil, nil
+		}
+		usage := s.estimateSetupTokenUsage(account)
+		usage.Source = "passive"
+		if raw, ok := account.Extra["passive_usage_sampled_at"].(string); ok {
+			if updatedAt, err := time.Parse(time.RFC3339, raw); err == nil {
+				usage.UpdatedAt = &updatedAt
+			}
+		}
+		usage.SevenDay = buildPassiveUsageWindow(account.Extra, "passive_usage_7d_utilization", "passive_usage_7d_reset")
+		usage.SevenDayFable = buildPassiveUsageWindow(account.Extra, "passive_usage_7d_oi_utilization", "passive_usage_7d_oi_reset")
+		s.addWindowStats(ctx, account, usage)
+		return usage, nil
+
+	case PlatformGemini:
+		usage, err := s.getGeminiUsage(ctx, account)
+		if usage != nil {
+			usage.Source = "local"
+		}
+		return usage, err
+
+	case PlatformGrok:
+		if s.grokQuotaFetcher == nil {
+			return nil, nil
+		}
+		usage := s.grokQuotaFetcher.BuildUsageInfo(account)
+		if s.usageLogRepo != nil {
+			if stats, err := s.usageLogRepo.GetAccountTodayStats(ctx, account.ID); err == nil && stats != nil {
+				usage.GrokLocalUsage = windowStatsFromAccountStats(stats)
+			}
+			usage.GrokLocalUsage24h, usage.GrokLocalUsage7d, usage.GrokLocalUsageMonthly = grokLocalUsageForQuota(
+				ctx, s.usageLogRepo, account.ID, usage.GrokBilling, now.UTC(),
+			)
+		}
+		return usage, nil
+
+	case PlatformAntigravity:
+		if s.cache == nil {
+			return nil, nil
+		}
+		cached, ok := s.cache.antigravityCache.Load(account.ID)
+		if !ok {
+			return nil, nil
+		}
+		entry, ok := cached.(*antigravityUsageCache)
+		if !ok || entry == nil || entry.usageInfo == nil {
+			return nil, nil
+		}
+		payload, err := json.Marshal(entry.usageInfo)
+		if err != nil {
+			return nil, err
+		}
+		var usage UsageInfo
+		if err := json.Unmarshal(payload, &usage); err != nil {
+			return nil, err
+		}
+		usage.Source = "cache"
+		recalcAntigravityRemainingSeconds(&usage)
+		return &usage, nil
+	default:
+		return nil, nil
+	}
+}
+
 // buildPassiveUsageWindow 从 Extra 中的被动采样数据（utilization 为 0-1 小数、reset 为 Unix 秒）
 // 构建用量窗口，无数据时返回 nil。
 func buildPassiveUsageWindow(extra map[string]any, utilKey, resetKey string) *UsageProgress {
@@ -1198,6 +1297,9 @@ func enrichUsageWithAccountError(info *UsageInfo, account *Account) {
 // addWindowStats 为 usage 数据添加窗口期统计
 // 使用独立缓存（1 分钟），与 API 缓存分离
 func (s *AccountUsageService) addWindowStats(ctx context.Context, account *Account, usage *UsageInfo) {
+	if s == nil || account == nil || usage == nil || s.usageLogRepo == nil {
+		return
+	}
 	// 修复：即使 FiveHour 为 nil，也要尝试获取统计数据
 	// 因为 SevenDay/SevenDaySonnet/SevenDayFable 可能需要
 	if usage.FiveHour == nil && usage.SevenDay == nil && usage.SevenDaySonnet == nil && usage.SevenDayFable == nil {
@@ -1206,9 +1308,11 @@ func (s *AccountUsageService) addWindowStats(ctx context.Context, account *Accou
 
 	// 检查窗口统计缓存（1 分钟）
 	var windowStats *WindowStats
-	if cached, ok := s.cache.windowStatsCache.Load(account.ID); ok {
-		if cache, ok := cached.(*windowStatsCache); ok && time.Since(cache.timestamp) < windowStatsCacheTTL {
-			windowStats = cache.stats
+	if s.cache != nil {
+		if cached, ok := s.cache.windowStatsCache.Load(account.ID); ok {
+			if cache, ok := cached.(*windowStatsCache); ok && time.Since(cache.timestamp) < windowStatsCacheTTL {
+				windowStats = cache.stats
+			}
 		}
 	}
 
@@ -1222,6 +1326,9 @@ func (s *AccountUsageService) addWindowStats(ctx context.Context, account *Accou
 			log.Printf("Failed to get window stats for account %d: %v", account.ID, err)
 			return
 		}
+		if stats == nil {
+			return
+		}
 
 		windowStats = &WindowStats{
 			Requests:     stats.Requests,
@@ -1232,10 +1339,12 @@ func (s *AccountUsageService) addWindowStats(ctx context.Context, account *Accou
 		}
 
 		// 缓存窗口统计（1 分钟）
-		s.cache.windowStatsCache.Store(account.ID, &windowStatsCache{
-			stats:     windowStats,
-			timestamp: time.Now(),
-		})
+		if s.cache != nil {
+			s.cache.windowStatsCache.Store(account.ID, &windowStatsCache{
+				stats:     windowStats,
+				timestamp: time.Now(),
+			})
+		}
 	}
 
 	// 为 FiveHour 添加 WindowStats（5h 窗口统计）

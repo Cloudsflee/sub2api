@@ -21860,6 +21860,7 @@ type GroupMutation struct {
 	peak_rate_multiplier                    *float64
 	addpeak_rate_multiplier                 *float64
 	is_exclusive                            *bool
+	public_status_enabled                   *bool
 	status                                  *string
 	duplicate_operation_id                  *string
 	platform                                *string
@@ -22503,6 +22504,42 @@ func (m *GroupMutation) OldIsExclusive(ctx context.Context) (v bool, err error) 
 // ResetIsExclusive resets all changes to the "is_exclusive" field.
 func (m *GroupMutation) ResetIsExclusive() {
 	m.is_exclusive = nil
+}
+
+// SetPublicStatusEnabled sets the "public_status_enabled" field.
+func (m *GroupMutation) SetPublicStatusEnabled(b bool) {
+	m.public_status_enabled = &b
+}
+
+// PublicStatusEnabled returns the value of the "public_status_enabled" field in the mutation.
+func (m *GroupMutation) PublicStatusEnabled() (r bool, exists bool) {
+	v := m.public_status_enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPublicStatusEnabled returns the old "public_status_enabled" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldPublicStatusEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPublicStatusEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPublicStatusEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPublicStatusEnabled: %w", err)
+	}
+	return oldValue.PublicStatusEnabled, nil
+}
+
+// ResetPublicStatusEnabled resets all changes to the "public_status_enabled" field.
+func (m *GroupMutation) ResetPublicStatusEnabled() {
+	m.public_status_enabled = nil
 }
 
 // SetStatus sets the "status" field.
@@ -24907,7 +24944,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 51)
+	fields := make([]string, 0, 52)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -24940,6 +24977,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.is_exclusive != nil {
 		fields = append(fields, group.FieldIsExclusive)
+	}
+	if m.public_status_enabled != nil {
+		fields = append(fields, group.FieldPublicStatusEnabled)
 	}
 	if m.status != nil {
 		fields = append(fields, group.FieldStatus)
@@ -25091,6 +25131,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.PeakRateMultiplier()
 	case group.FieldIsExclusive:
 		return m.IsExclusive()
+	case group.FieldPublicStatusEnabled:
+		return m.PublicStatusEnabled()
 	case group.FieldStatus:
 		return m.Status()
 	case group.FieldDuplicateOperationID:
@@ -25202,6 +25244,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldPeakRateMultiplier(ctx)
 	case group.FieldIsExclusive:
 		return m.OldIsExclusive(ctx)
+	case group.FieldPublicStatusEnabled:
+		return m.OldPublicStatusEnabled(ctx)
 	case group.FieldStatus:
 		return m.OldStatus(ctx)
 	case group.FieldDuplicateOperationID:
@@ -25367,6 +25411,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetIsExclusive(v)
+		return nil
+	case group.FieldPublicStatusEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPublicStatusEnabled(v)
 		return nil
 	case group.FieldStatus:
 		v, ok := value.(string)
@@ -26083,6 +26134,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldIsExclusive:
 		m.ResetIsExclusive()
+		return nil
+	case group.FieldPublicStatusEnabled:
+		m.ResetPublicStatusEnabled()
 		return nil
 	case group.FieldStatus:
 		m.ResetStatus()

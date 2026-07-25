@@ -439,6 +439,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		Platform:                        platform,
 		RateMultiplier:                  input.RateMultiplier,
 		IsExclusive:                     input.IsExclusive,
+		PublicStatusEnabled:             input.PublicStatusEnabled,
 		Status:                          StatusActive,
 		SubscriptionType:                subscriptionType,
 		DailyLimitUSD:                   dailyLimit,
@@ -625,6 +626,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.IsExclusive != nil {
 		group.IsExclusive = *input.IsExclusive
+	}
+	if input.PublicStatusEnabled != nil {
+		group.PublicStatusEnabled = *input.PublicStatusEnabled
 	}
 	if input.Status != "" {
 		group.Status = input.Status

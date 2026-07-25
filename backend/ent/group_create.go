@@ -175,6 +175,20 @@ func (_c *GroupCreate) SetNillableIsExclusive(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetPublicStatusEnabled sets the "public_status_enabled" field.
+func (_c *GroupCreate) SetPublicStatusEnabled(v bool) *GroupCreate {
+	_c.mutation.SetPublicStatusEnabled(v)
+	return _c
+}
+
+// SetNillablePublicStatusEnabled sets the "public_status_enabled" field if the given value is not nil.
+func (_c *GroupCreate) SetNillablePublicStatusEnabled(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetPublicStatusEnabled(*v)
+	}
+	return _c
+}
+
 // SetStatus sets the "status" field.
 func (_c *GroupCreate) SetStatus(v string) *GroupCreate {
 	_c.mutation.SetStatus(v)
@@ -876,6 +890,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultIsExclusive
 		_c.mutation.SetIsExclusive(v)
 	}
+	if _, ok := _c.mutation.PublicStatusEnabled(); !ok {
+		v := group.DefaultPublicStatusEnabled
+		_c.mutation.SetPublicStatusEnabled(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := group.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -1026,6 +1044,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.IsExclusive(); !ok {
 		return &ValidationError{Name: "is_exclusive", err: errors.New(`ent: missing required field "Group.is_exclusive"`)}
+	}
+	if _, ok := _c.mutation.PublicStatusEnabled(); !ok {
+		return &ValidationError{Name: "public_status_enabled", err: errors.New(`ent: missing required field "Group.public_status_enabled"`)}
 	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Group.status"`)}
@@ -1205,6 +1226,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.IsExclusive(); ok {
 		_spec.SetField(group.FieldIsExclusive, field.TypeBool, value)
 		_node.IsExclusive = value
+	}
+	if value, ok := _c.mutation.PublicStatusEnabled(); ok {
+		_spec.SetField(group.FieldPublicStatusEnabled, field.TypeBool, value)
+		_node.PublicStatusEnabled = value
 	}
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(group.FieldStatus, field.TypeString, value)
@@ -1663,6 +1688,18 @@ func (u *GroupUpsert) SetIsExclusive(v bool) *GroupUpsert {
 // UpdateIsExclusive sets the "is_exclusive" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateIsExclusive() *GroupUpsert {
 	u.SetExcluded(group.FieldIsExclusive)
+	return u
+}
+
+// SetPublicStatusEnabled sets the "public_status_enabled" field.
+func (u *GroupUpsert) SetPublicStatusEnabled(v bool) *GroupUpsert {
+	u.Set(group.FieldPublicStatusEnabled, v)
+	return u
+}
+
+// UpdatePublicStatusEnabled sets the "public_status_enabled" field to the value that was provided on create.
+func (u *GroupUpsert) UpdatePublicStatusEnabled() *GroupUpsert {
+	u.SetExcluded(group.FieldPublicStatusEnabled)
 	return u
 }
 
@@ -2539,6 +2576,20 @@ func (u *GroupUpsertOne) SetIsExclusive(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateIsExclusive() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateIsExclusive()
+	})
+}
+
+// SetPublicStatusEnabled sets the "public_status_enabled" field.
+func (u *GroupUpsertOne) SetPublicStatusEnabled(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetPublicStatusEnabled(v)
+	})
+}
+
+// UpdatePublicStatusEnabled sets the "public_status_enabled" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdatePublicStatusEnabled() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdatePublicStatusEnabled()
 	})
 }
 
@@ -3691,6 +3742,20 @@ func (u *GroupUpsertBulk) SetIsExclusive(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateIsExclusive() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateIsExclusive()
+	})
+}
+
+// SetPublicStatusEnabled sets the "public_status_enabled" field.
+func (u *GroupUpsertBulk) SetPublicStatusEnabled(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetPublicStatusEnabled(v)
+	})
+}
+
+// UpdatePublicStatusEnabled sets the "public_status_enabled" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdatePublicStatusEnabled() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdatePublicStatusEnabled()
 	})
 }
 

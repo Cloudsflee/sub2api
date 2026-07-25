@@ -895,6 +895,16 @@ export default {
         example: 'Use case:',
         exampleContent: 'Public group rate is 0.8. Create an exclusive group with 0.7 rate, manually assign VIP users to give them better pricing.'
       },
+      publicStatus: {
+        label: 'Public account status',
+        hint: 'Publish masked account status and usage for this group at the fixed status page. Inactive groups remain visible until deleted or disabled here.',
+        enabled: 'Public',
+        disabled: 'Private',
+        copy: 'Copy public status URL',
+        open: 'Open public status page',
+        copied: 'Public status URL copied',
+        indicator: 'Published on the account status page'
+      },
       noGroupsYet: 'No groups yet',
       createFirstGroup: 'Create your first group to organize API keys.',
       creating: 'Creating...',

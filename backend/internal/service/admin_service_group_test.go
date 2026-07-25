@@ -249,6 +249,49 @@ func TestAdminService_ListGroups_PassesSortParams(t *testing.T) {
 	}, repo.listWithFiltersParams)
 }
 
+func TestAdminService_CreateGroup_PreservesPublicStatusSetting(t *testing.T) {
+	repo := &groupRepoStubForAdmin{}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+		Name:                "public-status-create",
+		Platform:            PlatformAnthropic,
+		RateMultiplier:      1,
+		PublicStatusEnabled: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.NotNil(t, repo.created)
+	require.True(t, repo.created.PublicStatusEnabled)
+}
+
+func TestAdminService_UpdateGroup_PublicStatusIsOptional(t *testing.T) {
+	existing := &Group{
+		ID:                  1,
+		Name:                "public-status-update",
+		Platform:            PlatformAnthropic,
+		RateMultiplier:      1,
+		Status:              StatusActive,
+		PublicStatusEnabled: true,
+	}
+	repo := &groupRepoStubForAdmin{getByID: existing}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	group, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{})
+	require.NoError(t, err)
+	require.True(t, group.PublicStatusEnabled, "omitting the field must preserve the current setting")
+
+	disabled := false
+	group, err = svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{
+		PublicStatusEnabled: &disabled,
+	})
+	require.NoError(t, err)
+	require.False(t, group.PublicStatusEnabled)
+	require.NotNil(t, repo.updated)
+	require.False(t, repo.updated.PublicStatusEnabled)
+}
+
 // TestAdminService_CreateGroup_WithImagePricing 测试创建分组时 ImagePrice 字段正确传递
 func TestAdminService_CreateGroup_WithImagePricing(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}

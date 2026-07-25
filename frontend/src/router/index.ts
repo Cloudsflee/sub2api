@@ -177,6 +177,16 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/account-status',
+    name: 'PublicAccountStatus',
+    component: () => import('@/views/public/AccountStatusView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Account Status',
+      titleKey: 'publicAccountStatus.title'
+    }
+  },
+  {
     path: '/legal/:documentId',
     name: 'LegalDocument',
     component: () => import('@/views/public/LegalDocumentView.vue'),
@@ -738,7 +748,7 @@ let authInitialized = false
 const navigationLoading = useNavigationLoadingState()
 // 延迟初始化预加载，传入 router 实例
 let routePrefetch: ReturnType<typeof useRoutePrefetch> | null = null
-const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/account-import', '/key-usage', '/setup', '/payment/result', '/payment/airwallex', '/legal']
+const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/account-import', '/key-usage', '/account-status', '/setup', '/payment/result', '/payment/airwallex', '/legal']
 const BACKEND_MODE_CALLBACK_PATHS = [
   '/auth/callback',
   '/auth/linuxdo/callback',

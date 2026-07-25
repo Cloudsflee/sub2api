@@ -122,10 +122,20 @@
           default-sort-order="asc"
           @sort="handleSort"
         >
-          <template #cell-name="{ value }">
-            <span class="font-medium text-gray-900 dark:text-white">{{
-              value
-            }}</span>
+          <template #cell-name="{ value, row }">
+            <div class="flex min-w-0 items-center gap-2">
+              <span class="min-w-0 truncate font-medium text-gray-900 dark:text-white" :title="String(value)">{{
+                value
+              }}</span>
+              <Icon
+                v-if="row.public_status_enabled"
+                data-testid="group-public-status-indicator"
+                name="globe"
+                size="sm"
+                class="shrink-0 text-primary-600 dark:text-primary-400"
+                :title="t('admin.groups.publicStatus.indicator')"
+              />
+            </div>
           </template>
 
           <template #cell-id="{ value }">
@@ -360,6 +370,7 @@
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
               <button
+                data-testid="group-edit"
                 @click="handleEdit(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
               >
@@ -691,6 +702,12 @@
             </span>
           </div>
         </div>
+
+        <PublicStatusField
+          class="border-t pt-4"
+          v-model="createForm.public_status_enabled"
+          :url="publicStatusUrl"
+        />
 
         <!-- Subscription Configuration -->
         <div class="mt-4 border-t pt-4">
@@ -1990,6 +2007,11 @@
             data-tour="edit-group-form-name"
           />
         </div>
+        <PublicStatusField
+          class="border-t pt-4"
+          v-model="editForm.public_status_enabled"
+          :url="publicStatusUrl"
+        />
         <div>
           <label class="input-label">{{
             t("admin.groups.form.description")
@@ -3993,6 +4015,7 @@ import GroupRateMultipliersModal from "@/components/admin/group/GroupRateMultipl
 import GroupRPMOverridesModal from "@/components/admin/group/GroupRPMOverridesModal.vue";
 import GroupCapacityBadge from "@/components/common/GroupCapacityBadge.vue";
 import ReasoningEffortPolicyFields from "@/components/admin/group/ReasoningEffortPolicyFields.vue";
+import PublicStatusField from "@/components/admin/group/PublicStatusField.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { createStableObjectKeyResolver } from "@/utils/stableObjectKey";
 import { extractApiErrorMessage } from "@/utils/apiError";
@@ -4035,6 +4058,7 @@ import {
 const { t } = useI18n();
 const appStore = useAppStore();
 const onboardingStore = useOnboardingStore();
+const publicStatusUrl = computed(() => new URL('/account-status', window.location.origin).toString());
 
 const ALWAYS_VISIBLE_COLUMNS = new Set(["name", "actions"]);
 // Default hidden columns (hidden on first load / after schema bumps).
@@ -4502,6 +4526,7 @@ const createForm = reactive({
   platform: "anthropic" as GroupPlatform,
   rate_multiplier: 1.0,
   is_exclusive: false,
+  public_status_enabled: false,
   subscription_type: "standard" as SubscriptionType,
   daily_limit_usd: null as number | null,
   weekly_limit_usd: null as number | null,
@@ -4850,6 +4875,7 @@ const editForm = reactive({
   platform: "anthropic" as GroupPlatform,
   rate_multiplier: 1.0,
   is_exclusive: false,
+  public_status_enabled: false,
   status: "active" as "active" | "inactive",
   subscription_type: "standard" as SubscriptionType,
   daily_limit_usd: null as number | null,
@@ -5260,6 +5286,7 @@ const closeCreateModal = () => {
   createForm.platform = "anthropic";
   createForm.rate_multiplier = 1.0;
   createForm.is_exclusive = false;
+  createForm.public_status_enabled = false;
   createForm.subscription_type = "standard";
   createForm.daily_limit_usd = null;
   createForm.weekly_limit_usd = null;
@@ -5438,6 +5465,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.platform = group.platform;
   editForm.rate_multiplier = group.rate_multiplier;
   editForm.is_exclusive = group.is_exclusive;
+  editForm.public_status_enabled = group.public_status_enabled ?? false;
   editForm.status = group.status;
   editForm.subscription_type = group.subscription_type || "standard";
   editForm.daily_limit_usd = group.daily_limit_usd;

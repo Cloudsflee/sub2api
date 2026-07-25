@@ -19,13 +19,18 @@ import (
 )
 
 type Account struct {
-	ID                      int64
-	Name                    string
-	Notes                   *string
-	Platform                string
-	Type                    string
-	Credentials             map[string]any
-	Extra                   map[string]any
+	ID          int64
+	Name        string
+	Notes       *string
+	Platform    string
+	Type        string
+	Credentials map[string]any
+	Extra       map[string]any
+	// Public status queries populate only these non-secret Gemini quota hints.
+	// They avoid loading the credentials JSON into the anonymous request path.
+	GeminiOAuthTypeHint     string
+	GeminiTierIDHint        string
+	GeminiProjectIDPresent  bool
 	ProxyID                 *int64
 	ProxyFallbackOriginID   *int64
 	ProxyFallbackOriginName *string // 仅展示用
@@ -265,7 +270,10 @@ func (a *Account) GeminiOAuthType() string {
 		return ""
 	}
 	oauthType := strings.TrimSpace(a.GetCredential("oauth_type"))
-	if oauthType == "" && strings.TrimSpace(a.GetCredential("project_id")) != "" {
+	if oauthType == "" {
+		oauthType = strings.TrimSpace(a.GeminiOAuthTypeHint)
+	}
+	if oauthType == "" && (strings.TrimSpace(a.GetCredential("project_id")) != "" || a.GeminiProjectIDPresent) {
 		return "code_assist"
 	}
 	return oauthType
@@ -273,6 +281,9 @@ func (a *Account) GeminiOAuthType() string {
 
 func (a *Account) GeminiTierID() string {
 	tierID := strings.TrimSpace(a.GetCredential("tier_id"))
+	if tierID == "" {
+		tierID = strings.TrimSpace(a.GeminiTierIDHint)
+	}
 	return tierID
 }
 
