@@ -57,7 +57,7 @@ func TestMaskPublicAccountNameUnicodeAndEmail(t *testing.T) {
 }
 
 func TestClassifyPublicAccountStatusPriorityAndRecovery(t *testing.T) {
-	now := time.Date(2026, time.July, 25, 4, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	overload := now.Add(time.Minute)
 	rateLimit := now.Add(2 * time.Minute)
 	temporary := now.Add(3 * time.Minute)
@@ -132,7 +132,7 @@ func TestClassifyPublicAccountStatusPriorityAndRecovery(t *testing.T) {
 }
 
 func TestClassifyPublicAccountStatusCreditsAndMultipleQuotaRecovery(t *testing.T) {
-	now := time.Date(2026, time.July, 25, 4, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	dailyReset := now.Add(2 * time.Hour)
 	weeklyReset := now.Add(24 * time.Hour)
 	creditsReset := now.Add(3 * time.Hour)
