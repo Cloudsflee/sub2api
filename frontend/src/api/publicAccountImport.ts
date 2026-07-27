@@ -68,6 +68,19 @@ export interface PublicAccountImportProduct {
   updated_at: string
 }
 
+export type PublicAccountImportProductSyncState = 'idle' | 'queued' | 'refreshing' | 'failed'
+
+export interface PublicAccountImportProductSyncStatus {
+  shop_id: string
+  state: PublicAccountImportProductSyncState
+  updated_at: string
+  retry_after_seconds: number
+}
+
+export interface PublicAccountImportProductRefreshResponse extends PublicAccountImportProductSyncStatus {
+  accepted: boolean
+}
+
 export interface PublicAccountImportProductsResponse {
   products: PublicAccountImportProduct[]
   shop_count: number
@@ -76,6 +89,7 @@ export interface PublicAccountImportProductsResponse {
   refreshing_shops: number
   failed_shops: number
   refresh_seconds: number
+  shop_sync_statuses: PublicAccountImportProductSyncStatus[]
 }
 
 export interface PublicAccountImportProductSyncJob {
@@ -147,6 +161,22 @@ export async function getPublicAccountImportProducts(): Promise<PublicAccountImp
     refreshing_shops: data.refreshing_shops || 0,
     failed_shops: data.failed_shops || 0,
     refresh_seconds: data.refresh_seconds || 900,
+    shop_sync_statuses: Array.isArray(data.shop_sync_statuses)
+      ? data.shop_sync_statuses.map((status) => normalizePublicAccountImportProductSyncStatus(status))
+      : [],
+  }
+}
+
+export async function requestPublicAccountImportProductRefresh(
+  shopId: string
+): Promise<PublicAccountImportProductRefreshResponse> {
+  const { data } = await apiClient.post<PublicAccountImportProductRefreshResponse>(
+    '/public/account-import/products/refresh',
+    { shop_id: shopId }
+  )
+  return {
+    ...normalizePublicAccountImportProductSyncStatus(data, shopId),
+    accepted: Boolean(data?.accepted),
   }
 }
 
@@ -167,4 +197,22 @@ export async function submitPublicAccountImportProductSync(
     attempt_id: attemptId,
     products,
   })
+}
+
+function normalizePublicAccountImportProductSyncStatus(
+  value: Partial<PublicAccountImportProductSyncStatus> | null | undefined,
+  fallbackShopId = ''
+): PublicAccountImportProductSyncStatus {
+  const state = value?.state
+  return {
+    shop_id: typeof value?.shop_id === 'string' ? value.shop_id : fallbackShopId,
+    state: state === 'queued' || state === 'refreshing' || state === 'failed' ? state : 'idle',
+    updated_at: typeof value?.updated_at === 'string' ? value.updated_at : '',
+    retry_after_seconds: normalizeNonNegativeInteger(value?.retry_after_seconds),
+  }
+}
+
+function normalizeNonNegativeInteger(value: unknown): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0
 }

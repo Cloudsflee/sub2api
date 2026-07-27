@@ -16,10 +16,19 @@ describe('PublicAccountImportView product synchronization', () => {
     expect(source).not.toContain("['idle', 'checking'].includes(productPriceStatus(product.id))")
   })
 
-  it('does not expose a manual full-catalog synchronization action', () => {
+  it('exposes only per-shop refresh and does not restore full-catalog synchronization', () => {
     expect(source).not.toContain('@click="handleProductSync"')
-    expect(source).not.toContain('requestPublicAccountImportProductRefresh')
+    expect(source).toContain('requestPublicAccountImportProductRefresh(shop.id)')
+    expect(source).toContain(':data-shop-product-refresh="shop.id"')
+    expect(source).toContain('supportsPublicShopProductSync(shop.url)')
     expect(source).toContain("productPriceStatus(product.id) === 'checking'")
+  })
+
+  it('keeps the shop link separate from the product refresh button', () => {
+    expect(source).toContain('<div\n            v-for="shop in pagedShops"')
+    expect(source).toContain('@click="handleShopProductRefresh(shop)"')
+    expect(source).toContain(':aria-label="shopProductRefreshLabel(shop.id)"')
+    expect(source).toContain('shopProductRefreshRequests.value = { ...shopProductRefreshRequests.value, [shop.id]: true }')
   })
 
   it('preflights the minimum purchasable quantity before opening a product', () => {
@@ -38,6 +47,7 @@ describe('PublicAccountImportView product synchronization', () => {
   it('separates queued shops from jobs that are actually running', () => {
     expect(source).toContain('queuedProductShops.value = catalog.queued_shops')
     expect(source).toContain('refreshingProductShops.value = catalog.refreshing_shops')
+    expect(source).toContain('mergeShopProductSyncStatuses(catalog.shop_sync_statuses, true)')
     expect(source).toContain("productsRefreshingQueued")
     expect(source).toContain('productRefreshTimer = window.setInterval')
   })

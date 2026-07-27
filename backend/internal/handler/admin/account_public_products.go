@@ -22,17 +22,19 @@ import (
 )
 
 const (
-	publicAccountImportProductsFile          = "/app/data/public-account-import-products.json"
-	publicAccountImportProductStoreVersion   = 1
-	publicAccountImportProductSyncInterval   = 10 * time.Second
-	publicAccountImportProductRefreshAge     = 15 * time.Minute
-	publicAccountImportProductRetryAge       = 1 * time.Minute
-	publicAccountImportProductSyncLeaseAge   = 5 * time.Minute
-	publicAccountImportProductMaxCacheAge    = 15 * time.Minute
-	publicAccountImportProductRefreshMaxAge  = 30 * time.Minute
-	publicAccountImportProductMaxSyncJobs    = 2
-	publicAccountImportProductMaxBody        = 8 << 20
-	publicAccountImportProductFailureMaxBody = 8 << 10
+	publicAccountImportProductsFileEnv        = "PUBLIC_ACCOUNT_IMPORT_PRODUCTS_FILE"
+	publicAccountImportProductsFile           = "/app/data/public-account-import-products.json"
+	publicAccountImportProductStoreVersion    = 1
+	publicAccountImportProductSyncInterval    = 10 * time.Second
+	publicAccountImportProductRefreshAge      = 15 * time.Minute
+	publicAccountImportProductRefreshCooldown = 5 * time.Minute
+	publicAccountImportProductRetryAge        = 1 * time.Minute
+	publicAccountImportProductSyncLeaseAge    = 5 * time.Minute
+	publicAccountImportProductMaxCacheAge     = 15 * time.Minute
+	publicAccountImportProductRefreshMaxAge   = 30 * time.Minute
+	publicAccountImportProductMaxSyncJobs     = 2
+	publicAccountImportProductMaxBody         = 8 << 20
+	publicAccountImportProductFailureMaxBody  = 8 << 10
 )
 
 type PublicAccountImportProduct struct {
@@ -53,13 +55,33 @@ type PublicAccountImportProduct struct {
 }
 
 type PublicAccountImportProductsResponse struct {
-	Products        []PublicAccountImportProduct `json:"products"`
-	ShopCount       int                          `json:"shop_count"`
-	PendingShops    int                          `json:"pending_shops"`
-	QueuedShops     int                          `json:"queued_shops"`
-	RefreshingShops int                          `json:"refreshing_shops"`
-	FailedShops     int                          `json:"failed_shops"`
-	RefreshSeconds  int                          `json:"refresh_seconds"`
+	Products         []PublicAccountImportProduct           `json:"products"`
+	ShopCount        int                                    `json:"shop_count"`
+	PendingShops     int                                    `json:"pending_shops"`
+	QueuedShops      int                                    `json:"queued_shops"`
+	RefreshingShops  int                                    `json:"refreshing_shops"`
+	FailedShops      int                                    `json:"failed_shops"`
+	RefreshSeconds   int                                    `json:"refresh_seconds"`
+	ShopSyncStatuses []PublicAccountImportProductSyncStatus `json:"shop_sync_statuses"`
+}
+
+type PublicAccountImportProductSyncStatus struct {
+	ShopID            string `json:"shop_id"`
+	State             string `json:"state"`
+	UpdatedAt         string `json:"updated_at"`
+	RetryAfterSeconds int    `json:"retry_after_seconds"`
+}
+
+type PublicAccountImportProductRefreshRequest struct {
+	ShopID string `json:"shop_id"`
+}
+
+type PublicAccountImportProductRefreshResponse struct {
+	Accepted          bool   `json:"accepted"`
+	ShopID            string `json:"shop_id"`
+	State             string `json:"state"`
+	UpdatedAt         string `json:"updated_at"`
+	RetryAfterSeconds int    `json:"retry_after_seconds"`
 }
 
 type PublicAccountImportProductSyncJob struct {
@@ -101,14 +123,15 @@ type PublicAccountImportProductSyncFailureRequest struct {
 }
 
 type publicAccountImportProductShopCache struct {
-	ShopID             string                       `json:"shop_id"`
-	LastAttempt        string                       `json:"last_attempt"`
-	SyncStartedAt      string                       `json:"sync_started_at,omitempty"`
-	SyncAttemptID      string                       `json:"sync_attempt_id,omitempty"`
-	UpdatedAt          string                       `json:"updated_at,omitempty"`
-	RefreshRequestedAt string                       `json:"refresh_requested_at,omitempty"`
-	Error              string                       `json:"error,omitempty"`
-	Products           []PublicAccountImportProduct `json:"products"`
+	ShopID                   string                       `json:"shop_id"`
+	LastAttempt              string                       `json:"last_attempt"`
+	SyncStartedAt            string                       `json:"sync_started_at,omitempty"`
+	SyncAttemptID            string                       `json:"sync_attempt_id,omitempty"`
+	UpdatedAt                string                       `json:"updated_at,omitempty"`
+	RefreshRequestedAt       string                       `json:"refresh_requested_at,omitempty"`
+	ManualRefreshCompletedAt string                       `json:"manual_refresh_completed_at,omitempty"`
+	Error                    string                       `json:"error,omitempty"`
+	Products                 []PublicAccountImportProduct `json:"products"`
 }
 
 type publicAccountImportProductStore struct {
@@ -147,10 +170,11 @@ func (h *AccountHandler) ListPublicAccountImportProducts(c *gin.Context) {
 		return
 	}
 
-	products, pending, queued, refreshing, failed := publicAccountImportProductSnapshot(shops, store, time.Now().UTC())
+	now := time.Now().UTC()
+	products, pending, queued, refreshing, failed := publicAccountImportProductSnapshot(shops, store, now)
 	response.Success(c, PublicAccountImportProductsResponse{
 		Products: products, ShopCount: len(shops), PendingShops: pending, QueuedShops: queued, RefreshingShops: refreshing, FailedShops: failed,
-		RefreshSeconds: int(publicAccountImportProductRefreshAge.Seconds()),
+		RefreshSeconds: int(publicAccountImportProductRefreshAge.Seconds()), ShopSyncStatuses: publicAccountImportProductSyncStatuses(shops, store, now),
 	})
 }
 
@@ -230,6 +254,74 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 	response.Success(c, PublicAccountImportProductSyncJobResponse{Job: &first, Jobs: jobs})
 }
 
+func (h *AccountHandler) RequestPublicAccountImportProductRefresh(c *gin.Context) {
+	if !publicAccountImportEnabled() {
+		response.NotFound(c, "Public account import is disabled")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, publicAccountImportProductFailureMaxBody)
+	var req PublicAccountImportProductRefreshRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid product refresh request")
+		return
+	}
+	req.ShopID = strings.TrimSpace(req.ShopID)
+	if req.ShopID == "" {
+		response.BadRequest(c, "Product refresh shop is required")
+		return
+	}
+
+	shops, err := snapshotPublicAccountImportShops()
+	if err != nil {
+		response.InternalError(c, "Failed to load shop links")
+		return
+	}
+	var shop *PublicAccountImportShop
+	for i := range shops {
+		if shops[i].ID == req.ShopID {
+			shop = &shops[i]
+			break
+		}
+	}
+	if shop == nil {
+		response.BadRequest(c, "Shop is not available")
+		return
+	}
+	if _, err := publicAccountImportShopToken(shop.URL); err != nil {
+		response.BadRequest(c, "Shop is not supported")
+		return
+	}
+
+	publicProductCacheMu.Lock()
+	defer publicProductCacheMu.Unlock()
+	if err := loadPublicProductCacheLocked(); err != nil {
+		response.InternalError(c, "Failed to load product cache")
+		return
+	}
+
+	now := time.Now().UTC()
+	cached := publicProductCache.Shops[shop.ID]
+	status := publicAccountImportProductSyncStatusForShop(shop.ID, cached, now)
+	if status.State == "queued" || status.State == "refreshing" || status.RetryAfterSeconds > 0 {
+		response.Success(c, publicAccountImportProductRefreshResponse(false, status))
+		return
+	}
+
+	cached.ShopID = shop.ID
+	cached.RefreshRequestedAt = now.Format(time.RFC3339Nano)
+	previousShops := publicProductCache.Shops
+	publicProductCache.Shops = maps.Clone(previousShops)
+	publicProductCache.Shops[shop.ID] = cached
+	if err := savePublicProductCacheLocked(); err != nil {
+		publicProductCache.Shops = previousShops
+		response.InternalError(c, "Failed to queue product refresh")
+		return
+	}
+	publicProductLastJobAt = time.Time{}
+	status = publicAccountImportProductSyncStatusForShop(shop.ID, cached, now)
+	response.Success(c, publicAccountImportProductRefreshResponse(true, status))
+}
+
 func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
 	if !publicAccountImportEnabled() {
 		response.NotFound(c, "Public account import is disabled")
@@ -267,7 +359,8 @@ func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
 		return
 	}
 
-	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC()
+	updatedAt := now.Format(time.RFC3339Nano)
 	products := make([]PublicAccountImportProduct, 0, len(req.Products))
 	seen := make(map[string]struct{}, len(req.Products))
 	for _, item := range req.Products {
@@ -298,6 +391,9 @@ func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
 	cached.SyncStartedAt = ""
 	cached.SyncAttemptID = ""
 	cached.UpdatedAt = updatedAt
+	if requestedAt := parsePublicAccountImportProductTimestamp(cached.RefreshRequestedAt); !requestedAt.IsZero() && !requestedAt.After(now.Add(time.Minute)) {
+		cached.ManualRefreshCompletedAt = updatedAt
+	}
 	cached.RefreshRequestedAt = ""
 	cached.Products = products
 	previousShops := publicProductCache.Shops
@@ -474,6 +570,7 @@ func selectPublicAccountImportProductSyncShops(shops []PublicAccountImportShop, 
 	type candidate struct {
 		shop    PublicAccountImportShop
 		attempt time.Time
+		manual  bool
 	}
 	candidates := make([]candidate, 0, len(shops))
 	for i := range shops {
@@ -481,7 +578,8 @@ func selectPublicAccountImportProductSyncShops(shops []PublicAccountImportShop, 
 		if publicAccountImportProductSyncIsActive(cached, now) {
 			continue
 		}
-		if !publicAccountImportProductRefreshIsPending(cached, now) && publicAccountImportProductCacheIsFresh(cached, now, publicAccountImportProductRefreshAge) {
+		manual := publicAccountImportProductRefreshIsPending(cached, now)
+		if !manual && publicAccountImportProductCacheIsFresh(cached, now, publicAccountImportProductRefreshAge) {
 			continue
 		}
 		attempt := parsePublicAccountImportProductTimestamp(cached.LastAttempt)
@@ -491,9 +589,12 @@ func selectPublicAccountImportProductSyncShops(shops []PublicAccountImportShop, 
 		if !attempt.IsZero() && now.Sub(attempt) < publicAccountImportProductRetryAge {
 			continue
 		}
-		candidates = append(candidates, candidate{shop: shops[i], attempt: attempt})
+		candidates = append(candidates, candidate{shop: shops[i], attempt: attempt, manual: manual})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].manual != candidates[j].manual {
+			return candidates[i].manual
+		}
 		return candidates[i].attempt.Before(candidates[j].attempt)
 	})
 	if len(candidates) > limit {
@@ -574,6 +675,49 @@ func publicAccountImportProductRefreshStatusForShops(shops []PublicAccountImport
 	return status
 }
 
+func publicAccountImportProductSyncStatuses(shops []PublicAccountImportShop, store publicAccountImportProductStore, now time.Time) []PublicAccountImportProductSyncStatus {
+	statuses := make([]PublicAccountImportProductSyncStatus, 0, len(shops))
+	for _, shop := range shops {
+		statuses = append(statuses, publicAccountImportProductSyncStatusForShop(shop.ID, store.Shops[shop.ID], now))
+	}
+	return statuses
+}
+
+func publicAccountImportProductSyncStatusForShop(shopID string, cached publicAccountImportProductShopCache, now time.Time) PublicAccountImportProductSyncStatus {
+	state := "idle"
+	requested, failed := publicAccountImportProductRefreshState(cached, now)
+	if publicAccountImportProductSyncIsActive(cached, now) {
+		state = "refreshing"
+	} else if requested {
+		state = "queued"
+	} else if failed {
+		state = "failed"
+	}
+	return PublicAccountImportProductSyncStatus{
+		ShopID: shopID, State: state, UpdatedAt: cached.UpdatedAt,
+		RetryAfterSeconds: publicAccountImportProductRefreshRetryAfter(cached, now),
+	}
+}
+
+func publicAccountImportProductRefreshRetryAfter(cached publicAccountImportProductShopCache, now time.Time) int {
+	completedAt := parsePublicAccountImportProductTimestamp(cached.ManualRefreshCompletedAt)
+	if completedAt.IsZero() || completedAt.After(now) {
+		return 0
+	}
+	remaining := completedAt.Add(publicAccountImportProductRefreshCooldown).Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	return int((remaining + time.Second - 1) / time.Second)
+}
+
+func publicAccountImportProductRefreshResponse(accepted bool, status PublicAccountImportProductSyncStatus) PublicAccountImportProductRefreshResponse {
+	return PublicAccountImportProductRefreshResponse{
+		Accepted: accepted, ShopID: status.ShopID, State: status.State,
+		UpdatedAt: status.UpdatedAt, RetryAfterSeconds: status.RetryAfterSeconds,
+	}
+}
+
 func parsePublicAccountImportProductTimestamp(value string) time.Time {
 	parsed, _ := time.Parse(time.RFC3339, strings.TrimSpace(value))
 	return parsed
@@ -583,7 +727,7 @@ func loadPublicProductCacheLocked() error {
 	if publicProductCacheLoaded {
 		return nil
 	}
-	data, err := os.ReadFile(publicAccountImportProductsFile)
+	data, err := os.ReadFile(publicAccountImportProductsPath())
 	if errors.Is(err, os.ErrNotExist) {
 		publicProductCacheLoaded = true
 		return nil
@@ -612,7 +756,8 @@ func savePublicProductCacheLocked() error {
 		return err
 	}
 	data = append(data, '\n')
-	dir := filepath.Dir(publicAccountImportProductsFile)
+	path := publicAccountImportProductsPath()
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -633,7 +778,14 @@ func savePublicProductCacheLocked() error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tempPath, publicAccountImportProductsFile)
+	return os.Rename(tempPath, path)
+}
+
+func publicAccountImportProductsPath() string {
+	if path := strings.TrimSpace(os.Getenv(publicAccountImportProductsFileEnv)); path != "" {
+		return path
+	}
+	return publicAccountImportProductsFile
 }
 
 func publicAccountImportShopToken(raw string) (string, error) {

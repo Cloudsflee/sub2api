@@ -311,24 +311,55 @@
           {{ t('publicAccountImport.noShops') }}
         </div>
         <div v-else class="divide-y divide-gray-200 border-b border-gray-200 dark:divide-dark-700 dark:border-dark-700">
-          <a
+          <div
             v-for="shop in pagedShops"
             :key="shop.id"
-            :href="shopHref(shop.url)"
-            target="_blank"
-            rel="noopener noreferrer nofollow ugc"
-            class="flex min-h-16 items-center gap-3 px-1 py-3 text-gray-800 transition-colors hover:bg-gray-100 hover:text-primary-700 dark:text-dark-100 dark:hover:bg-dark-800 dark:hover:text-primary-300 sm:px-3"
-            :title="t('publicAccountImport.visitShop')"
+            class="flex min-h-20 items-center gap-2 px-1 py-3 sm:px-3"
           >
-            <Icon name="link" size="sm" class="shrink-0 text-gray-400" />
-            <span class="min-w-0 flex-1">
-              <span class="block break-words text-sm font-medium">{{ shop.name }}</span>
-              <span class="block break-all text-xs text-gray-500 dark:text-dark-400">
-                {{ shop.url }}
+            <a
+              :href="shopHref(shop.url)"
+              target="_blank"
+              rel="noopener noreferrer nofollow ugc"
+              class="flex min-w-0 flex-1 items-center gap-3 text-gray-800 transition-colors hover:text-primary-700 dark:text-dark-100 dark:hover:text-primary-300"
+              :title="t('publicAccountImport.visitShop')"
+            >
+              <Icon name="link" size="sm" class="shrink-0 text-gray-400" />
+              <span class="min-w-0 flex-1">
+                <span class="block break-words text-sm font-medium">{{ shop.name }}</span>
+                <span class="block break-all text-xs text-gray-500 dark:text-dark-400">
+                  {{ shop.url }}
+                </span>
               </span>
-            </span>
-            <Icon name="externalLink" size="sm" class="shrink-0 text-gray-400" />
-          </a>
+              <Icon name="externalLink" size="sm" class="shrink-0 text-gray-400" />
+            </a>
+            <div v-if="supportsPublicShopProductSync(shop.url)" class="flex shrink-0 items-center gap-2">
+              <div class="w-28 text-right text-[11px] leading-4 text-gray-500 dark:text-dark-400 sm:w-36">
+                <span class="block">{{ shopProductUpdatedText(shop.id) }}</span>
+                <span
+                  v-if="shopProductStateText(shop.id)"
+                  class="block font-medium"
+                  :class="shopProductStateClass(shop.id)"
+                >
+                  {{ shopProductStateText(shop.id) }}
+                </span>
+              </div>
+              <button
+                type="button"
+                class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-gray-300 text-gray-600 transition-colors hover:border-primary-400 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:text-dark-300 dark:hover:border-primary-600 dark:hover:bg-dark-800 dark:hover:text-primary-300"
+                :disabled="shopProductRefreshIsDisabled(shop.id)"
+                :title="shopProductRefreshLabel(shop.id)"
+                :aria-label="shopProductRefreshLabel(shop.id)"
+                :data-shop-product-refresh="shop.id"
+                @click="handleShopProductRefresh(shop)"
+              >
+                <Icon
+                  name="refresh"
+                  size="sm"
+                  :class="{ 'animate-spin': shopProductRefreshIsSpinning(shop.id) }"
+                />
+              </button>
+            </div>
+          </div>
         </div>
 
         <div v-if="shopPageCount > 1" class="flex items-center justify-between py-4 text-sm">
@@ -524,10 +555,12 @@ import {
   getPublicAccountImportGroups,
   getPublicAccountImportProducts,
   getPublicAccountImportShops,
+  requestPublicAccountImportProductRefresh,
   submitPublicAccountImport,
   submitPublicAccountImportShop,
   type PublicAccountImportGroup,
   type PublicAccountImportProduct,
+  type PublicAccountImportProductSyncStatus,
   type PublicAccountImportResult,
   type PublicAccountImportShop,
 } from '@/api/publicAccountImport'
@@ -537,6 +570,13 @@ import {
   normalizeLivePublicProduct,
   publicProductGoodsKey,
 } from '@/utils/publicProductCatalog'
+import {
+  publicShopProductRefreshDisabled,
+  publicShopProductSyncRetryAfter,
+  supportsPublicShopProductSync,
+  trackPublicShopProductSyncStatus,
+  type TrackedPublicAccountImportProductSyncStatus,
+} from '@/utils/publicShopProductSync'
 import { sanitizeUrl } from '@/utils/url'
 
 const MAX_FILE_BYTES = 512 * 1024
@@ -587,11 +627,15 @@ const productSortPrices = new Map<string, number>()
 const queuedProductShops = ref(0)
 const refreshingProductShops = ref(0)
 const failedProductShops = ref(0)
+const shopProductSyncStatuses = ref<Record<string, TrackedPublicAccountImportProductSyncStatus>>({})
+const shopProductRefreshRequests = ref<Record<string, boolean>>({})
+const shopProductSyncClock = ref(Date.now())
 const productSearch = ref('')
 const productPriceOrder = ref<'desc' | 'asc'>('asc')
 const productPage = ref(1)
 let shopRefreshTimer: number | undefined
 let productRefreshTimer: number | undefined
+let shopProductSyncClockTimer: number | undefined
 const productVerificationPromises = new Map<string, Promise<boolean>>()
 
 const dragActive = computed(() => dragDepth.value > 0)
@@ -629,6 +673,9 @@ onMounted(async () => {
   productRefreshTimer = window.setInterval(() => {
     void loadPublicProducts(false)
   }, 10_000)
+  shopProductSyncClockTimer = window.setInterval(() => {
+    shopProductSyncClock.value = Date.now()
+  }, 1_000)
   try {
     groups.value = await getPublicAccountImportGroups()
   } catch (error: any) {
@@ -641,6 +688,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (shopRefreshTimer !== undefined) window.clearInterval(shopRefreshTimer)
   if (productRefreshTimer !== undefined) window.clearInterval(productRefreshTimer)
+  if (shopProductSyncClockTimer !== undefined) window.clearInterval(shopProductSyncClockTimer)
 })
 
 watch(selectedGroupIds, resetSubmissionState, { deep: true })
@@ -797,6 +845,7 @@ async function loadPublicProducts(showLoading: boolean) {
     queuedProductShops.value = catalog.queued_shops
     refreshingProductShops.value = catalog.refreshing_shops
     failedProductShops.value = catalog.failed_shops
+    mergeShopProductSyncStatuses(catalog.shop_sync_statuses, true)
     productErrorMessage.value = ''
   } catch (error: any) {
     if (showLoading || products.value.length === 0) {
@@ -822,6 +871,75 @@ function formatProductUpdatedAt(value: string): string {
     minute: '2-digit',
     hour12: false,
   })
+}
+
+function mergeShopProductSyncStatuses(statuses: PublicAccountImportProductSyncStatus[], replace: boolean) {
+  const now = Date.now()
+  const next = replace ? {} : { ...shopProductSyncStatuses.value }
+  for (const status of statuses) {
+    if (!status.shop_id) continue
+    next[status.shop_id] = trackPublicShopProductSyncStatus(status, now)
+  }
+  shopProductSyncStatuses.value = next
+  shopProductSyncClock.value = now
+}
+
+function shopProductSyncStatus(shopId: string): TrackedPublicAccountImportProductSyncStatus | undefined {
+  return shopProductSyncStatuses.value[shopId]
+}
+
+function shopProductRetryAfter(shopId: string): number {
+  return publicShopProductSyncRetryAfter(shopProductSyncStatus(shopId), shopProductSyncClock.value)
+}
+
+function shopProductRefreshIsDisabled(shopId: string): boolean {
+  return publicShopProductRefreshDisabled(
+    shopProductSyncStatus(shopId),
+    Boolean(shopProductRefreshRequests.value[shopId]),
+    shopProductSyncClock.value
+  )
+}
+
+function shopProductRefreshIsSpinning(shopId: string): boolean {
+  return Boolean(shopProductRefreshRequests.value[shopId]) || shopProductSyncStatus(shopId)?.state === 'refreshing'
+}
+
+function shopProductUpdatedText(shopId: string): string {
+  const updatedAt = shopProductSyncStatus(shopId)?.updated_at
+  return updatedAt
+    ? t('publicAccountImport.shopProductsUpdatedAt', { time: formatProductUpdatedAt(updatedAt) })
+    : t('publicAccountImport.shopProductsNeverUpdated')
+}
+
+function shopProductStateText(shopId: string): string {
+  const status = shopProductSyncStatus(shopId)
+  if (status?.state === 'queued') return t('publicAccountImport.shopProductsQueued')
+  if (status?.state === 'refreshing') return t('publicAccountImport.shopProductsRefreshing')
+  if (status?.state === 'failed') return t('publicAccountImport.shopProductsFailed')
+  const retryAfter = shopProductRetryAfter(shopId)
+  return retryAfter > 0
+    ? t('publicAccountImport.shopProductsCooldown', { seconds: retryAfter })
+    : ''
+}
+
+function shopProductStateClass(shopId: string): string {
+  const state = shopProductSyncStatus(shopId)?.state
+  if (state === 'failed') return 'text-red-600 dark:text-red-400'
+  if (state === 'queued') return 'text-amber-600 dark:text-amber-400'
+  if (state === 'refreshing') return 'text-primary-600 dark:text-primary-300'
+  return 'text-gray-500 dark:text-dark-400'
+}
+
+function shopProductRefreshLabel(shopId: string): string {
+  if (shopProductRefreshRequests.value[shopId]) return t('publicAccountImport.shopProductsRequesting')
+  const state = shopProductSyncStatus(shopId)?.state
+  if (state === 'queued') return t('publicAccountImport.shopProductsQueued')
+  if (state === 'refreshing') return t('publicAccountImport.shopProductsRefreshing')
+  const retryAfter = shopProductRetryAfter(shopId)
+  if (retryAfter > 0) return t('publicAccountImport.shopProductsCooldown', { seconds: retryAfter })
+  return state === 'failed'
+    ? t('publicAccountImport.shopProductsRetry')
+    : t('publicAccountImport.shopProductsRefresh')
 }
 
 function productPriceStatus(productId: string): ProductPriceStatus | 'idle' {
@@ -1010,6 +1128,33 @@ function shopHref(value: string): string {
   return sanitizeUrl(value)
 }
 
+async function handleShopProductRefresh(shop: PublicAccountImportShop) {
+  if (!supportsPublicShopProductSync(shop.url) || shopProductRefreshIsDisabled(shop.id)) return
+  shopProductRefreshRequests.value = { ...shopProductRefreshRequests.value, [shop.id]: true }
+  clearShopMessages()
+  try {
+    const status = await requestPublicAccountImportProductRefresh(shop.id)
+    mergeShopProductSyncStatuses([status], false)
+    if (status.accepted) {
+      shopNoticeMessage.value = t('publicAccountImport.shopProductsRefreshQueuedNotice', { name: shop.name })
+    } else if (status.retry_after_seconds > 0) {
+      shopNoticeMessage.value = t('publicAccountImport.shopProductsCooldownNotice', {
+        name: shop.name,
+        seconds: status.retry_after_seconds,
+      })
+    } else {
+      shopNoticeMessage.value = t('publicAccountImport.shopProductsAlreadyQueuedNotice', { name: shop.name })
+    }
+    void loadPublicProducts(false)
+  } catch (error: any) {
+    shopErrorMessage.value = error?.message || t('publicAccountImport.shopProductsRefreshFailed', { name: shop.name })
+  } finally {
+    const next = { ...shopProductRefreshRequests.value }
+    delete next[shop.id]
+    shopProductRefreshRequests.value = next
+  }
+}
+
 async function handleShopSubmit() {
   const name = shopName.value.trim()
   const url = shopUrl.value.trim()
@@ -1032,6 +1177,7 @@ async function handleShopSubmit() {
     shopNoticeMessage.value = submission.created
       ? t('publicAccountImport.shopAdded')
       : t('publicAccountImport.shopAlreadyExists')
+    void loadPublicProducts(false)
   } catch (error: any) {
     shopErrorMessage.value = error?.message || t('publicAccountImport.shopSubmitFailed')
   } finally {
