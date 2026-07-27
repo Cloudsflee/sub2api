@@ -11,8 +11,11 @@ describe('public shop product synchronization helpers', () => {
   it('supports only pay.ldxp.cn shop links', () => {
     expect(supportsPublicShopProductSync('https://pay.ldxp.cn/shop/token')).toBe(true)
     expect(supportsPublicShopProductSync('https://pay.ldxp.cn/shop/token/')).toBe(true)
+    expect(supportsPublicShopProductSync('https://pay.ldxp.cn/shop/7HZ37ZCG/g47fr5')).toBe(true)
     expect(supportsPublicShopProductSync('http://pay.ldxp.cn/shop/token')).toBe(false)
     expect(supportsPublicShopProductSync('https://pay.ldxp.cn/item/token')).toBe(false)
+    expect(supportsPublicShopProductSync('https://pay.ldxp.cn/shop/token/category/extra')).toBe(false)
+    expect(supportsPublicShopProductSync('https://pay.ldxp.cn/shop/token%2Fextra')).toBe(false)
     expect(supportsPublicShopProductSync('https://example.com/shop/token')).toBe(false)
   })
 

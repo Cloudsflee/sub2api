@@ -9,9 +9,11 @@ export function supportsPublicShopProductSync(value: string): boolean {
     const parsed = new URL(value)
     if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'pay.ldxp.cn') return false
     const parts = parsed.pathname.replace(/^\/+|\/+$/g, '').split('/')
-    if (parts.length !== 2 || parts[0] !== 'shop') return false
-    const token = decodeURIComponent(parts[1]).trim()
-    return token.length > 0 && !token.includes('/')
+    if ((parts.length !== 2 && parts.length !== 3) || parts[0] !== 'shop') return false
+    return parts.slice(1).every((part) => {
+      const value = decodeURIComponent(part).trim()
+      return value.length > 0 && !value.includes('/')
+    })
   } catch {
     return false
   }

@@ -64,7 +64,7 @@ vi.mock('vue-i18n', async () => {
 })
 
 const shops: PublicAccountImportShop[] = [
-  { id: 'one', name: 'One', url: 'https://pay.ldxp.cn/shop/one', created_at: '2026-07-27T00:00:00Z' },
+  { id: 'one', name: 'One', url: 'https://pay.ldxp.cn/shop/7HZ37ZCG/g47fr5', created_at: '2026-07-27T00:00:00Z' },
   { id: 'two', name: 'Two', url: 'https://pay.ldxp.cn/shop/two', created_at: '2026-07-27T00:00:00Z' },
   { id: 'other', name: 'Other', url: 'https://example.com/shop', created_at: '2026-07-27T00:00:00Z' },
 ]

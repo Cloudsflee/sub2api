@@ -793,11 +793,23 @@ func publicAccountImportShopToken(raw string) (string, error) {
 	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Hostname(), "pay.ldxp.cn") {
 		return "", errors.New("product sync supports pay.ldxp.cn shop links only")
 	}
-	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	if len(parts) != 2 || parts[0] != "shop" || strings.TrimSpace(parts[1]) == "" {
+	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
+	if (len(parts) != 2 && len(parts) != 3) || parts[0] != "shop" {
 		return "", errors.New("invalid pay.ldxp.cn shop link")
 	}
-	return parts[1], nil
+	token, err := url.PathUnescape(parts[1])
+	token = strings.TrimSpace(token)
+	if err != nil || token == "" || strings.Contains(token, "/") {
+		return "", errors.New("invalid pay.ldxp.cn shop link")
+	}
+	if len(parts) == 3 {
+		categoryKey, err := url.PathUnescape(parts[2])
+		categoryKey = strings.TrimSpace(categoryKey)
+		if err != nil || categoryKey == "" || strings.Contains(categoryKey, "/") {
+			return "", errors.New("invalid pay.ldxp.cn shop link")
+		}
+	}
+	return token, nil
 }
 
 func publicAccountImportProductID(shopID, goodsKey string) string {

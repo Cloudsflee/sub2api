@@ -39,13 +39,19 @@ func TestPublicAccountImportProductCacheIsFresh(t *testing.T) {
 func TestSupportedPublicAccountImportProductShopsFiltersNonProductLinks(t *testing.T) {
 	shops := []PublicAccountImportShop{
 		{ID: "supported", URL: "https://pay.ldxp.cn/shop/shop-token"},
+		{ID: "category", URL: "https://pay.ldxp.cn/shop/7HZ37ZCG/g47fr5"},
 		{ID: "other-host", URL: "https://example.com/shop/shop-token"},
 		{ID: "item", URL: "https://pay.ldxp.cn/item/goods-key"},
 		{ID: "missing-token", URL: "https://pay.ldxp.cn/shop/"},
+		{ID: "too-deep", URL: "https://pay.ldxp.cn/shop/shop-token/category/extra"},
+		{ID: "encoded-slash", URL: "https://pay.ldxp.cn/shop/shop-token%2Fextra"},
 	}
 
 	supported := supportedPublicAccountImportProductShops(shops)
-	require.Equal(t, []PublicAccountImportShop{shops[0]}, supported)
+	require.Equal(t, []PublicAccountImportShop{shops[0], shops[1]}, supported)
+	token, err := publicAccountImportShopToken(shops[1].URL)
+	require.NoError(t, err)
+	require.Equal(t, "7HZ37ZCG", token)
 }
 
 func TestPublicAccountImportProductSnapshotKeepsLastSuccessfulStaleProducts(t *testing.T) {
