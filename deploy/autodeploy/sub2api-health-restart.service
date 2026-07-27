@@ -1,10 +1,10 @@
 [Unit]
-Description=Restart Sub2API when local health check fails
-Wants=docker.service
-After=docker.service
+Description=Recover Sub2API HAProxy and the active blue/green slot
+Wants=docker.service haproxy.service
+After=docker.service haproxy.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/sub2api-autodeploy
 ExecStart=/usr/local/sbin/sub2api-health-restart.sh
-TimeoutStartSec=3min
+TimeoutStartSec=4min

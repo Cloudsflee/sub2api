@@ -1,5 +1,46 @@
 # Sub2API 自动部署
 
+## 蓝绿热切换
+
+生产安装使用宿主机 HAProxy 监听公网 `8080`，应用槽位只绑定回环地址：
+
+- `sub2api-blue`：`127.0.0.1:18080`
+- `sub2api-green`：`127.0.0.1:18081`
+
+正常情况下只有活动槽运行。发布会先在备用槽启动候选镜像，等待 Docker 健康检查和 3
+次连续 HTTP `/health` 成功，然后原子生成配置并平滑 reload HAProxy。新请求进入候选槽，
+旧 HAProxy worker 继续服务已经建立的连接；旧槽最多排空 10 分钟，超时后才停止。切流后
+会继续观察 HAProxy、应用和 Worker 30 秒，期间任一项失败都会热切回旧槽。
+
+首次从直连 `sub2api:8080` 迁移时需要执行一次受控交接，允许约 3 秒端口释放窗口：
+
+```bash
+sudo deploy/autodeploy/install.sh --migrate-blue-green
+```
+
+安装器会先备份 Compose、HAProxy、脚本、数据库和数据目录，并在 `18081` 预热同镜像
+绿槽。失败时会停止 HAProxy、恢复旧 Compose 并重新启动原 `sub2api` 容器。之后的正常
+发布不再重建活动槽，也不会因应用发布主动产生 502。
+
+查看当前槽位和切换状态：
+
+```bash
+sudo /usr/local/sbin/sub2api-autodeploy --status
+sudo /usr/local/sbin/sub2api-autodeploy --rollback
+```
+
+自动发布会比较上一次成功部署提交的 `backend/migrations`：修改或删除既有迁移，以及新增
+迁移中的 `DROP`、`RENAME`、列类型变更或 `NOT NULL` 非空约束会阻止发布。数据库迁移只允许
+向后兼容的增量变更；回滚镜像不会回滚已经执行的数据库迁移。
+
+HAProxy 会删除客户端伪造的转发/来源头，再写入真实来源地址。应用只信任 Docker 网关
+`172.18.0.1/32`；
+Worker 通过 `host.docker.internal:8080` 访问 HAProxy，不依赖具体应用容器名。
+
+健康恢复 timer 每 30 秒检查 HAProxy、活动槽和代理路径，并与发布共用
+`/run/lock/sub2api-deploy.lock`。此方案解决发布造成的中断，不提供宿主机宕机级高可用；
+首次交接时已经存在的长连接仍可能中断。
+
 该方案使用 GitHub Actions 和服务器端 systemd timer，实现：
 
 1. 本地向 `custom` 分支推送代码。
@@ -15,9 +56,17 @@
 
 ## 安装
 
+已经完成蓝绿迁移的主机可直接执行：
+
 ```bash
 cd /opt/sub2api-integration
 sudo deploy/autodeploy/install.sh
+```
+
+仍使用单实例 `sub2api:8080` 的旧主机必须显式执行首次受控迁移：
+
+```bash
+sudo deploy/autodeploy/install.sh --migrate-blue-green
 ```
 
 安装后不会部署未经 CI 标记的提交。需要立即检查：

@@ -17,11 +17,14 @@ jobs:
           /bin/bash -n deploy/apple-container.sh
           /bin/bash -n deploy/autodeploy/sub2api-autodeploy.sh
           /bin/bash -n deploy/autodeploy/sub2api-health-restart.sh
+          /bin/bash -n deploy/autodeploy/sub2api-haproxy-config.sh
+          /bin/bash -n deploy/autodeploy/sub2api-blue-green-migrate.sh
           /bin/bash -n deploy/autodeploy/sub2api-backup.sh
           /bin/bash -n deploy/autodeploy/sub2api-upstream-sync.sh
           /bin/bash -n deploy/autodeploy/sub2api-upstream-sync-launcher.sh
           /bin/bash -n deploy/autodeploy/install.sh
           python3 -m py_compile deploy/autodeploy/configure-compose.py
+          python3 -m py_compile deploy/autodeploy/configure-blue-green.py
           /bin/bash deploy/tests/apple-container-test.sh
 
   managed-update:
@@ -33,6 +36,11 @@ jobs:
           /bin/bash -n deploy/autodeploy/sub2api-upstream-sync.sh
           /bin/bash -n deploy/autodeploy/sub2api-upstream-sync-launcher.sh
           /bin/bash deploy/tests/autodeploy-version-test.sh
+          /bin/bash deploy/tests/autodeploy-migration-gate-test.sh
+          /bin/bash deploy/tests/configure-blue-green-test.sh
+          /bin/bash deploy/tests/haproxy-config-test.sh
+          /bin/bash deploy/tests/autodeploy-hot-switch-test.sh
+          /bin/bash deploy/tests/autodeploy-hot-switch-failure-test.sh
           /bin/bash deploy/tests/upstream-sync-test.sh
 
   test:
