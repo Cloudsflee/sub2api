@@ -199,4 +199,51 @@ describe('PublicAccountImportView product click verification', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toMatchObject({ quantity: 1 })
     wrapper.unmount()
   })
+
+	it('falls back to a current authoritative quote when live verification is temporarily unavailable', async () => {
+		getProducts.mockResolvedValue({
+			...catalog,
+			products: [{ ...catalog.products[0], quote_verified_at: new Date().toISOString() }],
+		})
+		const replace = vi.fn()
+		const close = vi.fn()
+		vi.spyOn(window, 'open').mockReturnValue({ opener: null, location: { replace }, close } as any)
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>403 Forbidden</html>', {
+			status: 403,
+			headers: { 'Content-Type': 'text/html' },
+		})))
+		const wrapper = mountView()
+		await flushPromises()
+
+		await openProduct(wrapper)
+
+		expect(replace).toHaveBeenCalledWith('https://pay.ldxp.cn/item/goods')
+		expect(close).not.toHaveBeenCalled()
+		expect(wrapper.text()).not.toContain('publicAccountImport.productVerificationFailed')
+		wrapper.unmount()
+	})
+
+	it('does not fall back when live verification explicitly says the product is unavailable', async () => {
+		getProducts.mockResolvedValue({
+			...catalog,
+			products: [{ ...catalog.products[0], quote_verified_at: new Date().toISOString() }],
+		})
+		const replace = vi.fn()
+		const close = vi.fn()
+		vi.spyOn(window, 'open').mockReturnValue({ opener: null, location: { replace }, close } as any)
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+			code: 0,
+			msg: '商品未上架，如有疑问请联系商家',
+			data: null,
+		}), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+		const wrapper = mountView()
+		await flushPromises()
+
+		await openProduct(wrapper)
+
+		expect(close).toHaveBeenCalledOnce()
+		expect(replace).not.toHaveBeenCalled()
+		expect(wrapper.text()).toContain('publicAccountImport.productUnavailable')
+		wrapper.unmount()
+	})
 })

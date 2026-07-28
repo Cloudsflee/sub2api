@@ -212,8 +212,20 @@ function parseShopHTTPResponse(result) {
   return result.payload
 }
 
+function shopRequestError(path, error) {
+  if (error instanceof ShopSyncError) return error
+  const message = String(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 500)
+  const name = String(error?.name || '').toLowerCase()
+  const isNetworkFailure = name === 'aborterror'
+    || /failed to fetch|fetch failed|networkerror|network request failed|load failed|net::err_/i.test(message)
+  return new ShopSyncError(
+    isNetworkFailure ? 'network' : 'unknown',
+    `shop API ${path} failed: ${message}`
+  )
+}
+
 function isPressureError(error) {
-  return error?.kind === 'rate_limit' || error?.kind === 'verification'
+  return error?.kind === 'rate_limit' || error?.kind === 'verification' || error?.kind === 'network'
 }
 
 function pressureBackoffMilliseconds(failureCount, random = Math.random) {
@@ -322,6 +334,7 @@ module.exports = {
   pressureBackoffMilliseconds,
   quoteResult,
   selectPaymentChannel,
+  shopRequestError,
   simulatedTokenBucketDuration,
   unavailableMessage,
 }

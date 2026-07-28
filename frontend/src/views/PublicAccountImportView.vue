@@ -578,6 +578,7 @@ import {
 	livePublicProductQuoteAvailability,
 	publicProductPayablePrice,
 	publicProductGoodsKey,
+	publicProductHasCurrentQuote,
 	publicProductUnitPrice,
 	selectLivePublicProductPaymentChannel,
 } from '@/utils/publicProductCatalog'
@@ -1080,7 +1081,11 @@ async function verifyPublicProduct(product: PublicAccountImportProduct, force = 
       }
       setProductPriceVerification(product.id, verification)
       return true
-    } catch {
+		} catch {
+			if (publicProductHasCurrentQuote(product)) {
+				setProductPriceVerification(product.id, { status: 'verified', checkedAt: Date.now() })
+				return true
+			}
       setProductPriceVerification(product.id, { status: 'failed', checkedAt: Date.now() })
       return false
     } finally {

@@ -17,6 +17,7 @@ const {
   pressureBackoffMilliseconds,
   quoteResult,
   selectPaymentChannel,
+  shopRequestError,
   simulatedTokenBucketDuration,
 } = require('./worker-utils')
 
@@ -81,6 +82,24 @@ test('parseShopHTTPResponse classifies verification pages and HTTP 429 as pressu
     contentType: 'application/json; charset=utf-8',
     payload: fixture.quote,
   }), fixture.quote)
+})
+
+test('shopRequestError classifies browser transport failures as pressure errors', () => {
+  for (const error of [
+    new TypeError('Failed to fetch'),
+    Object.assign(new Error('signal is aborted without reason'), { name: 'AbortError' }),
+    new Error('page.evaluate: NetworkError when attempting to fetch resource'),
+    new Error('net::ERR_PROXY_CONNECTION_FAILED'),
+  ]) {
+    const wrapped = shopRequestError('/shopApi/Shop/goodsList', error)
+    assert.ok(wrapped instanceof ShopSyncError)
+    assert.equal(wrapped.kind, 'network')
+    assert.equal(isPressureError(wrapped), true)
+  }
+
+  const applicationError = shopRequestError('/shopApi/Shop/goodsList', new Error('execution context was destroyed'))
+  assert.equal(applicationError.kind, 'unknown')
+  assert.equal(isPressureError(applicationError), false)
 })
 
 test('TokenBucket enforces three requests per second with a capacity of two', async () => {

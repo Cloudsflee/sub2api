@@ -11,6 +11,7 @@ const {
   parseShopHTTPResponse,
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
+  shopRequestError,
 } = require('./worker-utils')
 
 const backendURL = process.env.BACKEND_URL || 'http://sub2api:8080'
@@ -120,7 +121,7 @@ async function postShopAPI(page, shopToken, path, body, deadlineAt) {
       visitorID: `sub2api${shopToken.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}`,
     })
   } catch (error) {
-    throw new Error(`shop API ${path} failed: ${errorMessage(error)}`)
+    throw shopRequestError(path, error)
   }
   return parseShopHTTPResponse(result)
 }
