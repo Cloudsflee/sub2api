@@ -165,4 +165,38 @@ describe('PublicAccountImportView product click verification', () => {
     expect(wrapper.text()).not.toContain('¥500')
     wrapper.unmount()
   })
+
+  it('quotes an inventoryless article with quantity one before opening it', async () => {
+    const replace = vi.fn()
+    const close = vi.fn()
+    vi.spyOn(window, 'open').mockReturnValue({ opener: null, location: { replace }, close } as any)
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 1,
+        data: {
+          status: 1,
+          goods_type: 'article',
+          user: { token: 'shop-token' },
+          extend: { has_buy: 0, paid_type: 1 },
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 1,
+        data: [{ id: 1, status: 1, is_default: 1 }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 1, data: { total_amount: 5.16 } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountView()
+    await flushPromises()
+
+    await openProduct(wrapper)
+
+    expect(replace).toHaveBeenCalledWith('https://pay.ldxp.cn/item/goods')
+    expect(close).not.toHaveBeenCalled()
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toMatchObject({ quantity: 1 })
+    wrapper.unmount()
+  })
 })

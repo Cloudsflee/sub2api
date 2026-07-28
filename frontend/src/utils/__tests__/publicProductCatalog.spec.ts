@@ -216,7 +216,7 @@ describe('authoritative catalog prices', () => {
 })
 
 describe('livePublicProductAvailability', () => {
-  it('recognizes available and explicitly unavailable products', () => {
+	it('recognizes available and explicitly unavailable products', () => {
 		expect(livePublicProductAvailability({
 			code: 1,
 			data: { status: 1, extend: { stock_count: 2, limit_count: 1 } },
@@ -226,6 +226,16 @@ describe('livePublicProductAvailability', () => {
 			data: { status: 1, extend: { stock_count: 2, limit_count: 0 } },
 		})).toBe('available')
 		expect(livePublicProductMinimumQuantity({ extend: { stock_count: 2, limit_count: 0 } })).toBe(1)
+		for (const goodsType of ['article', 'resource', 'equity']) {
+			expect(livePublicProductAvailability({
+				code: 1,
+				data: { status: 1, goods_type: goodsType, extend: { type_specific_field: true } },
+			})).toBe('available')
+			expect(livePublicProductMinimumQuantity({
+				goods_type: goodsType,
+				extend: { type_specific_field: true },
+			})).toBe(1)
+		}
     expect(livePublicProductAvailability({
       code: 0,
       msg: '商品未上架，如有疑问请联系商家',
@@ -265,6 +275,9 @@ describe('livePublicProductAvailability', () => {
     expect(livePublicProductAvailability({ code: 0, msg: '请求频繁，请稍后重试', data: null })).toBe('unknown')
 		expect(livePublicProductAvailability({ code: 1, data: null })).toBe('unknown')
 		expect(livePublicProductAvailability({ code: 1, data: { status: 1, extend: {} } })).toBe('unknown')
+		expect(livePublicProductAvailability({ code: 1, data: { status: 1, goods_type: 'card', extend: {} } })).toBe('unknown')
+		expect(livePublicProductAvailability({ code: 1, data: { status: 1, goods_type: 'article', extend: { stock_count: 1 } } })).toBe('unknown')
+		expect(livePublicProductAvailability({ code: 1, data: { status: 1, goods_type: 'article', extend: { stock_count: null, limit_count: null } } })).toBe('unknown')
 		expect(livePublicProductAvailability({ code: 1, data: { status: 'invalid', extend: { stock_count: 1, limit_count: 1 } } })).toBe('unknown')
 		expect(livePublicProductAvailability({ code: 1, data: { status: 1, extend: { stock_count: null, limit_count: 1 } } })).toBe('unknown')
 		expect(livePublicProductAvailability({ code: 1, data: { status: 1, extend: { stock_count: 1, limit_count: -1 } } })).toBe('unknown')

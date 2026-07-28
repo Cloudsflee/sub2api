@@ -55,6 +55,36 @@
       "list": []
     }
   },
+  "inventorylessGoods": [
+    {
+      "goods_key": "paid-article",
+      "name": "Paid article",
+      "link": "https://pay.ldxp.cn/item/paid-article",
+      "image": "https://qn.ldxp.cn/article.png",
+      "goods_type": "article",
+      "price": "5.01",
+      "market_price": "0",
+      "category": { "name": "Articles" }
+    },
+    {
+      "goods_key": "download-resource",
+      "name": "Download resource",
+      "link": "https://pay.ldxp.cn/item/download-resource",
+      "goods_type": "resource",
+      "price": "0",
+      "market_price": "0",
+      "category": { "name": "Resources" }
+    },
+    {
+      "goods_key": "recharge-equity",
+      "name": "Recharge equity",
+      "link": "https://pay.ldxp.cn/item/recharge-equity",
+      "goods_type": "equity",
+      "price": "20.38",
+      "market_price": "28",
+      "category": { "name": "Memberships" }
+    }
+  ],
   "channels": {
     "code": 1,
     "msg": "success",

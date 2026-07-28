@@ -3,6 +3,7 @@
 FRONTEND_CRITICAL_VITEST := \
 	src/utils/__tests__/publicProductCatalog.spec.ts \
 	src/views/__tests__/PublicAccountImportView.spec.ts \
+	src/views/__tests__/PublicAccountImportProductClick.spec.ts \
 	src/utils/__tests__/versionDisplay.spec.ts \
 	src/components/common/__tests__/VersionBadge.spec.ts \
 	src/stores/__tests__/app.spec.ts \

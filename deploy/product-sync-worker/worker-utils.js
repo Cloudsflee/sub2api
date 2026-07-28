@@ -1,4 +1,5 @@
 const supportedProxyProtocols = new Set(['http:', 'https:', 'socks5:'])
+const inventorylessGoodsTypes = new Set(['article', 'resource', 'equity'])
 
 class ShopSyncError extends Error {
   constructor(kind, message) {
@@ -112,8 +113,13 @@ function catalogProductState(item, fallbackGoodsType) {
     if (statuses.includes('unavailable')) return { state: 'unavailable', goodsKey }
   }
 
-  const stock = normalizeNonNegativeInteger(item?.extend?.stock_count)
-  const configuredMinimumQuantity = normalizeNonNegativeInteger(item?.extend?.limit_count)
+  const goodsType = String(item?.goods_type || fallbackGoodsType || '').trim().toLowerCase()
+  const rawStock = item?.extend?.stock_count
+  const rawMinimumQuantity = item?.extend?.limit_count
+  const hasImplicitSingleQuantity = inventorylessGoodsTypes.has(goodsType)
+    && rawStock === undefined && rawMinimumQuantity === undefined
+  const stock = hasImplicitSingleQuantity ? 1 : normalizeNonNegativeInteger(rawStock)
+  const configuredMinimumQuantity = hasImplicitSingleQuantity ? 1 : normalizeNonNegativeInteger(rawMinimumQuantity)
   if (stock === null || configuredMinimumQuantity === null) {
     return { state: 'unknown', reason: `catalog item ${goodsKey} has invalid stock or minimum quantity` }
   }
@@ -122,7 +128,6 @@ function catalogProductState(item, fallbackGoodsType) {
 
   const name = String(item?.name || '').trim()
   const url = String(item?.link || '').trim()
-  const goodsType = String(item?.goods_type || fallbackGoodsType || '').trim().toLowerCase()
   const price = normalizeNonNegativeAmount(item?.price)
   const marketPrice = item?.market_price === undefined || item?.market_price === null || item?.market_price === ''
     ? 0

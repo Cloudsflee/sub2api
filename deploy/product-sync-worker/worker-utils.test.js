@@ -37,6 +37,20 @@ test('catalogProductState validates status, stock, and minimum quantity from rea
   assert.equal(catalogProductState({ ...available, price: '' }, 'card').state, 'unknown')
 })
 
+test('catalogProductState normalizes inventoryless product types to one quoted unit', () => {
+  for (const item of fixture.inventorylessGoods) {
+    const state = catalogProductState(item, item.goods_type)
+    assert.equal(state.state, 'candidate')
+    assert.equal(state.product.stock, 1)
+    assert.equal(state.product.minimum_quantity, 1)
+  }
+
+  const article = fixture.inventorylessGoods[0]
+  assert.equal(catalogProductState({ ...article, goods_type: 'card' }, 'card').state, 'unknown')
+  assert.equal(catalogProductState({ ...article, extend: { stock_count: 1 } }, 'article').state, 'unknown')
+  assert.equal(catalogProductState({ ...article, extend: { stock_count: null, limit_count: null } }, 'article').state, 'unknown')
+})
+
 test('selectPaymentChannel prefers an explicit valid default and falls back to the first valid channel', () => {
   assert.equal(selectPaymentChannel(fixture.channels.data).id, 30)
   assert.equal(selectPaymentChannel(fixture.channels.data.slice(0, 2)).id, 20)

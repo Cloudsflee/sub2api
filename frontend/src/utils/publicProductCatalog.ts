@@ -1,6 +1,7 @@
 import type { PublicAccountImportProduct } from '@/api/publicAccountImport'
 
 const productNameCollator = new Intl.Collator(undefined, { numeric: true })
+const inventorylessGoodsTypes = new Set(['article', 'resource', 'equity'])
 
 export type LivePublicProductAvailability = 'available' | 'unavailable' | 'unknown'
 
@@ -36,6 +37,21 @@ function normalizeLiveStatus(value: unknown): LivePublicProductAvailability {
   if (['active', 'enabled', 'on_sale', 'onsale', 'selling'].includes(normalized)) return 'available'
   if (['inactive', 'disabled', 'off_sale', 'offsale', 'sold_out', 'deleted'].includes(normalized)) return 'unavailable'
   return 'unknown'
+}
+
+function livePublicProductInventory(data: any): { stock: number; minimumQuantity: number } | null {
+	const rawStock = data?.extend?.stock_count
+	const rawMinimumQuantity = data?.extend?.limit_count
+	const goodsType = String(data?.goods_type || '').trim().toLocaleLowerCase()
+	if (inventorylessGoodsTypes.has(goodsType)
+		&& rawStock === undefined && rawMinimumQuantity === undefined) {
+		return { stock: 1, minimumQuantity: 1 }
+	}
+
+	const stock = normalizeAPINumber(rawStock)
+	const minimumQuantity = normalizeLiveMinimumQuantity(rawMinimumQuantity)
+	if (stock === null || minimumQuantity === null || !Number.isInteger(stock) || stock < 0) return null
+	return { stock, minimumQuantity }
 }
 
 export function publicProductMinimumQuantity(product: PublicAccountImportProduct): number {
@@ -112,12 +128,9 @@ export function livePublicProductAvailability(
 		const status = normalizeLiveStatus(rawStatus)
 		if (status !== 'available') return status
 
-    const rawStock = data.extend?.stock_count
-		const rawMinimumQuantity = data.extend?.limit_count
-		const stock = normalizeAPINumber(rawStock)
-		const minimumQuantity = normalizeLiveMinimumQuantity(rawMinimumQuantity)
-		if (stock === null || minimumQuantity === null || !Number.isInteger(stock) || stock < 0) return 'unknown'
-		if (stock < minimumQuantity) return 'unavailable'
+    const inventory = livePublicProductInventory(data)
+		if (!inventory) return 'unknown'
+		if (inventory.stock < inventory.minimumQuantity) return 'unavailable'
     return 'available'
   }
 
@@ -133,12 +146,8 @@ export function livePublicProductAvailability(
 }
 
 export function livePublicProductMinimumQuantity(data: any): number | null {
-  const stock = normalizeAPINumber(data?.extend?.stock_count)
-  const minimumQuantity = normalizeLiveMinimumQuantity(data?.extend?.limit_count)
-  if (stock === null || minimumQuantity === null || !Number.isInteger(stock) || stock < 0 || stock < minimumQuantity) {
-    return null
-  }
-  return minimumQuantity
+	const inventory = livePublicProductInventory(data)
+	return inventory && inventory.stock >= inventory.minimumQuantity ? inventory.minimumQuantity : null
 }
 
 export function livePublicProductQuoteAvailability(response: any): LivePublicProductAvailability {

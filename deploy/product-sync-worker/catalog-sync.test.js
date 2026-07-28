@@ -117,6 +117,38 @@ test('collectAuthoritativeSnapshot treats an explicit quote rejection as unavail
   assert.deepEqual(snapshot.products, [])
 })
 
+test('collectAuthoritativeSnapshot quotes inventoryless product types with quantity one', async () => {
+  const articleList = {
+    code: 1,
+    data: { total: 1, list: [fixture.inventorylessGoods[0]] },
+  }
+  const quoteBodies = []
+  const snapshot = await collectAuthoritativeSnapshot({
+    shopToken: 'shop-token',
+    post: async (requestPath, body) => {
+      if (requestPath.endsWith('/info')) return fixture.info
+      if (requestPath.endsWith('/goodsList')) return goodsListForType(body, { article: articleList })
+      if (requestPath.endsWith('/getUserChannel')) return fixture.channels
+      if (requestPath.endsWith('/getGoodsPrice')) {
+        quoteBodies.push(body)
+        return fixture.quote
+      }
+      throw new Error(`unexpected request ${requestPath}`)
+    },
+  })
+
+  assert.equal(snapshot.source_product_count, 1)
+  assert.equal(snapshot.sellable_product_count, 1)
+  assert.equal(snapshot.products[0].stock, 1)
+  assert.equal(snapshot.products[0].minimum_quantity, 1)
+  assert.deepEqual(quoteBodies, [{
+    goods_key: 'paid-article',
+    quantity: 1,
+    coupon_code: '',
+    channel_id: 30,
+  }])
+})
+
 test('collectAuthoritativeSnapshot aborts the whole shop on invalid explicit status and unknown quotes', async () => {
   const invalidStatusList = clone(fixture.goodsList)
   invalidStatusList.data.list[0].status = ''

@@ -528,7 +528,7 @@
 									</div>
                   </template>
                 </div>
-                <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
+                <span v-if="product.goods_type === 'card'" class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
                   {{ t('publicAccountImport.productStock', { count: product.stock }) }}
                 </span>
               </div>
