@@ -313,7 +313,7 @@ async function mapWithConcurrency(items, concurrency, mapper) {
   return results
 }
 
-function simulatedTokenBucketDuration(requestCount, ratePerSecond = 3, capacity = 2) {
+function simulatedTokenBucketDuration(requestCount, ratePerSecond = 2, capacity = 2) {
   if (!Number.isInteger(requestCount) || requestCount <= 0) return 0
   return Math.max(0, requestCount - capacity) / ratePerSecond * 1000
 }
