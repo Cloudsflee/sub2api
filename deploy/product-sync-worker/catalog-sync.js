@@ -21,20 +21,6 @@ function requireSuccessfulPayload(payload, label) {
   return payload.data
 }
 
-function catalogCounts(info) {
-  const counts = {}
-  for (const goodsType of GOODS_TYPES) {
-    const value = normalizeNonNegativeInteger(info?.[`${goodsType}_count`])
-    if (value === null) {
-      throw new ShopSyncError('unknown', `shop info has no valid ${goodsType}_count`)
-    }
-    counts[goodsType] = value
-  }
-  const total = Object.values(counts).reduce((sum, value) => sum + value, 0)
-  if (total > MAX_PRODUCTS) throw new ShopSyncError('unknown', `shop contains more than ${MAX_PRODUCTS} products`)
-  return counts
-}
-
 function verifiedAtISO(now) {
   const date = new Date(now())
   if (!Number.isFinite(date.getTime())) throw new ShopSyncError('unknown', 'worker clock is invalid')
@@ -53,18 +39,17 @@ async function collectAuthoritativeSnapshot(options) {
   }
 
   const infoPayload = await post('/shopApi/Shop/info', { token: shopToken, category_key: null })
-  const info = requireSuccessfulPayload(infoPayload, 'shop info')
-  const counts = catalogCounts(info)
+  requireSuccessfulPayload(infoPayload, 'shop info')
   const candidates = []
   let unavailableCount = 0
+  let sourceProductCount = 0
   const seenGoodsKeys = new Set()
 
   for (const goodsType of GOODS_TYPES) {
-    const expectedCount = counts[goodsType]
-    if (expectedCount === 0) continue
     let fetchedCount = 0
     let current = 1
-    while (fetchedCount < expectedCount) {
+    let expectedCount = null
+    do {
       if (current > Math.ceil(MAX_PRODUCTS / PAGE_SIZE)) {
         throw new ShopSyncError('unknown', `${goodsType} catalog pagination exceeded the product limit`)
       }
@@ -78,11 +63,21 @@ async function collectAuthoritativeSnapshot(options) {
       })
       const data = requireSuccessfulPayload(listPayload, `${goodsType} catalog`)
       if (!Array.isArray(data.list)) throw new ShopSyncError('unknown', `${goodsType} catalog has no list`)
-      const reportedTotal = Number(data.total)
-      if (!Number.isInteger(reportedTotal) || reportedTotal !== expectedCount) {
+      const reportedTotal = normalizeNonNegativeInteger(data.total)
+      if (reportedTotal === null) {
+        throw new ShopSyncError('unknown', `${goodsType} catalog has no valid total`)
+      }
+      if (expectedCount === null) {
+        expectedCount = reportedTotal
+        sourceProductCount += expectedCount
+        if (sourceProductCount > MAX_PRODUCTS) {
+          throw new ShopSyncError('unknown', `shop contains more than ${MAX_PRODUCTS} products`)
+        }
+      } else if (reportedTotal !== expectedCount) {
         throw new ShopSyncError('unknown', `${goodsType} catalog count changed during synchronization`)
       }
-      if (data.list.length === 0 || data.list.length > PAGE_SIZE || fetchedCount + data.list.length > expectedCount) {
+      const remainingCount = expectedCount - fetchedCount
+      if (data.list.length > PAGE_SIZE || data.list.length > remainingCount || (remainingCount > 0 && data.list.length === 0)) {
         throw new ShopSyncError('unknown', `${goodsType} catalog pagination is incomplete`)
       }
 
@@ -98,13 +93,11 @@ async function collectAuthoritativeSnapshot(options) {
       }
       fetchedCount += data.list.length
       current += 1
-    }
+    } while (fetchedCount < expectedCount)
     if (fetchedCount !== expectedCount) throw new ShopSyncError('unknown', `${goodsType} catalog is incomplete`)
   }
 
-  const sourceProductCount = seenGoodsKeys.size
-  const expectedSourceCount = Object.values(counts).reduce((sum, value) => sum + value, 0)
-  if (sourceProductCount !== expectedSourceCount) {
+  if (seenGoodsKeys.size !== sourceProductCount) {
     throw new ShopSyncError('unknown', 'shop catalog source count is incomplete')
   }
 
@@ -162,6 +155,5 @@ module.exports = {
   MAX_PRODUCTS,
   PRODUCT_SCHEMA_VERSION,
   QUOTE_CONCURRENCY,
-  catalogCounts,
   collectAuthoritativeSnapshot,
 }

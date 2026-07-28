@@ -108,9 +108,16 @@ function catalogProductState(item, fallbackGoodsType) {
   if (!goodsKey || goodsKey.length > 100) {
     return { state: 'unknown', reason: 'catalog item has no valid goods_key' }
   }
-  const status = normalizeGoodsStatus(item?.status ?? item?.extend?.status)
-  if (status === 'unknown') return { state: 'unknown', reason: `catalog item ${goodsKey} has no valid status` }
-  if (status === 'unavailable') return { state: 'unavailable', goodsKey }
+  const statusValues = []
+  if (Object.prototype.hasOwnProperty.call(item, 'status')) statusValues.push(item.status)
+  if (item?.extend && Object.prototype.hasOwnProperty.call(item.extend, 'status')) statusValues.push(item.extend.status)
+  if (statusValues.length > 0) {
+    const statuses = statusValues.map(normalizeGoodsStatus)
+    if (statuses.includes('unknown')) {
+      return { state: 'unknown', reason: `catalog item ${goodsKey} has no valid status` }
+    }
+    if (statuses.includes('unavailable')) return { state: 'unavailable', goodsKey }
+  }
 
   const stock = normalizeNonNegativeInteger(item?.extend?.stock_count)
   const minimumQuantity = normalizePositiveInteger(item?.extend?.limit_count)

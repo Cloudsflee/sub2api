@@ -781,7 +781,7 @@ func publicAccountImportProductSnapshotState(cached publicAccountImportProductSh
 	if updatedAt.IsZero() {
 		return "pending"
 	}
-	if updatedAt.After(now.Add(time.Minute)) || now.Sub(updatedAt) > publicAccountImportProductMaxCacheAge {
+	if updatedAt.After(now.Add(time.Minute)) {
 		return "expired"
 	}
 	authoritative := publicAccountImportProductSnapshotIsAuthoritative(cached)
@@ -796,6 +796,9 @@ func publicAccountImportProductSnapshotState(cached publicAccountImportProductSh
 	}
 	if now.Sub(updatedAt) <= publicAccountImportProductRefreshAge {
 		return "fresh"
+	}
+	if strictMode && now.Sub(updatedAt) > publicAccountImportProductMaxCacheAge {
+		return "expired"
 	}
 	return "stale"
 }

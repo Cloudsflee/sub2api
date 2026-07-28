@@ -4,29 +4,24 @@ const path = require('node:path')
 const test = require('node:test')
 
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'shop-api.json'), 'utf8'))
-const { catalogCounts, collectAuthoritativeSnapshot } = require('./catalog-sync')
+const { GOODS_TYPES, collectAuthoritativeSnapshot } = require('./catalog-sync')
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value))
 }
 
-test('catalogCounts rejects blank or null counts instead of publishing an empty shop', () => {
-  assert.throws(() => catalogCounts({ card_count: null, article_count: 0, resource_count: 0, equity_count: 0 }), /card_count/)
-  assert.throws(() => catalogCounts({ card_count: '', article_count: 0, resource_count: 0, equity_count: 0 }), /card_count/)
-  assert.deepEqual(catalogCounts({ card_count: '0', article_count: 0, resource_count: 0, equity_count: 0 }), {
-    card: 0,
-    article: 0,
-    resource: 0,
-    equity: 0,
-  })
-})
+function goodsListForType(body, lists = {}) {
+  return clone(lists[body.goods_type] || fixture.emptyGoodsList)
+}
 
-test('collectAuthoritativeSnapshot publishes one complete verified shop snapshot', async () => {
+test('collectAuthoritativeSnapshot uses goodsList totals and publishes one complete verified shop snapshot', async () => {
   const calls = []
+  const mismatchedInfo = clone(fixture.info)
+  mismatchedInfo.data.card_count = 4
   const post = async (requestPath, body) => {
     calls.push({ path: requestPath, body })
-    if (requestPath.endsWith('/info')) return clone(fixture.info)
-    if (requestPath.endsWith('/goodsList')) return clone(fixture.goodsList)
+    if (requestPath.endsWith('/info')) return mismatchedInfo
+    if (requestPath.endsWith('/goodsList')) return goodsListForType(body, { card: fixture.goodsList })
     if (requestPath.endsWith('/getUserChannel')) return clone(fixture.channels)
     if (requestPath.endsWith('/getGoodsPrice')) return clone(fixture.quote)
     throw new Error(`unexpected request ${requestPath}`)
@@ -59,6 +54,10 @@ test('collectAuthoritativeSnapshot publishes one complete verified shop snapshot
     }],
   })
   assert.equal(calls.filter(({ path: value }) => value.endsWith('/getUserChannel')).length, 1)
+  assert.deepEqual(
+    calls.filter(({ path: value }) => value.endsWith('/goodsList')).map(({ body }) => body.goods_type),
+    GOODS_TYPES
+  )
   assert.deepEqual(calls.find(({ path: value }) => value.endsWith('/getGoodsPrice')).body, {
     goods_key: 'available-card',
     quantity: 2,
@@ -68,13 +67,12 @@ test('collectAuthoritativeSnapshot publishes one complete verified shop snapshot
 })
 
 test('collectAuthoritativeSnapshot accepts an explicitly empty or entirely unavailable shop', async () => {
-  const emptyInfo = clone(fixture.info)
-  emptyInfo.data.card_count = 0
   const empty = await collectAuthoritativeSnapshot({
     shopToken: 'shop-token',
-    post: async (requestPath) => {
-      assert.ok(requestPath.endsWith('/info'))
-      return emptyInfo
+    post: async (requestPath, body) => {
+      if (requestPath.endsWith('/info')) return { code: 1, data: {} }
+      if (requestPath.endsWith('/goodsList')) return goodsListForType(body)
+      throw new Error(`unexpected request ${requestPath}`)
     },
   })
   assert.deepEqual(empty, {
@@ -85,14 +83,16 @@ test('collectAuthoritativeSnapshot accepts an explicitly empty or entirely unava
     products: [],
   })
 
-  const unavailableInfo = clone(fixture.info)
-  unavailableInfo.data.card_count = 1
   const unavailableList = clone(fixture.goodsList)
   unavailableList.data.total = 1
   unavailableList.data.list = [fixture.goodsList.data.list[1]]
   const unavailable = await collectAuthoritativeSnapshot({
     shopToken: 'shop-token',
-    post: async (requestPath) => requestPath.endsWith('/info') ? unavailableInfo : unavailableList,
+    post: async (requestPath, body) => {
+      if (requestPath.endsWith('/info')) return fixture.info
+      if (requestPath.endsWith('/goodsList')) return goodsListForType(body, { card: unavailableList })
+      throw new Error(`unexpected request ${requestPath}`)
+    },
   })
   assert.equal(unavailable.source_product_count, 1)
   assert.equal(unavailable.unavailable_product_count, 1)
@@ -100,16 +100,14 @@ test('collectAuthoritativeSnapshot accepts an explicitly empty or entirely unava
 })
 
 test('collectAuthoritativeSnapshot treats an explicit quote rejection as unavailable', async () => {
-  const info = clone(fixture.info)
-  info.data.card_count = 1
   const list = clone(fixture.goodsList)
   list.data.total = 1
   list.data.list = [fixture.goodsList.data.list[0]]
   const snapshot = await collectAuthoritativeSnapshot({
     shopToken: 'shop-token',
-    post: async (requestPath) => {
-      if (requestPath.endsWith('/info')) return info
-      if (requestPath.endsWith('/goodsList')) return list
+    post: async (requestPath, body) => {
+      if (requestPath.endsWith('/info')) return fixture.info
+      if (requestPath.endsWith('/goodsList')) return goodsListForType(body, { card: list })
       if (requestPath.endsWith('/getUserChannel')) return fixture.channels
       return fixture.soldOutQuote
     },
@@ -119,24 +117,26 @@ test('collectAuthoritativeSnapshot treats an explicit quote rejection as unavail
   assert.deepEqual(snapshot.products, [])
 })
 
-test('collectAuthoritativeSnapshot aborts the whole shop on missing fields and unknown quotes', async () => {
-  const missingStatusList = clone(fixture.goodsList)
-  delete missingStatusList.data.list[0].status
+test('collectAuthoritativeSnapshot aborts the whole shop on invalid explicit status and unknown quotes', async () => {
+  const invalidStatusList = clone(fixture.goodsList)
+  invalidStatusList.data.list[0].status = ''
   await assert.rejects(() => collectAuthoritativeSnapshot({
     shopToken: 'shop-token',
-    post: async (requestPath) => requestPath.endsWith('/info') ? fixture.info : missingStatusList,
+    post: async (requestPath, body) => {
+      if (requestPath.endsWith('/info')) return fixture.info
+      if (requestPath.endsWith('/goodsList')) return goodsListForType(body, { card: invalidStatusList })
+      throw new Error(`unexpected request ${requestPath}`)
+    },
   }), /valid status/)
 
-  const info = clone(fixture.info)
-  info.data.card_count = 1
   const list = clone(fixture.goodsList)
   list.data.total = 1
   list.data.list = [fixture.goodsList.data.list[0]]
   await assert.rejects(() => collectAuthoritativeSnapshot({
     shopToken: 'shop-token',
-    post: async (requestPath) => {
-      if (requestPath.endsWith('/info')) return info
-      if (requestPath.endsWith('/goodsList')) return list
+    post: async (requestPath, body) => {
+      if (requestPath.endsWith('/info')) return fixture.info
+      if (requestPath.endsWith('/goodsList')) return goodsListForType(body, { card: list })
       if (requestPath.endsWith('/getUserChannel')) return fixture.channels
       return { code: 1, data: {} }
     },
@@ -145,8 +145,6 @@ test('collectAuthoritativeSnapshot aborts the whole shop on missing fields and u
 
 test('collectAuthoritativeSnapshot limits quote concurrency to two', async () => {
   const count = 6
-  const info = clone(fixture.info)
-  info.data.card_count = count
   const base = fixture.goodsList.data.list[0]
   const list = clone(fixture.goodsList)
   list.data.total = count
@@ -160,9 +158,9 @@ test('collectAuthoritativeSnapshot limits quote concurrency to two', async () =>
   let channelCalls = 0
   await collectAuthoritativeSnapshot({
     shopToken: 'shop-token',
-    post: async (requestPath) => {
-      if (requestPath.endsWith('/info')) return info
-      if (requestPath.endsWith('/goodsList')) return list
+    post: async (requestPath, body) => {
+      if (requestPath.endsWith('/info')) return fixture.info
+      if (requestPath.endsWith('/goodsList')) return goodsListForType(body, { card: list })
       if (requestPath.endsWith('/getUserChannel')) {
         channelCalls += 1
         return fixture.channels
@@ -176,4 +174,49 @@ test('collectAuthoritativeSnapshot limits quote concurrency to two', async () =>
   })
   assert.equal(channelCalls, 1)
   assert.equal(maximumActiveQuotes, 2)
+})
+
+test('collectAuthoritativeSnapshot fully paginates stable list totals', async () => {
+  const total = 101
+  const base = fixture.goodsList.data.list[1]
+  const items = Array.from({ length: total }, (_, index) => ({
+    ...clone(base),
+    goods_key: `sold-out-${index}`,
+    link: `https://pay.ldxp.cn/item/sold-out-${index}`,
+  }))
+  const snapshot = await collectAuthoritativeSnapshot({
+    shopToken: 'shop-token',
+    post: async (requestPath, body) => {
+      if (requestPath.endsWith('/info')) return fixture.info
+      if (!requestPath.endsWith('/goodsList')) throw new Error(`unexpected request ${requestPath}`)
+      if (body.goods_type !== 'card') return goodsListForType(body)
+      const offset = (body.current - 1) * body.pageSize
+      return { code: 1, data: { total, list: items.slice(offset, offset + body.pageSize) } }
+    },
+  })
+  assert.deepEqual(snapshot, {
+    schema_version: 2,
+    source_product_count: total,
+    sellable_product_count: 0,
+    unavailable_product_count: total,
+    products: [],
+  })
+})
+
+test('collectAuthoritativeSnapshot rejects a list total that changes during pagination', async () => {
+  const base = fixture.goodsList.data.list[1]
+  const firstPage = Array.from({ length: 100 }, (_, index) => ({
+    ...clone(base),
+    goods_key: `sold-out-${index}`,
+    link: `https://pay.ldxp.cn/item/sold-out-${index}`,
+  }))
+  await assert.rejects(() => collectAuthoritativeSnapshot({
+    shopToken: 'shop-token',
+    post: async (requestPath, body) => {
+      if (requestPath.endsWith('/info')) return fixture.info
+      if (body.goods_type !== 'card') return goodsListForType(body)
+      if (body.current === 1) return { code: 1, data: { total: 101, list: firstPage } }
+      return { code: 1, data: { total: 100, list: [] } }
+    },
+  }), /count changed during synchronization/)
 })

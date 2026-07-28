@@ -621,6 +621,7 @@ func TestLoadPublicAccountImportProductStoreVersionOneWithoutManualCompletion(t 
 }
 
 func TestPublicAccountImportProductSnapshotAppliesSoftAndHardExpiryPerShop(t *testing.T) {
+	t.Setenv(publicAccountImportProductStrictModeEnv, "true")
 	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
 	shops := []PublicAccountImportShop{{ID: "fresh"}, {ID: "stale"}, {ID: "expired"}}
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
@@ -642,12 +643,27 @@ func TestPublicAccountImportProductSnapshotAppliesSoftAndHardExpiryPerShop(t *te
 	require.Equal(t, now.Add(25*time.Minute).Format(time.RFC3339Nano), statuses[0].SnapshotExpiresAt)
 }
 
+func TestPublicAccountImportProductCompatibilityModeKeepsPastDueAuthoritativeSnapshots(t *testing.T) {
+	t.Setenv(publicAccountImportProductStrictModeEnv, "false")
+	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	shops := []PublicAccountImportShop{{ID: "past-due"}}
+	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+		"past-due": authoritativeProductCache("past-due", now.Add(-31*time.Minute), 1),
+	}}
+
+	products, pending, _, _, _, expired := publicAccountImportProductSnapshot(shops, store, now)
+	require.Len(t, products, 1)
+	require.Equal(t, 1, pending)
+	require.Zero(t, expired)
+	require.Equal(t, "stale", publicAccountImportProductSyncStatuses(shops, store, now)[0].SnapshotState)
+}
+
 func TestPublicAccountImportProductStrictModeHidesLegacySnapshots(t *testing.T) {
 	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
 	shops := []PublicAccountImportShop{{ID: "legacy"}}
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
 		"legacy": {
-			UpdatedAt: now.Add(-time.Minute).Format(time.RFC3339Nano),
+			UpdatedAt: now.Add(-time.Hour).Format(time.RFC3339Nano),
 			Products:  []PublicAccountImportProduct{{ID: "legacy-product", Stock: 1, MinimumQuantity: 1}},
 		},
 	}}

@@ -21,7 +21,6 @@
           "link": "https://pay.ldxp.cn/item/available-card",
           "image": "https://qn.ldxp.cn/example.png",
           "goods_type": "card",
-          "status": 1,
           "price": "1.25",
           "market_price": "2.00",
           "category": { "name": "Accounts" },
@@ -46,6 +45,14 @@
           "extend": { "stock_count": "10", "limit_count": "1" }
         }
       ]
+    }
+  },
+  "emptyGoodsList": {
+    "code": 1,
+    "msg": "success",
+    "data": {
+      "total": 0,
+      "list": []
     }
   },
   "channels": {
