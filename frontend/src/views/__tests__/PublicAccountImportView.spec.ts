@@ -34,9 +34,22 @@ describe('PublicAccountImportView product synchronization', () => {
   it('preflights the minimum purchasable quantity before opening a product', () => {
     expect(source).toContain("'/shopApi/Shop/getUserChannel'")
     expect(source).toContain("'/shopApi/Shop/getGoodsPrice'")
-    expect(source).toContain('quantity: snapshot.minimumQuantity')
+		expect(source).toContain('quantity: minimumQuantity')
     expect(source).toContain('markPublicProductUnavailable(product.id)')
   })
+
+	it('renders authoritative payable and unit prices without overwriting them after a click check', () => {
+		expect(source).toContain('publicProductPayablePrice(product)')
+		expect(source).toContain('publicProductUnitPrice(product)')
+		expect(source).not.toContain('price: snapshot.price')
+		expect(source).not.toContain('updated_at: snapshot.updatedAt')
+	})
+
+	it('closes the pre-opened window for unavailable and unknown verification results', () => {
+		expect(source).toContain('popup?.close()')
+		expect(source).not.toContain('if (unavailable || !latest)')
+		expect(source).not.toContain('shopHref(latest.url)')
+	})
 
   it('provides exclusion syntax help beside the product search field', () => {
     expect(source).toContain('<HelpTooltip trigger="click"')
@@ -49,6 +62,9 @@ describe('PublicAccountImportView product synchronization', () => {
     expect(source).toContain('refreshingProductShops.value = catalog.refreshing_shops')
     expect(source).toContain('mergeShopProductSyncStatuses(catalog.shop_sync_statuses, true)')
     expect(source).toContain("productsRefreshingQueued")
-    expect(source).toContain('productRefreshTimer = window.setInterval')
+		expect(source).toContain('getPublicAccountImportProductsWithETag(productCatalogETag)')
+		expect(source).toContain('productRefreshTimer = window.setTimeout')
+		expect(source).toContain('syncing ? 10_000 : 60_000')
+		expect(source).toContain("document.addEventListener('visibilitychange'")
   })
 })

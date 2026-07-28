@@ -1,0 +1,83 @@
+{
+  "info": {
+    "code": 1,
+    "msg": "success",
+    "data": {
+      "card_count": 3,
+      "article_count": 0,
+      "resource_count": 0,
+      "equity_count": 0
+    }
+  },
+  "goodsList": {
+    "code": 1,
+    "msg": "success",
+    "data": {
+      "total": 3,
+      "list": [
+        {
+          "goods_key": "available-card",
+          "name": "Available card",
+          "link": "https://pay.ldxp.cn/item/available-card",
+          "image": "https://qn.ldxp.cn/example.png",
+          "goods_type": "card",
+          "status": 1,
+          "price": "1.25",
+          "market_price": "2.00",
+          "category": { "name": "Accounts" },
+          "extend": { "stock_count": "8", "limit_count": "2" }
+        },
+        {
+          "goods_key": "sold-out-card",
+          "name": "Sold out card",
+          "link": "https://pay.ldxp.cn/item/sold-out-card",
+          "goods_type": "card",
+          "status": 1,
+          "price": "1.00",
+          "market_price": "1.00",
+          "category": { "name": "Accounts" },
+          "extend": { "stock_count": "0", "limit_count": "1" }
+        },
+        {
+          "goods_key": "disabled-card",
+          "name": "Disabled card",
+          "goods_type": "card",
+          "status": 0,
+          "extend": { "stock_count": "10", "limit_count": "1" }
+        }
+      ]
+    }
+  },
+  "channels": {
+    "code": 1,
+    "msg": "success",
+    "data": [
+      { "id": 10, "name": "Disabled", "status": 0, "is_default": 1 },
+      { "id": 20, "name": "Fallback", "status": 1 },
+      { "id": 30, "name": "Default", "status": 1, "is_default": 1 }
+    ]
+  },
+  "quote": {
+    "code": 1,
+    "msg": "success",
+    "data": {
+      "original_amount": "2.50",
+      "total_amount": "2.20"
+    }
+  },
+  "soldOutQuote": {
+    "code": 0,
+    "msg": "库存不足，无法购买",
+    "data": null
+  },
+  "verificationHTTP": {
+    "status": 200,
+    "contentType": "text/html; charset=utf-8",
+    "payload": null
+  },
+  "rateLimitHTTP": {
+    "status": 429,
+    "contentType": "application/json",
+    "payload": { "code": 0, "msg": "请求频繁，请稍后重试" }
+  }
+}

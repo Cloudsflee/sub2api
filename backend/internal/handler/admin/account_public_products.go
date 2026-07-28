@@ -2,15 +2,18 @@ package admin
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,35 +26,43 @@ import (
 
 const (
 	publicAccountImportProductsFileEnv        = "PUBLIC_ACCOUNT_IMPORT_PRODUCTS_FILE"
+	publicAccountImportProductSyncTokenEnv    = "PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN"
+	publicAccountImportProductStrictModeEnv   = "PUBLIC_ACCOUNT_IMPORT_PRODUCT_STRICT_MODE"
 	publicAccountImportProductsFile           = "/app/data/public-account-import-products.json"
 	publicAccountImportProductStoreVersion    = 1
-	publicAccountImportProductSyncInterval    = 10 * time.Second
+	publicAccountImportProductSchemaVersion   = 2
+	publicAccountImportProductSyncInterval    = time.Second
 	publicAccountImportProductRefreshAge      = 15 * time.Minute
 	publicAccountImportProductRefreshCooldown = 5 * time.Minute
 	publicAccountImportProductRetryAge        = 1 * time.Minute
-	publicAccountImportProductSyncLeaseAge    = 5 * time.Minute
-	publicAccountImportProductMaxCacheAge     = 15 * time.Minute
+	publicAccountImportProductSyncLeaseAge    = 90 * time.Second
+	publicAccountImportProductSyncMaxAge      = 20 * time.Minute
+	publicAccountImportProductMaxCacheAge     = 30 * time.Minute
 	publicAccountImportProductRefreshMaxAge   = 30 * time.Minute
 	publicAccountImportProductMaxSyncJobs     = 2
+	publicAccountImportProductMaxProducts     = 1000
 	publicAccountImportProductMaxBody         = 8 << 20
 	publicAccountImportProductFailureMaxBody  = 8 << 10
 )
 
 type PublicAccountImportProduct struct {
-	ID              string  `json:"id"`
-	ShopID          string  `json:"shop_id"`
-	ShopName        string  `json:"shop_name"`
-	ShopURL         string  `json:"shop_url"`
-	Name            string  `json:"name"`
-	URL             string  `json:"url"`
-	Image           string  `json:"image,omitempty"`
-	Category        string  `json:"category,omitempty"`
-	GoodsType       string  `json:"goods_type"`
-	Price           float64 `json:"price"`
-	MarketPrice     float64 `json:"market_price,omitempty"`
-	Stock           int     `json:"stock"`
-	MinimumQuantity int     `json:"minimum_quantity"`
-	UpdatedAt       string  `json:"updated_at"`
+	ID              string   `json:"id"`
+	ShopID          string   `json:"shop_id"`
+	ShopName        string   `json:"shop_name"`
+	ShopURL         string   `json:"shop_url"`
+	Name            string   `json:"name"`
+	URL             string   `json:"url"`
+	Image           string   `json:"image,omitempty"`
+	Category        string   `json:"category,omitempty"`
+	GoodsType       string   `json:"goods_type"`
+	Price           float64  `json:"price"`
+	MarketPrice     float64  `json:"market_price,omitempty"`
+	PayablePrice    *float64 `json:"payable_price,omitempty"`
+	UnitPrice       *float64 `json:"unit_price,omitempty"`
+	Stock           int      `json:"stock"`
+	MinimumQuantity int      `json:"minimum_quantity"`
+	QuoteVerifiedAt string   `json:"quote_verified_at,omitempty"`
+	UpdatedAt       string   `json:"updated_at"`
 }
 
 type PublicAccountImportProductsResponse struct {
@@ -61,6 +72,7 @@ type PublicAccountImportProductsResponse struct {
 	QueuedShops      int                                    `json:"queued_shops"`
 	RefreshingShops  int                                    `json:"refreshing_shops"`
 	FailedShops      int                                    `json:"failed_shops"`
+	ExpiredShops     int                                    `json:"expired_shops"`
 	RefreshSeconds   int                                    `json:"refresh_seconds"`
 	ShopSyncStatuses []PublicAccountImportProductSyncStatus `json:"shop_sync_statuses"`
 }
@@ -69,6 +81,9 @@ type PublicAccountImportProductSyncStatus struct {
 	ShopID            string `json:"shop_id"`
 	State             string `json:"state"`
 	UpdatedAt         string `json:"updated_at"`
+	SnapshotState     string `json:"snapshot_state"`
+	SnapshotUpdatedAt string `json:"snapshot_updated_at"`
+	SnapshotExpiresAt string `json:"snapshot_expires_at"`
 	RetryAfterSeconds int    `json:"retry_after_seconds"`
 }
 
@@ -81,6 +96,9 @@ type PublicAccountImportProductRefreshResponse struct {
 	ShopID            string `json:"shop_id"`
 	State             string `json:"state"`
 	UpdatedAt         string `json:"updated_at"`
+	SnapshotState     string `json:"snapshot_state"`
+	SnapshotUpdatedAt string `json:"snapshot_updated_at"`
+	SnapshotExpiresAt string `json:"snapshot_expires_at"`
 	RetryAfterSeconds int    `json:"retry_after_seconds"`
 }
 
@@ -98,22 +116,28 @@ type PublicAccountImportProductSyncJobResponse struct {
 }
 
 type PublicAccountImportProductSyncItem struct {
-	GoodsKey        string  `json:"goods_key"`
-	Name            string  `json:"name"`
-	URL             string  `json:"url"`
-	Image           string  `json:"image"`
-	Category        string  `json:"category"`
-	GoodsType       string  `json:"goods_type"`
-	Price           float64 `json:"price"`
-	MarketPrice     float64 `json:"market_price"`
-	Stock           int     `json:"stock"`
-	MinimumQuantity int     `json:"minimum_quantity"`
+	GoodsKey        string   `json:"goods_key"`
+	Name            string   `json:"name"`
+	URL             string   `json:"url"`
+	Image           string   `json:"image"`
+	Category        string   `json:"category"`
+	GoodsType       string   `json:"goods_type"`
+	Price           *float64 `json:"price"`
+	MarketPrice     *float64 `json:"market_price"`
+	PayablePrice    *float64 `json:"payable_price"`
+	Stock           *int     `json:"stock"`
+	MinimumQuantity *int     `json:"minimum_quantity"`
+	QuoteVerifiedAt string   `json:"quote_verified_at"`
 }
 
 type PublicAccountImportProductSyncRequest struct {
-	ShopID    string                               `json:"shop_id"`
-	AttemptID string                               `json:"attempt_id"`
-	Products  []PublicAccountImportProductSyncItem `json:"products"`
+	SchemaVersion           int                                  `json:"schema_version"`
+	ShopID                  string                               `json:"shop_id"`
+	AttemptID               string                               `json:"attempt_id"`
+	SourceProductCount      *int                                 `json:"source_product_count"`
+	SellableProductCount    *int                                 `json:"sellable_product_count"`
+	UnavailableProductCount *int                                 `json:"unavailable_product_count"`
+	Products                []PublicAccountImportProductSyncItem `json:"products"`
 }
 
 type PublicAccountImportProductSyncFailureRequest struct {
@@ -122,10 +146,20 @@ type PublicAccountImportProductSyncFailureRequest struct {
 	Error     string `json:"error"`
 }
 
+type PublicAccountImportProductSyncHeartbeatRequest struct {
+	ShopID    string `json:"shop_id"`
+	AttemptID string `json:"attempt_id"`
+}
+
 type publicAccountImportProductShopCache struct {
 	ShopID                   string                       `json:"shop_id"`
+	SchemaVersion            int                          `json:"schema_version"`
+	SourceProductCount       int                          `json:"source_product_count"`
+	SellableProductCount     int                          `json:"sellable_product_count"`
+	UnavailableProductCount  int                          `json:"unavailable_product_count"`
 	LastAttempt              string                       `json:"last_attempt"`
 	SyncStartedAt            string                       `json:"sync_started_at,omitempty"`
+	SyncHeartbeatAt          string                       `json:"sync_heartbeat_at,omitempty"`
 	SyncAttemptID            string                       `json:"sync_attempt_id,omitempty"`
 	UpdatedAt                string                       `json:"updated_at,omitempty"`
 	RefreshRequestedAt       string                       `json:"refresh_requested_at,omitempty"`
@@ -147,7 +181,7 @@ type publicAccountImportProductRefreshStatus struct {
 }
 
 var (
-	publicProductCacheMu     sync.Mutex
+	publicProductCacheMu     sync.RWMutex
 	publicProductCacheLoaded bool
 	publicProductCache       = publicAccountImportProductStore{Version: publicAccountImportProductStoreVersion, Shops: map[string]publicAccountImportProductShopCache{}}
 	publicProductLastJobAt   time.Time
@@ -171,16 +205,20 @@ func (h *AccountHandler) ListPublicAccountImportProducts(c *gin.Context) {
 	}
 
 	now := time.Now().UTC()
-	products, pending, queued, refreshing, failed := publicAccountImportProductSnapshot(shops, store, now)
-	response.Success(c, PublicAccountImportProductsResponse{
+	products, pending, queued, refreshing, failed, expired := publicAccountImportProductSnapshot(shops, store, now)
+	result := PublicAccountImportProductsResponse{
 		Products: products, ShopCount: len(shops), PendingShops: pending, QueuedShops: queued, RefreshingShops: refreshing, FailedShops: failed,
-		RefreshSeconds: int(publicAccountImportProductRefreshAge.Seconds()), ShopSyncStatuses: publicAccountImportProductSyncStatuses(shops, store, now),
-	})
+		ExpiredShops: expired, RefreshSeconds: int(publicAccountImportProductRefreshAge.Seconds()), ShopSyncStatuses: publicAccountImportProductSyncStatuses(shops, store, now),
+	}
+	writePublicAccountImportProductsResponse(c, result)
 }
 
 func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 	if !publicAccountImportEnabled() {
 		response.NotFound(c, "Public account import is disabled")
+		return
+	}
+	if !authorizePublicAccountImportProductWorker(c) {
 		return
 	}
 	shops, err := snapshotPublicAccountImportShops()
@@ -227,6 +265,7 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 		if tokenErr != nil {
 			cached.Error = tokenErr.Error()
 			cached.SyncStartedAt = ""
+			cached.SyncHeartbeatAt = ""
 			cached.SyncAttemptID = ""
 			cached.RefreshRequestedAt = ""
 			publicProductCache.Shops[shop.ID] = cached
@@ -234,6 +273,7 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 		}
 		cached.Error = ""
 		cached.SyncStartedAt = cached.LastAttempt
+		cached.SyncHeartbeatAt = cached.LastAttempt
 		cached.SyncAttemptID = publicAccountImportProductSyncAttemptID(shop.ID, now)
 		publicProductCache.Shops[shop.ID] = cached
 		jobs = append(jobs, PublicAccountImportProductSyncJob{
@@ -308,6 +348,9 @@ func (h *AccountHandler) RequestPublicAccountImportProductRefresh(c *gin.Context
 	}
 
 	cached.ShopID = shop.ID
+	if updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt); !updatedAt.IsZero() && !updatedAt.Before(now) {
+		now = updatedAt.Add(time.Nanosecond)
+	}
 	cached.RefreshRequestedAt = now.Format(time.RFC3339Nano)
 	previousShops := publicProductCache.Shops
 	publicProductCache.Shops = maps.Clone(previousShops)
@@ -327,14 +370,23 @@ func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
 		response.NotFound(c, "Public account import is disabled")
 		return
 	}
+	if !authorizePublicAccountImportProductWorker(c) {
+		return
+	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, publicAccountImportProductMaxBody)
 	var req PublicAccountImportProductSyncRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid product sync request")
 		return
 	}
-	if len(req.Products) > 1000 {
-		response.BadRequest(c, "Product sync contains too many products")
+	req.ShopID = strings.TrimSpace(req.ShopID)
+	req.AttemptID = strings.TrimSpace(req.AttemptID)
+	if req.ShopID == "" || req.AttemptID == "" {
+		response.BadRequest(c, "Product sync shop and attempt are required")
+		return
+	}
+	if err := validatePublicAccountImportProductSyncCounts(req); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
 	shops, err := snapshotPublicAccountImportShops()
@@ -360,16 +412,32 @@ func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
 	}
 
 	now := time.Now().UTC()
+	publicProductCacheMu.Lock()
+	if err := loadPublicProductCacheLocked(); err != nil {
+		publicProductCacheMu.Unlock()
+		response.InternalError(c, "Failed to load product cache")
+		return
+	}
+	cached := publicProductCache.Shops[shop.ID]
+	if cached.SyncAttemptID != req.AttemptID || !publicAccountImportProductSyncIsActive(cached, now) {
+		publicProductCacheMu.Unlock()
+		response.Error(c, http.StatusConflict, "Product sync job lease expired")
+		return
+	}
+	publicProductCacheMu.Unlock()
+
 	updatedAt := now.Format(time.RFC3339Nano)
 	products := make([]PublicAccountImportProduct, 0, len(req.Products))
 	seen := make(map[string]struct{}, len(req.Products))
-	for _, item := range req.Products {
-		product, ok := normalizePublicProductSyncItem(*shop, item, updatedAt)
-		if !ok {
-			continue
+	for index, item := range req.Products {
+		product, err := normalizePublicProductSyncItem(*shop, item, updatedAt)
+		if err != nil {
+			response.BadRequest(c, fmt.Sprintf("Invalid product sync item %d: %v", index, err))
+			return
 		}
 		if _, exists := seen[product.ID]; exists {
-			continue
+			response.BadRequest(c, "Product sync contains duplicate products")
+			return
 		}
 		seen[product.ID] = struct{}{}
 		products = append(products, product)
@@ -381,14 +449,24 @@ func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
 		response.InternalError(c, "Failed to load product cache")
 		return
 	}
-	cached := publicProductCache.Shops[shop.ID]
-	if req.AttemptID != "" && cached.SyncAttemptID != req.AttemptID {
+	cached = publicProductCache.Shops[shop.ID]
+	now = time.Now().UTC()
+	if cached.SyncAttemptID != req.AttemptID || !publicAccountImportProductSyncIsActive(cached, now) {
 		response.Error(c, http.StatusConflict, "Product sync job lease expired")
 		return
 	}
+	updatedAt = now.Format(time.RFC3339Nano)
+	for index := range products {
+		products[index].UpdatedAt = updatedAt
+	}
 	cached.ShopID = shop.ID
+	cached.SchemaVersion = req.SchemaVersion
+	cached.SourceProductCount = *req.SourceProductCount
+	cached.SellableProductCount = *req.SellableProductCount
+	cached.UnavailableProductCount = *req.UnavailableProductCount
 	cached.Error = ""
 	cached.SyncStartedAt = ""
+	cached.SyncHeartbeatAt = ""
 	cached.SyncAttemptID = ""
 	cached.UpdatedAt = updatedAt
 	if requestedAt := parsePublicAccountImportProductTimestamp(cached.RefreshRequestedAt); !requestedAt.IsZero() && !requestedAt.After(now.Add(time.Minute)) {
@@ -404,12 +482,15 @@ func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
 		response.InternalError(c, "Failed to save product cache")
 		return
 	}
-	response.Success(c, gin.H{"accepted": len(products)})
+	response.Success(c, gin.H{"accepted": len(products), "schema_version": publicAccountImportProductSchemaVersion})
 }
 
 func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 	if !publicAccountImportEnabled() {
 		response.NotFound(c, "Public account import is disabled")
+		return
+	}
+	if !authorizePublicAccountImportProductWorker(c) {
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, publicAccountImportProductFailureMaxBody)
@@ -438,6 +519,7 @@ func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 	}
 	cached.Error = publicAccountImportProductSyncError(req.Error)
 	cached.SyncStartedAt = ""
+	cached.SyncHeartbeatAt = ""
 	cached.SyncAttemptID = ""
 	previousShops := publicProductCache.Shops
 	publicProductCache.Shops = maps.Clone(previousShops)
@@ -450,19 +532,119 @@ func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 	response.Success(c, gin.H{"accepted": true})
 }
 
-func normalizePublicProductSyncItem(shop PublicAccountImportShop, item PublicAccountImportProductSyncItem, updatedAt string) (PublicAccountImportProduct, bool) {
+func (h *AccountHandler) HeartbeatPublicAccountImportProductSync(c *gin.Context) {
+	if !publicAccountImportEnabled() {
+		response.NotFound(c, "Public account import is disabled")
+		return
+	}
+	if !authorizePublicAccountImportProductWorker(c) {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, publicAccountImportProductFailureMaxBody)
+	var req PublicAccountImportProductSyncHeartbeatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid product sync heartbeat")
+		return
+	}
+	req.ShopID = strings.TrimSpace(req.ShopID)
+	req.AttemptID = strings.TrimSpace(req.AttemptID)
+	if req.ShopID == "" || req.AttemptID == "" {
+		response.BadRequest(c, "Product sync shop and attempt are required")
+		return
+	}
+
+	publicProductCacheMu.Lock()
+	defer publicProductCacheMu.Unlock()
+	if err := loadPublicProductCacheLocked(); err != nil {
+		response.InternalError(c, "Failed to load product cache")
+		return
+	}
+	now := time.Now().UTC()
+	cached, ok := publicProductCache.Shops[req.ShopID]
+	if !ok || cached.SyncAttemptID != req.AttemptID || !publicAccountImportProductSyncIsActive(cached, now) {
+		response.Error(c, http.StatusConflict, "Product sync job lease expired")
+		return
+	}
+	cached.SyncHeartbeatAt = now.Format(time.RFC3339Nano)
+	previousShops := publicProductCache.Shops
+	publicProductCache.Shops = maps.Clone(previousShops)
+	publicProductCache.Shops[req.ShopID] = cached
+	if err := savePublicProductCacheLocked(); err != nil {
+		publicProductCache.Shops = previousShops
+		response.InternalError(c, "Failed to renew product sync job")
+		return
+	}
+	response.Success(c, gin.H{
+		"accepted":      true,
+		"lease_seconds": int(publicAccountImportProductSyncLeaseAge.Seconds()),
+	})
+}
+
+func validatePublicAccountImportProductSyncCounts(req PublicAccountImportProductSyncRequest) error {
+	if req.SchemaVersion != publicAccountImportProductSchemaVersion {
+		return fmt.Errorf("product sync schema_version must be %d", publicAccountImportProductSchemaVersion)
+	}
+	if req.SourceProductCount == nil || req.SellableProductCount == nil || req.UnavailableProductCount == nil || req.Products == nil {
+		return errors.New("product sync metadata and products array are required")
+	}
+	source := *req.SourceProductCount
+	sellable := *req.SellableProductCount
+	unavailable := *req.UnavailableProductCount
+	if source < 0 || sellable < 0 || unavailable < 0 || source > publicAccountImportProductMaxProducts {
+		return errors.New("product sync counts are out of range")
+	}
+	if sellable != len(req.Products) || source != sellable+unavailable {
+		return errors.New("product sync counts do not match the complete snapshot")
+	}
+	return nil
+}
+
+func normalizePublicProductSyncItem(shop PublicAccountImportShop, item PublicAccountImportProductSyncItem, updatedAt string) (PublicAccountImportProduct, error) {
 	item.GoodsKey = strings.TrimSpace(item.GoodsKey)
 	item.Name = strings.TrimSpace(item.Name)
-	minimumQuantity := item.MinimumQuantity
-	if minimumQuantity == 0 {
-		minimumQuantity = 1
+	if item.Price == nil || item.PayablePrice == nil || item.Stock == nil || item.MinimumQuantity == nil {
+		return PublicAccountImportProduct{}, errors.New("price, payable price, stock, and minimum quantity are required")
 	}
-	if item.GoodsKey == "" || len(item.GoodsKey) > 100 || item.Name == "" || len(item.Name) > 500 || minimumQuantity < 1 || item.Stock < minimumQuantity || item.Price < 0 || item.Price > 1_000_000 || item.MarketPrice < 0 || item.MarketPrice > 1_000_000 {
-		return PublicAccountImportProduct{}, false
+	price := *item.Price
+	payablePrice := *item.PayablePrice
+	stock := *item.Stock
+	minimumQuantity := *item.MinimumQuantity
+	marketPrice := 0.0
+	if item.MarketPrice != nil {
+		marketPrice = *item.MarketPrice
+	}
+	if item.GoodsKey == "" || len(item.GoodsKey) > 100 || item.Name == "" || len(item.Name) > 500 {
+		return PublicAccountImportProduct{}, errors.New("product identity is invalid")
+	}
+	if minimumQuantity < 1 || stock < minimumQuantity {
+		return PublicAccountImportProduct{}, errors.New("product stock cannot satisfy its minimum quantity")
+	}
+	if !finitePublicAccountImportProductPrice(price) || price > 1_000_000 || !finitePublicAccountImportProductPrice(marketPrice) || marketPrice > 1_000_000 {
+		return PublicAccountImportProduct{}, errors.New("catalog price is invalid")
+	}
+	if !finitePublicAccountImportProductPrice(payablePrice) {
+		return PublicAccountImportProduct{}, errors.New("payable price is invalid")
+	}
+	unitPrice := payablePrice / float64(minimumQuantity)
+	if !finitePublicAccountImportProductPrice(unitPrice) {
+		return PublicAccountImportProduct{}, errors.New("unit price is invalid")
+	}
+	quoteVerifiedAt := parsePublicAccountImportProductTimestamp(item.QuoteVerifiedAt)
+	updatedTime := parsePublicAccountImportProductTimestamp(updatedAt)
+	if quoteVerifiedAt.IsZero() || quoteVerifiedAt.Before(updatedTime.Add(-publicAccountImportProductSyncMaxAge)) || quoteVerifiedAt.After(updatedTime.Add(time.Minute)) {
+		return PublicAccountImportProduct{}, errors.New("quote verification timestamp is invalid")
 	}
 	productURL, err := url.Parse(strings.TrimSpace(item.URL))
-	if err != nil || productURL.Scheme != "https" || !strings.EqualFold(productURL.Hostname(), "pay.ldxp.cn") || !strings.HasPrefix(productURL.Path, "/item/") {
-		return PublicAccountImportProduct{}, false
+	if err != nil || productURL.Scheme != "https" || !strings.EqualFold(productURL.Hostname(), "pay.ldxp.cn") {
+		return PublicAccountImportProduct{}, errors.New("product URL is invalid")
+	}
+	pathParts := strings.Split(strings.Trim(productURL.EscapedPath(), "/"), "/")
+	pathGoodsKey := ""
+	if len(pathParts) == 2 && pathParts[0] == "item" {
+		pathGoodsKey, err = url.PathUnescape(pathParts[1])
+	}
+	if err != nil || pathGoodsKey != item.GoodsKey {
+		return PublicAccountImportProduct{}, errors.New("product URL does not match its goods key")
 	}
 	image := strings.TrimSpace(item.Image)
 	if image != "" {
@@ -474,14 +656,23 @@ func normalizePublicProductSyncItem(shop PublicAccountImportShop, item PublicAcc
 	}
 	goodsType := strings.ToLower(strings.TrimSpace(item.GoodsType))
 	if goodsType != "card" && goodsType != "article" && goodsType != "resource" && goodsType != "equity" {
-		return PublicAccountImportProduct{}, false
+		return PublicAccountImportProduct{}, errors.New("product type is invalid")
 	}
 	return PublicAccountImportProduct{
 		ID: publicAccountImportProductID(shop.ID, item.GoodsKey), ShopID: shop.ID,
 		ShopName: shop.Name, ShopURL: shop.URL, Name: item.Name, URL: productURL.String(),
 		Image: image, Category: strings.TrimSpace(item.Category), GoodsType: goodsType,
-		Price: item.Price, MarketPrice: item.MarketPrice, Stock: item.Stock, MinimumQuantity: minimumQuantity, UpdatedAt: updatedAt,
-	}, true
+		Price: price, MarketPrice: marketPrice, PayablePrice: float64Pointer(payablePrice), UnitPrice: float64Pointer(unitPrice),
+		Stock: stock, MinimumQuantity: minimumQuantity, QuoteVerifiedAt: quoteVerifiedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt,
+	}, nil
+}
+
+func finitePublicAccountImportProductPrice(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0
+}
+
+func float64Pointer(value float64) *float64 {
+	return &value
 }
 
 func snapshotPublicAccountImportShops() ([]PublicAccountImportShop, error) {
@@ -501,31 +692,52 @@ func supportedPublicAccountImportProductShops(shops []PublicAccountImportShop) [
 }
 
 func snapshotPublicAccountImportProductStore() (publicAccountImportProductStore, error) {
+	publicProductCacheMu.RLock()
+	if publicProductCacheLoaded {
+		store := clonePublicAccountImportProductStore(publicProductCache)
+		publicProductCacheMu.RUnlock()
+		return store, nil
+	}
+	publicProductCacheMu.RUnlock()
+
 	publicProductCacheMu.Lock()
 	defer publicProductCacheMu.Unlock()
 	if err := loadPublicProductCacheLocked(); err != nil {
 		return publicAccountImportProductStore{}, err
 	}
-	data, err := json.Marshal(publicProductCache)
-	if err != nil {
-		return publicAccountImportProductStore{}, err
-	}
-	var clone publicAccountImportProductStore
-	err = json.Unmarshal(data, &clone)
-	return clone, err
+	return clonePublicAccountImportProductStore(publicProductCache), nil
 }
 
-func publicAccountImportProductSnapshot(shops []PublicAccountImportShop, store publicAccountImportProductStore, now time.Time) ([]PublicAccountImportProduct, int, int, int, int) {
+func clonePublicAccountImportProductStore(store publicAccountImportProductStore) publicAccountImportProductStore {
+	clone := publicAccountImportProductStore{Version: store.Version, Shops: maps.Clone(store.Shops)}
+	for shopID, cached := range clone.Shops {
+		cached.Products = slices.Clone(cached.Products)
+		clone.Shops[shopID] = cached
+	}
+	return clone
+}
+
+func publicAccountImportProductSnapshot(shops []PublicAccountImportShop, store publicAccountImportProductStore, now time.Time) ([]PublicAccountImportProduct, int, int, int, int, int) {
 	products := make([]PublicAccountImportProduct, 0)
 	pending := 0
+	expired := 0
+	strictMode := publicAccountImportProductStrictMode()
 	for _, shop := range shops {
 		cached, ok := store.Shops[shop.ID]
 		if !ok {
 			pending++
 			continue
 		}
-		if !publicAccountImportProductCacheIsFresh(cached, now, publicAccountImportProductMaxCacheAge) {
+		snapshotState := publicAccountImportProductSnapshotState(cached, now, strictMode)
+		if snapshotState != "fresh" {
 			pending++
+		}
+		if snapshotState == "expired" {
+			expired++
+			continue
+		}
+		if snapshotState != "fresh" && snapshotState != "stale" && snapshotState != "legacy" {
+			continue
 		}
 		for _, product := range cached.Products {
 			product.MinimumQuantity = max(product.MinimumQuantity, 1)
@@ -535,8 +747,10 @@ func publicAccountImportProductSnapshot(shops []PublicAccountImportShop, store p
 		}
 	}
 	sort.SliceStable(products, func(i, j int) bool {
-		if products[i].Price != products[j].Price {
-			return products[i].Price > products[j].Price
+		leftPrice := publicAccountImportProductEffectiveUnitPrice(products[i])
+		rightPrice := publicAccountImportProductEffectiveUnitPrice(products[j])
+		if leftPrice != rightPrice {
+			return leftPrice > rightPrice
 		}
 		if products[i].ShopName != products[j].ShopName {
 			return products[i].ShopName < products[j].ShopName
@@ -544,7 +758,14 @@ func publicAccountImportProductSnapshot(shops []PublicAccountImportShop, store p
 		return products[i].Name < products[j].Name
 	})
 	status := publicAccountImportProductRefreshStatusForShops(shops, store, now)
-	return products, pending, status.Queued, status.Refreshing, status.Failed
+	return products, pending, status.Queued, status.Refreshing, status.Failed, expired
+}
+
+func publicAccountImportProductEffectiveUnitPrice(product PublicAccountImportProduct) float64 {
+	if product.UnitPrice != nil && finitePublicAccountImportProductPrice(*product.UnitPrice) {
+		return *product.UnitPrice
+	}
+	return product.Price / float64(max(product.MinimumQuantity, 1))
 }
 
 func publicAccountImportProductCacheIsFresh(cached publicAccountImportProductShopCache, now time.Time, maxAge time.Duration) bool {
@@ -553,6 +774,109 @@ func publicAccountImportProductCacheIsFresh(cached publicAccountImportProductSho
 		return false
 	}
 	return now.Sub(updatedAt) <= maxAge
+}
+
+func publicAccountImportProductSnapshotState(cached publicAccountImportProductShopCache, now time.Time, strictMode bool) string {
+	updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt)
+	if updatedAt.IsZero() {
+		return "pending"
+	}
+	if updatedAt.After(now.Add(time.Minute)) || now.Sub(updatedAt) > publicAccountImportProductMaxCacheAge {
+		return "expired"
+	}
+	authoritative := publicAccountImportProductSnapshotIsAuthoritative(cached)
+	if cached.SchemaVersion >= publicAccountImportProductSchemaVersion && !authoritative {
+		return "expired"
+	}
+	if !authoritative {
+		if strictMode {
+			return "expired"
+		}
+		return "legacy"
+	}
+	if now.Sub(updatedAt) <= publicAccountImportProductRefreshAge {
+		return "fresh"
+	}
+	return "stale"
+}
+
+func publicAccountImportProductSnapshotIsAuthoritative(cached publicAccountImportProductShopCache) bool {
+	if cached.SchemaVersion != publicAccountImportProductSchemaVersion || cached.Products == nil ||
+		cached.SourceProductCount < 0 || cached.SourceProductCount > publicAccountImportProductMaxProducts ||
+		cached.SellableProductCount != len(cached.Products) ||
+		cached.SourceProductCount != cached.SellableProductCount+cached.UnavailableProductCount {
+		return false
+	}
+	updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt)
+	if updatedAt.IsZero() {
+		return false
+	}
+	seen := make(map[string]struct{}, len(cached.Products))
+	for _, product := range cached.Products {
+		if product.ID == "" || product.PayablePrice == nil || product.UnitPrice == nil ||
+			!finitePublicAccountImportProductPrice(*product.PayablePrice) ||
+			!finitePublicAccountImportProductPrice(*product.UnitPrice) ||
+			product.MinimumQuantity < 1 || product.Stock < product.MinimumQuantity {
+			return false
+		}
+		if _, duplicate := seen[product.ID]; duplicate {
+			return false
+		}
+		seen[product.ID] = struct{}{}
+		quoteVerifiedAt := parsePublicAccountImportProductTimestamp(product.QuoteVerifiedAt)
+		if quoteVerifiedAt.IsZero() || quoteVerifiedAt.After(updatedAt.Add(time.Minute)) {
+			return false
+		}
+		expectedUnitPrice := *product.PayablePrice / float64(product.MinimumQuantity)
+		tolerance := math.Max(1, math.Abs(expectedUnitPrice)) * 1e-9
+		if math.Abs(*product.UnitPrice-expectedUnitPrice) > tolerance {
+			return false
+		}
+	}
+	return true
+}
+
+func publicAccountImportProductStrictMode() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(publicAccountImportProductStrictModeEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func authorizePublicAccountImportProductWorker(c *gin.Context) bool {
+	expected := strings.TrimSpace(os.Getenv(publicAccountImportProductSyncTokenEnv))
+	authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+	parts := strings.Split(authorization, " ")
+	valid := expected != "" && len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && parts[1] != "" &&
+		subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) == 1
+	if valid {
+		return true
+	}
+	c.Header("WWW-Authenticate", `Bearer realm="product-sync-worker"`)
+	response.Unauthorized(c, "Product sync worker authentication is required")
+	return false
+}
+
+func writePublicAccountImportProductsResponse(c *gin.Context, result PublicAccountImportProductsResponse) {
+	body, err := json.Marshal(response.Response{Code: 0, Message: "success", Data: result})
+	if err != nil {
+		response.InternalError(c, "Failed to encode product catalog")
+		return
+	}
+	sum := sha256.Sum256(body)
+	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
+	c.Header("Cache-Control", "public, no-cache")
+	c.Header("ETag", etag)
+	for _, candidate := range strings.Split(c.GetHeader("If-None-Match"), ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == etag || candidate == "W/"+etag {
+			c.Status(http.StatusNotModified)
+			return
+		}
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", body)
 }
 
 func selectPublicAccountImportProductSyncShop(shops []PublicAccountImportShop, store publicAccountImportProductStore, now time.Time) *PublicAccountImportShop {
@@ -573,13 +897,20 @@ func selectPublicAccountImportProductSyncShops(shops []PublicAccountImportShop, 
 		manual  bool
 	}
 	candidates := make([]candidate, 0, len(shops))
+	activeManualJobs := 0
+	for i := range shops {
+		cached := store.Shops[shops[i].ID]
+		if publicAccountImportProductSyncIsActive(cached, now) && publicAccountImportProductRefreshIsPending(cached, now) {
+			activeManualJobs++
+		}
+	}
 	for i := range shops {
 		cached := store.Shops[shops[i].ID]
 		if publicAccountImportProductSyncIsActive(cached, now) {
 			continue
 		}
 		manual := publicAccountImportProductRefreshIsPending(cached, now)
-		if !manual && publicAccountImportProductCacheIsFresh(cached, now, publicAccountImportProductRefreshAge) {
+		if !manual && publicAccountImportProductSnapshotState(cached, now, false) == "fresh" {
 			continue
 		}
 		attempt := parsePublicAccountImportProductTimestamp(cached.LastAttempt)
@@ -597,12 +928,24 @@ func selectPublicAccountImportProductSyncShops(shops []PublicAccountImportShop, 
 		}
 		return candidates[i].attempt.Before(candidates[j].attempt)
 	})
-	if len(candidates) > limit {
-		candidates = candidates[:limit]
+	manualCapacity := max(0, 1-activeManualJobs)
+	selectedCandidates := make([]candidate, 0, min(limit, len(candidates)))
+	selectedManual := 0
+	for _, item := range candidates {
+		if item.manual {
+			if selectedManual >= manualCapacity {
+				continue
+			}
+			selectedManual++
+		}
+		selectedCandidates = append(selectedCandidates, item)
+		if len(selectedCandidates) == limit {
+			break
+		}
 	}
-	selected := make([]PublicAccountImportShop, len(candidates))
-	for i := range candidates {
-		selected[i] = candidates[i].shop
+	selected := make([]PublicAccountImportShop, len(selectedCandidates))
+	for i := range selectedCandidates {
+		selected[i] = selectedCandidates[i].shop
 	}
 	return selected
 }
@@ -631,11 +974,25 @@ func publicAccountImportProductSyncIsActive(cached publicAccountImportProductSho
 	if strings.TrimSpace(cached.Error) != "" {
 		return false
 	}
+	if !publicAccountImportProductSyncWithinMaxAge(cached, now) {
+		return false
+	}
+	heartbeatAt := parsePublicAccountImportProductTimestamp(cached.SyncHeartbeatAt)
+	if heartbeatAt.IsZero() {
+		heartbeatAt = parsePublicAccountImportProductTimestamp(cached.SyncStartedAt)
+	}
+	if heartbeatAt.IsZero() || heartbeatAt.After(now.Add(time.Minute)) {
+		return false
+	}
+	return now.Sub(heartbeatAt) <= publicAccountImportProductSyncLeaseAge
+}
+
+func publicAccountImportProductSyncWithinMaxAge(cached publicAccountImportProductShopCache, now time.Time) bool {
 	startedAt := parsePublicAccountImportProductTimestamp(cached.SyncStartedAt)
 	if startedAt.IsZero() || startedAt.After(now.Add(time.Minute)) {
 		return false
 	}
-	return now.Sub(startedAt) <= publicAccountImportProductSyncLeaseAge
+	return now.Sub(startedAt) <= publicAccountImportProductSyncMaxAge
 }
 
 func countPublicAccountImportProductActiveSyncs(shops []PublicAccountImportShop, store publicAccountImportProductStore, now time.Time) int {
@@ -654,22 +1011,20 @@ func publicAccountImportProductRefreshStatusForShops(shops []PublicAccountImport
 		cached := store.Shops[shop.ID]
 		requested, failed := publicAccountImportProductRefreshState(cached, now)
 		active := publicAccountImportProductSyncIsActive(cached, now)
-		if failed && active {
-			status.Requested++
-			status.Refreshing++
-			continue
-		}
-		if failed {
-			status.Failed++
-		}
-		if !requested {
-			continue
-		}
-		status.Requested++
 		if active {
+			if requested || failed {
+				status.Requested++
+			}
 			status.Refreshing++
-		} else {
+			continue
+		}
+		if requested {
+			status.Requested++
 			status.Queued++
+			continue
+		}
+		if failed || strings.TrimSpace(cached.Error) != "" {
+			status.Failed++
 		}
 	}
 	return status
@@ -690,11 +1045,17 @@ func publicAccountImportProductSyncStatusForShop(shopID string, cached publicAcc
 		state = "refreshing"
 	} else if requested {
 		state = "queued"
-	} else if failed {
+	} else if failed || strings.TrimSpace(cached.Error) != "" {
 		state = "failed"
+	}
+	snapshotState := publicAccountImportProductSnapshotState(cached, now, publicAccountImportProductStrictMode())
+	expiresAt := ""
+	if updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt); !updatedAt.IsZero() {
+		expiresAt = updatedAt.Add(publicAccountImportProductMaxCacheAge).Format(time.RFC3339Nano)
 	}
 	return PublicAccountImportProductSyncStatus{
 		ShopID: shopID, State: state, UpdatedAt: cached.UpdatedAt,
+		SnapshotState: snapshotState, SnapshotUpdatedAt: cached.UpdatedAt, SnapshotExpiresAt: expiresAt,
 		RetryAfterSeconds: publicAccountImportProductRefreshRetryAfter(cached, now),
 	}
 }
@@ -714,7 +1075,9 @@ func publicAccountImportProductRefreshRetryAfter(cached publicAccountImportProdu
 func publicAccountImportProductRefreshResponse(accepted bool, status PublicAccountImportProductSyncStatus) PublicAccountImportProductRefreshResponse {
 	return PublicAccountImportProductRefreshResponse{
 		Accepted: accepted, ShopID: status.ShopID, State: status.State,
-		UpdatedAt: status.UpdatedAt, RetryAfterSeconds: status.RetryAfterSeconds,
+		UpdatedAt: status.UpdatedAt, SnapshotState: status.SnapshotState,
+		SnapshotUpdatedAt: status.SnapshotUpdatedAt, SnapshotExpiresAt: status.SnapshotExpiresAt,
+		RetryAfterSeconds: status.RetryAfterSeconds,
 	}
 }
 

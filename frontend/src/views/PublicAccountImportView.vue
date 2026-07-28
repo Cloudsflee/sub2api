@@ -397,6 +397,9 @@
                 <span v-if="failedProductShops > 0">
                   · {{ t('publicAccountImport.productsFailed', { count: failedProductShops }) }}
                 </span>
+								<span v-if="expiredProductShops > 0">
+									· {{ t('publicAccountImport.productsExpired', { count: expiredProductShops }) }}
+								</span>
               </p>
             </div>
           </div>
@@ -515,10 +518,14 @@
                     {{ t('publicAccountImport.priceChecking') }}
                   </span>
                   <template v-else>
-                    <span class="text-lg font-bold text-red-600 dark:text-red-400">¥{{ formatPrice(product.price) }}</span>
-                    <span v-if="product.market_price && product.market_price > product.price" class="ml-2 text-xs text-gray-400 line-through">
+									<span class="text-lg font-bold text-red-600 dark:text-red-400">¥{{ formatPrice(publicProductPayablePrice(product)) }}</span>
+									<span v-if="product.minimum_quantity === 1 && product.market_price && product.market_price > publicProductPayablePrice(product)" class="ml-2 text-xs text-gray-400 line-through">
                       ¥{{ formatPrice(product.market_price) }}
                     </span>
+									<div class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
+										{{ t('publicAccountImport.productUnitPrice', { price: formatPrice(publicProductUnitPrice(product)) }) }}
+										· {{ t('publicAccountImport.productMinimumQuantity', { count: product.minimum_quantity }) }}
+									</div>
                   </template>
                 </div>
                 <span class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
@@ -553,7 +560,7 @@ import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import { useAppStore } from '@/stores/app'
 import {
   getPublicAccountImportGroups,
-  getPublicAccountImportProducts,
+	getPublicAccountImportProductsWithETag,
   getPublicAccountImportShops,
   requestPublicAccountImportProductRefresh,
   submitPublicAccountImport,
@@ -567,8 +574,12 @@ import {
 import {
   filterAndSortPublicProducts,
   livePublicProductAvailability,
-  normalizeLivePublicProduct,
-  publicProductGoodsKey,
+	livePublicProductMinimumQuantity,
+	livePublicProductQuoteAvailability,
+	publicProductPayablePrice,
+	publicProductGoodsKey,
+	publicProductUnitPrice,
+	selectLivePublicProductPaymentChannel,
 } from '@/utils/publicProductCatalog'
 import {
   publicShopProductRefreshDisabled,
@@ -590,11 +601,6 @@ type ProductPriceStatus = 'checking' | 'verified' | 'unavailable' | 'failed'
 interface ProductPriceVerification {
   status: ProductPriceStatus
   checkedAt: number
-  price?: number
-  marketPrice?: number
-  stock?: number
-  minimumQuantity?: number
-  updatedAt?: string
 }
 
 const { t } = useI18n()
@@ -623,10 +629,10 @@ const loadingProducts = ref(true)
 const productErrorMessage = ref('')
 const productVerificationMessage = ref('')
 const productPriceVerifications = ref<Record<string, ProductPriceVerification>>({})
-const productSortPrices = new Map<string, number>()
 const queuedProductShops = ref(0)
 const refreshingProductShops = ref(0)
 const failedProductShops = ref(0)
+const expiredProductShops = ref(0)
 const shopProductSyncStatuses = ref<Record<string, TrackedPublicAccountImportProductSyncStatus>>({})
 const shopProductRefreshRequests = ref<Record<string, boolean>>({})
 const shopProductSyncClock = ref(Date.now())
@@ -636,6 +642,9 @@ const productPage = ref(1)
 let shopRefreshTimer: number | undefined
 let productRefreshTimer: number | undefined
 let shopProductSyncClockTimer: number | undefined
+let productCatalogETag: string | null = null
+let productCatalogRequestInFlight = false
+let productCatalogMounted = false
 const productVerificationPromises = new Map<string, Promise<boolean>>()
 
 const dragActive = computed(() => dragDepth.value > 0)
@@ -654,8 +663,7 @@ const pagedShops = computed(() => {
 const filteredProducts = computed(() => filterAndSortPublicProducts(
   products.value,
   productSearch.value,
-  productPriceOrder.value,
-  productSortPrices
+	productPriceOrder.value
 ))
 const productPageCount = computed(() => Math.max(1, Math.ceil(filteredProducts.value.length / CATALOG_PAGE_SIZE)))
 const pagedProducts = computed(() => {
@@ -666,13 +674,13 @@ const additionalErrors = computed(() => filterAdditionalResultMessages(result.va
 const additionalWarnings = computed(() => filterAdditionalResultMessages(result.value?.warnings || []))
 
 onMounted(async () => {
+  productCatalogMounted = true
   void appStore.fetchPublicSettings()
   void loadPublicShops(true)
   void loadPublicProducts(true)
   shopRefreshTimer = window.setInterval(() => void loadPublicShops(false), 30_000)
-  productRefreshTimer = window.setInterval(() => {
-    void loadPublicProducts(false)
-  }, 10_000)
+	document.addEventListener('visibilitychange', handleProductCatalogVisibilityChange)
+	window.addEventListener('focus', handleProductCatalogFocus)
   shopProductSyncClockTimer = window.setInterval(() => {
     shopProductSyncClock.value = Date.now()
   }, 1_000)
@@ -686,9 +694,12 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  productCatalogMounted = false
   if (shopRefreshTimer !== undefined) window.clearInterval(shopRefreshTimer)
-  if (productRefreshTimer !== undefined) window.clearInterval(productRefreshTimer)
+	if (productRefreshTimer !== undefined) window.clearTimeout(productRefreshTimer)
   if (shopProductSyncClockTimer !== undefined) window.clearInterval(shopProductSyncClockTimer)
+	document.removeEventListener('visibilitychange', handleProductCatalogVisibilityChange)
+	window.removeEventListener('focus', handleProductCatalogFocus)
 })
 
 watch(selectedGroupIds, resetSubmissionState, { deep: true })
@@ -833,18 +844,28 @@ async function loadPublicShops(showLoading: boolean) {
 }
 
 async function loadPublicProducts(showLoading: boolean) {
+	if (productCatalogRequestInFlight) return
+	if (document.hidden) {
+		if (showLoading) loadingProducts.value = false
+		return
+	}
+	productCatalogRequestInFlight = true
   if (showLoading) loadingProducts.value = true
   try {
-    const catalog = await getPublicAccountImportProducts()
+		const result = await getPublicAccountImportProductsWithETag(productCatalogETag)
+		if (result.etag) productCatalogETag = result.etag
+		if (result.notModified || !result.data) {
+			productErrorMessage.value = ''
+			return
+		}
+		const catalog = result.data
     const nextProducts = catalog.products
       .filter((product) => !recentProductVerification(product.id, 'unavailable'))
-      .map(mergeRecentProductVerification)
-    productSortPrices.clear()
-    for (const product of nextProducts) productSortPrices.set(product.id, product.price)
     products.value = nextProducts
     queuedProductShops.value = catalog.queued_shops
     refreshingProductShops.value = catalog.refreshing_shops
     failedProductShops.value = catalog.failed_shops
+		expiredProductShops.value = catalog.expired_shops
     mergeShopProductSyncStatuses(catalog.shop_sync_statuses, true)
     productErrorMessage.value = ''
   } catch (error: any) {
@@ -853,7 +874,33 @@ async function loadPublicProducts(showLoading: boolean) {
     }
   } finally {
     if (showLoading) loadingProducts.value = false
+		productCatalogRequestInFlight = false
+		scheduleProductCatalogRefresh()
   }
+}
+
+function scheduleProductCatalogRefresh() {
+	if (productRefreshTimer !== undefined) window.clearTimeout(productRefreshTimer)
+	productRefreshTimer = undefined
+	if (!productCatalogMounted || document.hidden) return
+	const syncing = queuedProductShops.value > 0 || refreshingProductShops.value > 0
+	productRefreshTimer = window.setTimeout(() => {
+		productRefreshTimer = undefined
+		void loadPublicProducts(false)
+	}, syncing ? 10_000 : 60_000)
+}
+
+function handleProductCatalogVisibilityChange() {
+	if (document.hidden) {
+		if (productRefreshTimer !== undefined) window.clearTimeout(productRefreshTimer)
+		productRefreshTimer = undefined
+		return
+	}
+	void loadPublicProducts(false)
+}
+
+function handleProductCatalogFocus() {
+	if (!document.hidden) void loadPublicProducts(false)
 }
 
 function formatPrice(value: number): string {
@@ -905,7 +952,8 @@ function shopProductRefreshIsSpinning(shopId: string): boolean {
 }
 
 function shopProductUpdatedText(shopId: string): string {
-  const updatedAt = shopProductSyncStatus(shopId)?.updated_at
+	const status = shopProductSyncStatus(shopId)
+	const updatedAt = status?.snapshot_updated_at || status?.updated_at
   return updatedAt
     ? t('publicAccountImport.shopProductsUpdatedAt', { time: formatProductUpdatedAt(updatedAt) })
     : t('publicAccountImport.shopProductsNeverUpdated')
@@ -916,6 +964,9 @@ function shopProductStateText(shopId: string): string {
   if (status?.state === 'queued') return t('publicAccountImport.shopProductsQueued')
   if (status?.state === 'refreshing') return t('publicAccountImport.shopProductsRefreshing')
   if (status?.state === 'failed') return t('publicAccountImport.shopProductsFailed')
+	if (status?.snapshot_state === 'stale') return t('publicAccountImport.shopProductsStale')
+	if (status?.snapshot_state === 'expired') return t('publicAccountImport.shopProductsExpired')
+	if (status?.snapshot_state === 'legacy') return t('publicAccountImport.shopProductsLegacy')
   const retryAfter = shopProductRetryAfter(shopId)
   return retryAfter > 0
     ? t('publicAccountImport.shopProductsCooldown', { seconds: retryAfter })
@@ -927,6 +978,9 @@ function shopProductStateClass(shopId: string): string {
   if (state === 'failed') return 'text-red-600 dark:text-red-400'
   if (state === 'queued') return 'text-amber-600 dark:text-amber-400'
   if (state === 'refreshing') return 'text-primary-600 dark:text-primary-300'
+	const snapshotState = shopProductSyncStatus(shopId)?.snapshot_state
+	if (snapshotState === 'expired') return 'text-red-600 dark:text-red-400'
+	if (snapshotState === 'stale' || snapshotState === 'legacy') return 'text-amber-600 dark:text-amber-400'
   return 'text-gray-500 dark:text-dark-400'
 }
 
@@ -964,19 +1018,6 @@ function setProductPriceVerification(productId: string, verification: ProductPri
   }
 }
 
-function mergeRecentProductVerification(product: PublicAccountImportProduct): PublicAccountImportProduct {
-  const verification = recentProductVerification(product.id, 'verified')
-  if (!verification) return product
-  return {
-    ...product,
-    price: verification.price ?? product.price,
-    market_price: verification.marketPrice ?? product.market_price,
-    stock: verification.stock ?? product.stock,
-    minimum_quantity: verification.minimumQuantity ?? product.minimum_quantity,
-    updated_at: verification.updatedAt || product.updated_at,
-  }
-}
-
 function markPublicProductUnavailable(productId: string) {
   setProductPriceVerification(productId, { status: 'unavailable', checkedAt: Date.now() })
   products.value = products.value.filter((item) => item.id !== productId)
@@ -998,15 +1039,15 @@ async function verifyPublicProduct(product: PublicAccountImportProduct, force = 
         goods_key: goodsKey,
         trade_no: null,
       })
-      const availability = livePublicProductAvailability(response, product.stock)
+			const availability = livePublicProductAvailability(response)
       if (availability === 'unavailable') {
         markPublicProductUnavailable(product.id)
         return false
       }
       if (availability !== 'available') throw new Error(response?.msg || 'Invalid product response')
 
-      const snapshot = normalizeLivePublicProduct(product, response.data)
-      if (!snapshot) throw new Error('Invalid product details')
+			const minimumQuantity = livePublicProductMinimumQuantity(response.data)
+			if (!minimumQuantity) throw new Error('Invalid product details')
 
       const shopToken = String(response.data?.user?.token || '').trim()
       if (!shopToken) throw new Error('Invalid product shop')
@@ -1016,13 +1057,15 @@ async function verifyPublicProduct(product: PublicAccountImportProduct, force = 
       if (channelResponse?.code !== 1 || !Array.isArray(channelResponse.data)) {
         throw new Error(channelResponse?.msg || 'Invalid payment channels')
       }
+			const channel = selectLivePublicProductPaymentChannel(channelResponse.data)
+			if (!channel) throw new Error('No payment channel is available')
       const quoteResponse = await postPublicShopAPI('/shopApi/Shop/getGoodsPrice', {
         goods_key: goodsKey,
-        quantity: snapshot.minimumQuantity,
+				quantity: minimumQuantity,
         coupon_code: '',
-        channel_id: channelResponse.data[0]?.id || 0,
+				channel_id: channel.id,
       })
-      const quoteAvailability = livePublicProductAvailability(quoteResponse)
+			const quoteAvailability = livePublicProductQuoteAvailability(quoteResponse)
       if (quoteAvailability === 'unavailable') {
         markPublicProductUnavailable(product.id)
         return false
@@ -1034,19 +1077,8 @@ async function verifyPublicProduct(product: PublicAccountImportProduct, force = 
       const verification: ProductPriceVerification = {
         status: 'verified',
         checkedAt: Date.now(),
-        ...snapshot,
       }
       setProductPriceVerification(product.id, verification)
-      products.value = products.value.map((item) => item.id === product.id
-        ? {
-            ...item,
-            price: snapshot.price,
-            market_price: verification.marketPrice,
-            stock: snapshot.stock,
-            minimum_quantity: snapshot.minimumQuantity,
-            updated_at: snapshot.updatedAt,
-          }
-        : item)
       return true
     } catch {
       setProductPriceVerification(product.id, { status: 'failed', checkedAt: Date.now() })
@@ -1065,27 +1097,19 @@ async function handleProductClick(event: MouseEvent, product: PublicAccountImpor
   const popup = window.open('about:blank', '_blank')
   if (popup) popup.opener = null
   const verified = await verifyPublicProduct(product, true)
-  const latest = products.value.find((item) => item.id === product.id)
-  if (verified && latest) {
-    const destination = shopHref(latest.url)
+	if (verified) {
+		const destination = shopHref(product.url)
     productVerificationMessage.value = ''
     if (popup) popup.location.replace(destination)
     else window.location.assign(destination)
     return
   }
 
-  const unavailable = productPriceVerifications.value[product.id]?.status === 'unavailable'
+	const unavailable = productPriceVerifications.value[product.id]?.status === 'unavailable'
   productVerificationMessage.value = unavailable
     ? t('publicAccountImport.productUnavailable')
     : t('publicAccountImport.productVerificationFailed')
-  if (unavailable || !latest) {
-    popup?.close()
-    return
-  }
-
-  const destination = shopHref(latest.url)
-  if (popup) popup.location.replace(destination)
-  else window.location.assign(destination)
+	popup?.close()
 }
 
 async function postPublicShopAPI(path: string, payload: Record<string, unknown>): Promise<any> {

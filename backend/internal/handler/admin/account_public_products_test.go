@@ -1,11 +1,14 @@
 package admin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,12 +57,12 @@ func TestSupportedPublicAccountImportProductShopsFiltersNonProductLinks(t *testi
 	require.Equal(t, "7HZ37ZCG", token)
 }
 
-func TestPublicAccountImportProductSnapshotKeepsLastSuccessfulStaleProducts(t *testing.T) {
+func TestPublicAccountImportProductSnapshotKeepsSoftStaleLegacyProducts(t *testing.T) {
 	now := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
 	shops := []PublicAccountImportShop{{ID: "stale"}, {ID: "missing"}}
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
 		"stale": {
-			UpdatedAt:          now.Add(-time.Hour).Format(time.RFC3339),
+			UpdatedAt:          now.Add(-20 * time.Minute).Format(time.RFC3339),
 			RefreshRequestedAt: now.Format(time.RFC3339),
 			Products: []PublicAccountImportProduct{
 				{ID: "available", Name: "Available", Price: 2, Stock: 1, MinimumQuantity: 1},
@@ -70,7 +73,7 @@ func TestPublicAccountImportProductSnapshotKeepsLastSuccessfulStaleProducts(t *t
 		},
 	}}
 
-	products, pending, queued, refreshing, failed := publicAccountImportProductSnapshot(shops, store, now)
+	products, pending, queued, refreshing, failed, expired := publicAccountImportProductSnapshot(shops, store, now)
 	require.Equal(t, []PublicAccountImportProduct{
 		{ID: "available", Name: "Available", Price: 2, Stock: 1, MinimumQuantity: 1},
 		{ID: "legacy", Name: "Legacy", Price: 1, Stock: 1, MinimumQuantity: 1},
@@ -79,28 +82,35 @@ func TestPublicAccountImportProductSnapshotKeepsLastSuccessfulStaleProducts(t *t
 	require.Equal(t, 1, queued)
 	require.Zero(t, refreshing)
 	require.Zero(t, failed)
+	require.Zero(t, expired)
 }
 
 func TestNormalizePublicProductSyncItemRequiresEnoughStockForMinimumQuantity(t *testing.T) {
 	shop := PublicAccountImportShop{ID: "shop", Name: "Shop", URL: "https://pay.ldxp.cn/shop/token"}
+	price := 1.0
+	payable := 50.0
+	stock := 50
+	minimumQuantity := 50
 	item := PublicAccountImportProductSyncItem{
 		GoodsKey: "goods", Name: "Product", URL: "https://pay.ldxp.cn/item/goods",
-		GoodsType: "card", Price: 1, Stock: 50, MinimumQuantity: 50,
+		GoodsType: "card", Price: &price, PayablePrice: &payable, Stock: &stock, MinimumQuantity: &minimumQuantity,
+		QuoteVerifiedAt: "2026-07-24T00:00:00Z",
 	}
 
-	product, ok := normalizePublicProductSyncItem(shop, item, "2026-07-24T00:00:00Z")
-	require.True(t, ok)
+	product, err := normalizePublicProductSyncItem(shop, item, "2026-07-24T00:00:00Z")
+	require.NoError(t, err)
 	require.Equal(t, 50, product.MinimumQuantity)
+	require.Equal(t, 50.0, *product.PayablePrice)
+	require.Equal(t, 1.0, *product.UnitPrice)
 
-	item.Stock = 49
-	_, ok = normalizePublicProductSyncItem(shop, item, "2026-07-24T00:00:00Z")
-	require.False(t, ok)
+	stock = 49
+	_, err = normalizePublicProductSyncItem(shop, item, "2026-07-24T00:00:00Z")
+	require.Error(t, err)
 
-	item.Stock = 1
-	item.MinimumQuantity = 0
-	product, ok = normalizePublicProductSyncItem(shop, item, "2026-07-24T00:00:00Z")
-	require.True(t, ok)
-	require.Equal(t, 1, product.MinimumQuantity)
+	stock = 1
+	minimumQuantity = 0
+	_, err = normalizePublicProductSyncItem(shop, item, "2026-07-24T00:00:00Z")
+	require.Error(t, err)
 }
 
 func TestSelectPublicAccountImportProductSyncShopUsesSuccessfulRefreshAndShortLease(t *testing.T) {
@@ -113,8 +123,10 @@ func TestSelectPublicAccountImportProductSyncShopUsesSuccessfulRefreshAndShortLe
 	}
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
 		"fresh": {
-			UpdatedAt:   now.Add(-time.Minute).Format(time.RFC3339),
-			LastAttempt: now.Add(-time.Hour).Format(time.RFC3339),
+			SchemaVersion: publicAccountImportProductSchemaVersion,
+			UpdatedAt:     now.Add(-time.Minute).Format(time.RFC3339),
+			LastAttempt:   now.Add(-time.Hour).Format(time.RFC3339),
+			Products:      []PublicAccountImportProduct{},
 		},
 		"leased": {
 			UpdatedAt:   now.Add(-time.Hour).Format(time.RFC3339),
@@ -138,7 +150,11 @@ func TestSelectPublicAccountImportProductSyncShopReturnsNilWhenNothingIsDue(t *t
 	now := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
 	shops := []PublicAccountImportShop{{ID: "fresh"}, {ID: "leased"}}
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
-		"fresh":  {UpdatedAt: now.Add(-time.Minute).Format(time.RFC3339)},
+		"fresh": {
+			SchemaVersion: publicAccountImportProductSchemaVersion,
+			UpdatedAt:     now.Add(-time.Minute).Format(time.RFC3339),
+			Products:      []PublicAccountImportProduct{},
+		},
 		"leased": {LastAttempt: now.Add(-30 * time.Second).Format(time.RFC3339)},
 	}}
 
@@ -149,8 +165,16 @@ func TestSelectPublicAccountImportProductSyncShopKeepsTenMinuteCacheFresh(t *tes
 	now := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
 	shops := []PublicAccountImportShop{{ID: "ten-minutes-old"}, {ID: "stale"}}
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
-		"ten-minutes-old": {UpdatedAt: now.Add(-10 * time.Minute).Format(time.RFC3339Nano)},
-		"stale":           {UpdatedAt: now.Add(-publicAccountImportProductRefreshAge - time.Second).Format(time.RFC3339Nano)},
+		"ten-minutes-old": {
+			SchemaVersion: publicAccountImportProductSchemaVersion,
+			UpdatedAt:     now.Add(-10 * time.Minute).Format(time.RFC3339Nano),
+			Products:      []PublicAccountImportProduct{},
+		},
+		"stale": {
+			SchemaVersion: publicAccountImportProductSchemaVersion,
+			UpdatedAt:     now.Add(-publicAccountImportProductRefreshAge - time.Second).Format(time.RFC3339Nano),
+			Products:      []PublicAccountImportProduct{},
+		},
 	}}
 
 	selected := selectPublicAccountImportProductSyncShops(shops, store, now, 2)
@@ -182,8 +206,10 @@ func TestSelectPublicAccountImportProductSyncShopsLeasesDistinctBatch(t *testing
 	}
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
 		"stale": {
-			UpdatedAt:   now.Add(-time.Hour).Format(time.RFC3339),
-			LastAttempt: now.Add(-10 * time.Minute).Format(time.RFC3339),
+			SchemaVersion: publicAccountImportProductSchemaVersion,
+			UpdatedAt:     now.Add(-time.Hour).Format(time.RFC3339),
+			LastAttempt:   now.Add(-10 * time.Minute).Format(time.RFC3339),
+			Products:      []PublicAccountImportProduct{},
 		},
 		"requested": {
 			UpdatedAt:          now.Add(-time.Minute).Format(time.RFC3339),
@@ -194,7 +220,11 @@ func TestSelectPublicAccountImportProductSyncShopsLeasesDistinctBatch(t *testing
 			UpdatedAt:   now.Add(-time.Hour).Format(time.RFC3339),
 			LastAttempt: now.Add(-30 * time.Second).Format(time.RFC3339),
 		},
-		"fresh": {UpdatedAt: now.Add(-time.Minute).Format(time.RFC3339)},
+		"fresh": {
+			SchemaVersion: publicAccountImportProductSchemaVersion,
+			UpdatedAt:     now.Add(-time.Minute).Format(time.RFC3339),
+			Products:      []PublicAccountImportProduct{},
+		},
 	}}
 
 	selected := selectPublicAccountImportProductSyncShops(shops, store, now, 2)
@@ -218,7 +248,7 @@ func TestPublicAccountImportProductRefreshStatusSeparatesInvalidAndExpiredReques
 	require.Equal(t, 1, status.Failed)
 }
 
-func TestPublicAccountImportProductRefreshStatusHidesAutomaticSyncJobs(t *testing.T) {
+func TestPublicAccountImportProductRefreshStatusIncludesAutomaticSyncJobs(t *testing.T) {
 	now := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
 	shops := []PublicAccountImportShop{{ID: "automatic"}}
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
@@ -232,8 +262,36 @@ func TestPublicAccountImportProductRefreshStatusHidesAutomaticSyncJobs(t *testin
 	status := publicAccountImportProductRefreshStatusForShops(shops, store, now)
 	require.Zero(t, status.Requested)
 	require.Zero(t, status.Queued)
-	require.Zero(t, status.Refreshing)
+	require.Equal(t, 1, status.Refreshing)
 	require.Zero(t, status.Failed)
+}
+
+func TestSelectPublicAccountImportProductSyncShopsReservesAutomaticSlot(t *testing.T) {
+	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	shops := []PublicAccountImportShop{{ID: "active-manual"}, {ID: "queued-manual"}, {ID: "automatic"}}
+	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+		"active-manual": {
+			RefreshRequestedAt: now.Add(-time.Minute).Format(time.RFC3339Nano),
+			SyncStartedAt:      now.Add(-time.Minute).Format(time.RFC3339Nano), SyncHeartbeatAt: now.Format(time.RFC3339Nano),
+		},
+		"queued-manual": {RefreshRequestedAt: now.Add(-time.Minute).Format(time.RFC3339Nano)},
+		"automatic":     {},
+	}}
+
+	selected := selectPublicAccountImportProductSyncShops(shops, store, now, 1)
+	require.Equal(t, []PublicAccountImportShop{{ID: "automatic"}}, selected)
+}
+
+func TestPublicAccountImportProductRefreshStatusIncludesAutomaticFailure(t *testing.T) {
+	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	shops := []PublicAccountImportShop{{ID: "failed"}}
+	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+		"failed": {Error: "HTTP 429", LastAttempt: now.Format(time.RFC3339Nano)},
+	}}
+
+	status := publicAccountImportProductRefreshStatusForShops(shops, store, now)
+	require.Equal(t, 1, status.Failed)
+	require.Equal(t, "failed", publicAccountImportProductSyncStatusForShop("failed", store.Shops["failed"], now).State)
 }
 
 func TestPublicAccountImportProductRefreshStatusSeparatesQueueFromActiveJobs(t *testing.T) {
@@ -307,8 +365,9 @@ func TestSelectPublicAccountImportProductSyncShopHonorsActiveLease(t *testing.T)
 	shops := []PublicAccountImportShop{{ID: "active"}}
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
 		"active": {
-			LastAttempt:   now.Add(-2 * time.Minute).Format(time.RFC3339Nano),
-			SyncStartedAt: now.Add(-2 * time.Minute).Format(time.RFC3339Nano),
+			LastAttempt:     now.Add(-2 * time.Minute).Format(time.RFC3339Nano),
+			SyncStartedAt:   now.Add(-2 * time.Minute).Format(time.RFC3339Nano),
+			SyncHeartbeatAt: now.Add(-time.Second).Format(time.RFC3339Nano),
 		},
 	}}
 
@@ -357,7 +416,7 @@ func TestPublicAccountImportProductSingleShopRefreshFlow(t *testing.T) {
 	}}
 	router := newPublicProductTestRouter(t, shops, store)
 
-	first := performPublicShopRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "manual"})
+	first := performPublicProductRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "manual"})
 	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
 	firstData := decodePublicProductResponse[PublicAccountImportProductRefreshResponse](t, first.Body.Bytes())
 	require.True(t, firstData.Accepted)
@@ -371,7 +430,7 @@ func TestPublicAccountImportProductSingleShopRefreshFlow(t *testing.T) {
 	require.True(t, publicProductLastJobAt.IsZero())
 	publicProductCacheMu.Unlock()
 
-	duplicate := performPublicShopRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "manual"})
+	duplicate := performPublicProductRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "manual"})
 	require.Equal(t, http.StatusOK, duplicate.Code, duplicate.Body.String())
 	duplicateData := decodePublicProductResponse[PublicAccountImportProductRefreshResponse](t, duplicate.Body.Bytes())
 	require.False(t, duplicateData.Accepted)
@@ -380,12 +439,12 @@ func TestPublicAccountImportProductSingleShopRefreshFlow(t *testing.T) {
 	require.Equal(t, firstRequestedAt, publicProductCache.Shops["manual"].RefreshRequestedAt)
 	publicProductCacheMu.Unlock()
 
-	unknown := performPublicShopRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "missing"})
+	unknown := performPublicProductRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "missing"})
 	require.Equal(t, http.StatusBadRequest, unknown.Code, unknown.Body.String())
-	unsupported := performPublicShopRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "unsupported"})
+	unsupported := performPublicProductRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "unsupported"})
 	require.Equal(t, http.StatusBadRequest, unsupported.Code, unsupported.Body.String())
 
-	list := performPublicShopRequest(t, router, http.MethodGet, "/products", nil)
+	list := performPublicProductRequest(t, router, http.MethodGet, "/products", nil)
 	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
 	listData := decodePublicProductResponse[PublicAccountImportProductsResponse](t, list.Body.Bytes())
 	require.Equal(t, 2, listData.ShopCount)
@@ -396,19 +455,19 @@ func TestPublicAccountImportProductSingleShopRefreshFlow(t *testing.T) {
 	require.Equal(t, "queued", listData.ShopSyncStatuses[0].State)
 	require.Equal(t, "idle", listData.ShopSyncStatuses[1].State)
 
-	jobResponse := performPublicShopRequest(t, router, http.MethodGet, "/products/sync-job?limit=1", nil)
+	jobResponse := performPublicProductRequest(t, router, http.MethodGet, "/products/sync-job?limit=1", nil)
 	require.Equal(t, http.StatusOK, jobResponse.Code, jobResponse.Body.String())
 	jobData := decodePublicProductResponse[PublicAccountImportProductSyncJobResponse](t, jobResponse.Body.Bytes())
 	require.NotNil(t, jobData.Job)
 	require.Equal(t, "manual", jobData.Job.ShopID)
 	require.NotEmpty(t, jobData.Job.AttemptID)
 
-	running := performPublicShopRequest(t, router, http.MethodGet, "/products", nil)
+	running := performPublicProductRequest(t, router, http.MethodGet, "/products", nil)
 	runningData := decodePublicProductResponse[PublicAccountImportProductsResponse](t, running.Body.Bytes())
 	require.Equal(t, "refreshing", runningData.ShopSyncStatuses[0].State)
 	require.Equal(t, 1, runningData.RefreshingShops)
 
-	failure := performPublicShopRequest(t, router, http.MethodPost, "/products/sync-failure", PublicAccountImportProductSyncFailureRequest{
+	failure := performPublicProductRequest(t, router, http.MethodPost, "/products/sync-failure", PublicAccountImportProductSyncFailureRequest{
 		ShopID: "manual", AttemptID: jobData.Job.AttemptID, Error: "temporary failure",
 	})
 	require.Equal(t, http.StatusOK, failure.Code, failure.Body.String())
@@ -421,18 +480,28 @@ func TestPublicAccountImportProductSingleShopRefreshFlow(t *testing.T) {
 	publicProductLastJobAt = time.Time{}
 	publicProductCacheMu.Unlock()
 
-	retryJobResponse := performPublicShopRequest(t, router, http.MethodGet, "/products/sync-job?limit=1", nil)
+	retryJobResponse := performPublicProductRequest(t, router, http.MethodGet, "/products/sync-job?limit=1", nil)
 	require.Equal(t, http.StatusOK, retryJobResponse.Code, retryJobResponse.Body.String())
 	retryJobData := decodePublicProductResponse[PublicAccountImportProductSyncJobResponse](t, retryJobResponse.Body.Bytes())
 	require.NotNil(t, retryJobData.Job)
 	require.Equal(t, "manual", retryJobData.Job.ShopID)
 	require.NotEqual(t, jobData.Job.AttemptID, retryJobData.Job.AttemptID)
 
-	success := performPublicShopRequest(t, router, http.MethodPost, "/products/sync", PublicAccountImportProductSyncRequest{
-		ShopID: "manual", AttemptID: retryJobData.Job.AttemptID,
+	price := 1.5
+	payablePrice := 1.5
+	stock := 2
+	minimumQuantity := 1
+	sourceCount := 1
+	sellableCount := 1
+	unavailableCount := 0
+	success := performPublicProductRequest(t, router, http.MethodPost, "/products/sync", PublicAccountImportProductSyncRequest{
+		SchemaVersion: publicAccountImportProductSchemaVersion,
+		ShopID:        "manual", AttemptID: retryJobData.Job.AttemptID,
+		SourceProductCount: &sourceCount, SellableProductCount: &sellableCount, UnavailableProductCount: &unavailableCount,
 		Products: []PublicAccountImportProductSyncItem{{
 			GoodsKey: "new-product", Name: "New product", URL: "https://pay.ldxp.cn/item/new-product",
-			GoodsType: "card", Price: 1.5, Stock: 2, MinimumQuantity: 1,
+			GoodsType: "card", Price: &price, PayablePrice: &payablePrice, Stock: &stock, MinimumQuantity: &minimumQuantity,
+			QuoteVerifiedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		}},
 	})
 	require.Equal(t, http.StatusOK, success.Code, success.Body.String())
@@ -444,7 +513,7 @@ func TestPublicAccountImportProductSingleShopRefreshFlow(t *testing.T) {
 	require.Len(t, completedCache.Products, 1)
 	publicProductCacheMu.Unlock()
 
-	cooldown := performPublicShopRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "manual"})
+	cooldown := performPublicProductRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "manual"})
 	cooldownData := decodePublicProductResponse[PublicAccountImportProductRefreshResponse](t, cooldown.Body.Bytes())
 	require.False(t, cooldownData.Accepted)
 	require.Equal(t, "idle", cooldownData.State)
@@ -456,7 +525,7 @@ func TestPublicAccountImportProductSingleShopRefreshFlow(t *testing.T) {
 	completedCache.ManualRefreshCompletedAt = time.Now().UTC().Add(-publicAccountImportProductRefreshCooldown - time.Second).Format(time.RFC3339Nano)
 	publicProductCache.Shops["manual"] = completedCache
 	publicProductCacheMu.Unlock()
-	afterCooldown := performPublicShopRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "manual"})
+	afterCooldown := performPublicProductRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "manual"})
 	afterCooldownData := decodePublicProductResponse[PublicAccountImportProductRefreshResponse](t, afterCooldown.Body.Bytes())
 	require.True(t, afterCooldownData.Accepted)
 	require.Equal(t, "queued", afterCooldownData.State)
@@ -490,7 +559,7 @@ func TestPublicAccountImportProductRefreshMergesRunningShopRequest(t *testing.T)
 	}}
 	router := newPublicProductTestRouter(t, shops, store)
 
-	result := performPublicShopRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "running"})
+	result := performPublicProductRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "running"})
 	require.Equal(t, http.StatusOK, result.Code, result.Body.String())
 	data := decodePublicProductResponse[PublicAccountImportProductRefreshResponse](t, result.Body.Bytes())
 	require.False(t, data.Accepted)
@@ -513,7 +582,7 @@ func TestPublicAccountImportProductRefreshRequeuesExpiredRequest(t *testing.T) {
 	}}
 	router := newPublicProductTestRouter(t, shops, store)
 
-	result := performPublicShopRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "failed"})
+	result := performPublicProductRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "failed"})
 	require.Equal(t, http.StatusOK, result.Code, result.Body.String())
 	data := decodePublicProductResponse[PublicAccountImportProductRefreshResponse](t, result.Body.Bytes())
 	require.True(t, data.Accepted)
@@ -551,9 +620,236 @@ func TestLoadPublicAccountImportProductStoreVersionOneWithoutManualCompletion(t 
 	publicProductCacheMu.Unlock()
 }
 
+func TestPublicAccountImportProductSnapshotAppliesSoftAndHardExpiryPerShop(t *testing.T) {
+	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	shops := []PublicAccountImportShop{{ID: "fresh"}, {ID: "stale"}, {ID: "expired"}}
+	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+		"fresh":   authoritativeProductCache("fresh", now.Add(-5*time.Minute), 1),
+		"stale":   authoritativeProductCache("stale", now.Add(-20*time.Minute), 2),
+		"expired": authoritativeProductCache("expired", now.Add(-31*time.Minute), 3),
+	}}
+
+	products, pending, _, _, _, expired := publicAccountImportProductSnapshot(shops, store, now)
+	require.Equal(t, []string{"stale-product", "fresh-product"}, []string{products[0].ID, products[1].ID})
+	require.Equal(t, 2, pending)
+	require.Equal(t, 1, expired)
+
+	statuses := publicAccountImportProductSyncStatuses(shops, store, now)
+	require.Equal(t, []string{"fresh", "stale", "expired"}, []string{
+		statuses[0].SnapshotState, statuses[1].SnapshotState, statuses[2].SnapshotState,
+	})
+	require.Equal(t, store.Shops["fresh"].UpdatedAt, statuses[0].SnapshotUpdatedAt)
+	require.Equal(t, now.Add(25*time.Minute).Format(time.RFC3339Nano), statuses[0].SnapshotExpiresAt)
+}
+
+func TestPublicAccountImportProductStrictModeHidesLegacySnapshots(t *testing.T) {
+	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	shops := []PublicAccountImportShop{{ID: "legacy"}}
+	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+		"legacy": {
+			UpdatedAt: now.Add(-time.Minute).Format(time.RFC3339Nano),
+			Products:  []PublicAccountImportProduct{{ID: "legacy-product", Stock: 1, MinimumQuantity: 1}},
+		},
+	}}
+
+	t.Setenv(publicAccountImportProductStrictModeEnv, "false")
+	products, _, _, _, _, expired := publicAccountImportProductSnapshot(shops, store, now)
+	require.Len(t, products, 1)
+	require.Zero(t, expired)
+	require.Equal(t, "legacy", publicAccountImportProductSyncStatuses(shops, store, now)[0].SnapshotState)
+
+	t.Setenv(publicAccountImportProductStrictModeEnv, "true")
+	products, _, _, _, _, expired = publicAccountImportProductSnapshot(shops, store, now)
+	require.Empty(t, products)
+	require.Equal(t, 1, expired)
+	require.Equal(t, "expired", publicAccountImportProductSyncStatuses(shops, store, now)[0].SnapshotState)
+}
+
+func TestSubmitPublicAccountImportProductSyncRejectsIncompleteSnapshotAtomically(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*PublicAccountImportProductSyncRequest)
+	}{
+		{name: "missing quote", mutate: func(req *PublicAccountImportProductSyncRequest) {
+			req.Products[0].PayablePrice = nil
+		}},
+		{name: "duplicate product", mutate: func(req *PublicAccountImportProductSyncRequest) {
+			req.Products = append(req.Products, req.Products[0])
+			*req.SourceProductCount = 2
+			*req.SellableProductCount = 2
+		}},
+		{name: "illegal stock", mutate: func(req *PublicAccountImportProductSyncRequest) {
+			stock := 0
+			req.Products[0].Stock = &stock
+		}},
+		{name: "mismatched counts", mutate: func(req *PublicAccountImportProductSyncRequest) {
+			*req.SourceProductCount = 2
+		}},
+		{name: "too many source products", mutate: func(req *PublicAccountImportProductSyncRequest) {
+			*req.SourceProductCount = publicAccountImportProductMaxProducts + 1
+			*req.UnavailableProductCount = publicAccountImportProductMaxProducts
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Now().UTC()
+			shops := []PublicAccountImportShop{{ID: "shop", Name: "Shop", URL: "https://pay.ldxp.cn/shop/token"}}
+			store := publicAccountImportProductStore{Version: publicAccountImportProductStoreVersion, Shops: map[string]publicAccountImportProductShopCache{
+				"shop": {
+					ShopID: "shop", SyncStartedAt: now.Format(time.RFC3339Nano), SyncHeartbeatAt: now.Format(time.RFC3339Nano), SyncAttemptID: "attempt",
+					UpdatedAt: "2026-07-27T00:00:00Z", Products: []PublicAccountImportProduct{{ID: "previous", Stock: 1, MinimumQuantity: 1}},
+				},
+			}}
+			router := newPublicProductTestRouter(t, shops, store)
+			req := validPublicProductSyncRequest("shop", "attempt", now)
+			tt.mutate(&req)
+
+			result := performPublicProductRequest(t, router, http.MethodPost, "/products/sync", req)
+			require.Equal(t, http.StatusBadRequest, result.Code, result.Body.String())
+			publicProductCacheMu.RLock()
+			cached := publicProductCache.Shops["shop"]
+			publicProductCacheMu.RUnlock()
+			require.Equal(t, "2026-07-27T00:00:00Z", cached.UpdatedAt)
+			require.Equal(t, "previous", cached.Products[0].ID)
+			require.Equal(t, "attempt", cached.SyncAttemptID)
+		})
+	}
+}
+
+func TestSubmitPublicAccountImportProductSyncPublishesVerifiedEmptySnapshot(t *testing.T) {
+	now := time.Now().UTC()
+	shops := []PublicAccountImportShop{{ID: "shop", Name: "Shop", URL: "https://pay.ldxp.cn/shop/token"}}
+	store := publicAccountImportProductStore{Version: publicAccountImportProductStoreVersion, Shops: map[string]publicAccountImportProductShopCache{
+		"shop": {
+			ShopID: "shop", SyncStartedAt: now.Format(time.RFC3339Nano), SyncHeartbeatAt: now.Format(time.RFC3339Nano), SyncAttemptID: "attempt",
+			UpdatedAt: now.Add(-time.Minute).Format(time.RFC3339Nano), Products: []PublicAccountImportProduct{{ID: "previous", Stock: 1, MinimumQuantity: 1}},
+		},
+	}}
+	router := newPublicProductTestRouter(t, shops, store)
+	sourceCount := 3
+	sellableCount := 0
+	unavailableCount := 3
+
+	result := performPublicProductRequest(t, router, http.MethodPost, "/products/sync", PublicAccountImportProductSyncRequest{
+		SchemaVersion: publicAccountImportProductSchemaVersion,
+		ShopID:        "shop", AttemptID: "attempt",
+		SourceProductCount: &sourceCount, SellableProductCount: &sellableCount, UnavailableProductCount: &unavailableCount,
+		Products: []PublicAccountImportProductSyncItem{},
+	})
+	require.Equal(t, http.StatusOK, result.Code, result.Body.String())
+	publicProductCacheMu.RLock()
+	cached := publicProductCache.Shops["shop"]
+	publicProductCacheMu.RUnlock()
+	require.Empty(t, cached.Products)
+	require.Equal(t, 3, cached.SourceProductCount)
+	require.Equal(t, 3, cached.UnavailableProductCount)
+	require.True(t, publicAccountImportProductSnapshotIsAuthoritative(cached))
+}
+
+func TestPublicAccountImportProductWorkerRoutesRequireBearerAuthentication(t *testing.T) {
+	router := newPublicProductTestRouter(t, nil, publicAccountImportProductStore{})
+
+	missing := httptest.NewRecorder()
+	router.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/products/sync-job", nil))
+	require.Equal(t, http.StatusUnauthorized, missing.Code)
+	require.NotEmpty(t, missing.Header().Get("WWW-Authenticate"))
+
+	wrong := httptest.NewRecorder()
+	wrongRequest := httptest.NewRequest(http.MethodGet, "/products/sync-job", nil)
+	wrongRequest.Header.Set("Authorization", "Bearer wrong")
+	router.ServeHTTP(wrong, wrongRequest)
+	require.Equal(t, http.StatusUnauthorized, wrong.Code)
+
+	authorized := performPublicProductRequest(t, router, http.MethodGet, "/products/sync-job", nil)
+	require.Equal(t, http.StatusOK, authorized.Code, authorized.Body.String())
+}
+
+func TestPublicAccountImportProductHeartbeatRenewsLeaseWithoutRefreshingSnapshot(t *testing.T) {
+	now := time.Now().UTC()
+	shops := []PublicAccountImportShop{{ID: "shop", Name: "Shop", URL: "https://pay.ldxp.cn/shop/token"}}
+	store := publicAccountImportProductStore{Version: publicAccountImportProductStoreVersion, Shops: map[string]publicAccountImportProductShopCache{
+		"shop": {
+			ShopID: "shop", SyncStartedAt: now.Add(-time.Minute).Format(time.RFC3339Nano), SyncHeartbeatAt: now.Add(-time.Minute).Format(time.RFC3339Nano),
+			SyncAttemptID: "attempt", UpdatedAt: "2026-07-27T00:00:00Z", Products: []PublicAccountImportProduct{},
+		},
+	}}
+	router := newPublicProductTestRouter(t, shops, store)
+
+	result := performPublicProductRequest(t, router, http.MethodPost, "/products/sync-heartbeat", PublicAccountImportProductSyncHeartbeatRequest{
+		ShopID: "shop", AttemptID: "attempt",
+	})
+	require.Equal(t, http.StatusOK, result.Code, result.Body.String())
+	publicProductCacheMu.RLock()
+	cached := publicProductCache.Shops["shop"]
+	publicProductCacheMu.RUnlock()
+	require.Equal(t, "2026-07-27T00:00:00Z", cached.UpdatedAt)
+	require.WithinDuration(t, time.Now().UTC(), parsePublicAccountImportProductTimestamp(cached.SyncHeartbeatAt), 2*time.Second)
+
+	publicProductCacheMu.Lock()
+	cached.SyncHeartbeatAt = time.Now().UTC().Add(-publicAccountImportProductSyncLeaseAge - time.Second).Format(time.RFC3339Nano)
+	publicProductCache.Shops["shop"] = cached
+	publicProductCacheMu.Unlock()
+	expired := performPublicProductRequest(t, router, http.MethodPost, "/products/sync-heartbeat", PublicAccountImportProductSyncHeartbeatRequest{
+		ShopID: "shop", AttemptID: "attempt",
+	})
+	require.Equal(t, http.StatusConflict, expired.Code, expired.Body.String())
+}
+
+func TestListPublicAccountImportProductsSupportsETag(t *testing.T) {
+	router := newPublicProductTestRouter(t, nil, publicAccountImportProductStore{})
+	first := performPublicProductRequest(t, router, http.MethodGet, "/products", nil)
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	etag := first.Header().Get("ETag")
+	require.NotEmpty(t, etag)
+
+	second := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/products", nil)
+	request.Header.Set("If-None-Match", etag)
+	router.ServeHTTP(second, request)
+	require.Equal(t, http.StatusNotModified, second.Code, second.Body.String())
+	require.Equal(t, etag, second.Header().Get("ETag"))
+}
+
+func authoritativeProductCache(shopID string, updatedAt time.Time, unitPrice float64) publicAccountImportProductShopCache {
+	payablePrice := unitPrice
+	return publicAccountImportProductShopCache{
+		ShopID: shopID, SchemaVersion: publicAccountImportProductSchemaVersion,
+		SourceProductCount: 1, SellableProductCount: 1,
+		UpdatedAt: updatedAt.Format(time.RFC3339Nano),
+		Products: []PublicAccountImportProduct{{
+			ID: shopID + "-product", ShopID: shopID, Price: unitPrice, PayablePrice: &payablePrice, UnitPrice: &unitPrice,
+			Stock: 1, MinimumQuantity: 1, QuoteVerifiedAt: updatedAt.Format(time.RFC3339Nano), UpdatedAt: updatedAt.Format(time.RFC3339Nano),
+		}},
+	}
+}
+
+func validPublicProductSyncRequest(shopID, attemptID string, quoteTime time.Time) PublicAccountImportProductSyncRequest {
+	price := 2.0
+	marketPrice := 3.0
+	payablePrice := 4.0
+	stock := 5
+	minimumQuantity := 2
+	sourceCount := 1
+	sellableCount := 1
+	unavailableCount := 0
+	return PublicAccountImportProductSyncRequest{
+		SchemaVersion: publicAccountImportProductSchemaVersion,
+		ShopID:        shopID, AttemptID: attemptID,
+		SourceProductCount: &sourceCount, SellableProductCount: &sellableCount, UnavailableProductCount: &unavailableCount,
+		Products: []PublicAccountImportProductSyncItem{{
+			GoodsKey: "goods", Name: "Product", URL: "https://pay.ldxp.cn/item/goods", GoodsType: "card",
+			Price: &price, MarketPrice: &marketPrice, PayablePrice: &payablePrice, Stock: &stock, MinimumQuantity: &minimumQuantity,
+			QuoteVerifiedAt: quoteTime.Format(time.RFC3339Nano),
+		}},
+	}
+}
+
 func newPublicProductTestRouter(t *testing.T, shops []PublicAccountImportShop, store publicAccountImportProductStore) http.Handler {
 	t.Helper()
 	t.Setenv(publicAccountImportEnabledEnv, "true")
+	t.Setenv(publicAccountImportProductSyncTokenEnv, "test-product-sync-token")
+	t.Setenv(publicAccountImportProductStrictModeEnv, "false")
 	t.Setenv(publicAccountImportShopLinksFileEnv, filepath.Join(t.TempDir(), "shops.json"))
 	t.Setenv(publicAccountImportProductsFileEnv, filepath.Join(t.TempDir(), "products.json"))
 	require.NoError(t, savePublicAccountImportShops(publicAccountImportShopLinksPath(), shops))
@@ -588,7 +884,28 @@ func newPublicProductTestRouter(t *testing.T, shops []PublicAccountImportShop, s
 	router.POST("/products/refresh", h.RequestPublicAccountImportProductRefresh)
 	router.POST("/products/sync", h.SubmitPublicAccountImportProductSync)
 	router.POST("/products/sync-failure", h.FailPublicAccountImportProductSync)
+	router.POST("/products/sync-heartbeat", h.HeartbeatPublicAccountImportProductSync)
 	return router
+}
+
+func performPublicProductRequest(t *testing.T, router http.Handler, method, path string, payload any) *httptest.ResponseRecorder {
+	t.Helper()
+	var body []byte
+	if payload != nil {
+		var err error
+		body, err = json.Marshal(payload)
+		require.NoError(t, err)
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(method, path, bytes.NewReader(body))
+	if payload != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if token := strings.TrimSpace(os.Getenv(publicAccountImportProductSyncTokenEnv)); token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	router.ServeHTTP(recorder, request)
+	return recorder
 }
 
 func decodePublicProductResponse[T any](t *testing.T, body []byte) T {

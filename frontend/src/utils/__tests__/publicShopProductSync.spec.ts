@@ -8,6 +8,11 @@ import {
 } from '@/utils/publicShopProductSync'
 
 describe('public shop product synchronization helpers', () => {
+	const pendingSnapshot = {
+		snapshot_state: 'pending' as const,
+		snapshot_updated_at: '',
+		snapshot_expires_at: '',
+	}
   it('supports only pay.ldxp.cn shop links', () => {
     expect(supportsPublicShopProductSync('https://pay.ldxp.cn/shop/token')).toBe(true)
     expect(supportsPublicShopProductSync('https://pay.ldxp.cn/shop/token/')).toBe(true)
@@ -22,19 +27,19 @@ describe('public shop product synchronization helpers', () => {
   it('disables requests independently for request, queue, running, and cooldown states', () => {
     const now = 1_000_000
     const idle = trackPublicShopProductSyncStatus({
-      shop_id: 'idle', state: 'idle', updated_at: '', retry_after_seconds: 0,
+			shop_id: 'idle', state: 'idle', updated_at: '', retry_after_seconds: 0, ...pendingSnapshot,
     }, now)
     const queued = trackPublicShopProductSyncStatus({
-      shop_id: 'queued', state: 'queued', updated_at: '', retry_after_seconds: 0,
+			shop_id: 'queued', state: 'queued', updated_at: '', retry_after_seconds: 0, ...pendingSnapshot,
     }, now)
     const refreshing = trackPublicShopProductSyncStatus({
-      shop_id: 'refreshing', state: 'refreshing', updated_at: '', retry_after_seconds: 0,
+			shop_id: 'refreshing', state: 'refreshing', updated_at: '', retry_after_seconds: 0, ...pendingSnapshot,
     }, now)
     const failed = trackPublicShopProductSyncStatus({
-      shop_id: 'failed', state: 'failed', updated_at: '', retry_after_seconds: 0,
+			shop_id: 'failed', state: 'failed', updated_at: '', retry_after_seconds: 0, ...pendingSnapshot,
     }, now)
     const cooling = trackPublicShopProductSyncStatus({
-      shop_id: 'cooling', state: 'idle', updated_at: '', retry_after_seconds: 5,
+			shop_id: 'cooling', state: 'idle', updated_at: '', retry_after_seconds: 5, ...pendingSnapshot,
     }, now)
 
     expect(publicShopProductRefreshDisabled(idle, false, now)).toBe(false)
@@ -48,7 +53,7 @@ describe('public shop product synchronization helpers', () => {
 
   it('counts a server cooldown down locally', () => {
     const status = trackPublicShopProductSyncStatus({
-      shop_id: 'shop', state: 'idle', updated_at: '', retry_after_seconds: 5,
+			shop_id: 'shop', state: 'idle', updated_at: '', retry_after_seconds: 5, ...pendingSnapshot,
     }, 10_000)
 
     expect(publicShopProductSyncRetryAfter(status, 10_000)).toBe(5)

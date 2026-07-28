@@ -1,26 +1,35 @@
 const { chromium } = require('playwright-core')
 const fs = require('node:fs')
+const { collectAuthoritativeSnapshot } = require('./catalog-sync')
 const {
-  isCatalogProductPurchasable,
+  Semaphore,
+  TokenBucket,
+  isPressureError,
   isVerificationPageState,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
+  parseShopHTTPResponse,
   parseSyncConcurrency,
+  pressureBackoffMilliseconds,
 } = require('./worker-utils')
 
 const backendURL = process.env.BACKEND_URL || 'http://sub2api:8080'
-const pollMilliseconds = parsePositiveMilliseconds(process.env.POLL_MILLISECONDS, 10000, 'POLL_MILLISECONDS')
-const verificationCooldownMilliseconds = parsePositiveMilliseconds(process.env.VERIFICATION_COOLDOWN_MILLISECONDS, 900000, 'VERIFICATION_COOLDOWN_MILLISECONDS')
-const shopRequestTimeoutMilliseconds = parsePositiveMilliseconds(process.env.SHOP_REQUEST_TIMEOUT_MILLISECONDS, 20000, 'SHOP_REQUEST_TIMEOUT_MILLISECONDS')
-const browserProtocolTimeoutMilliseconds = parsePositiveMilliseconds(process.env.BROWSER_PROTOCOL_TIMEOUT_MILLISECONDS, 45000, 'BROWSER_PROTOCOL_TIMEOUT_MILLISECONDS')
-const backendRequestTimeoutMilliseconds = parsePositiveMilliseconds(process.env.BACKEND_REQUEST_TIMEOUT_MILLISECONDS, 10000, 'BACKEND_REQUEST_TIMEOUT_MILLISECONDS')
+const backendToken = String(process.env.PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN || '').trim()
+const idlePollMilliseconds = 10_000
+const activePollMilliseconds = 1_000
+const heartbeatMilliseconds = 30_000
+const maxJobMilliseconds = 20 * 60_000
+const shopRequestTimeoutMilliseconds = parsePositiveMilliseconds(process.env.SHOP_REQUEST_TIMEOUT_MILLISECONDS, 20_000, 'SHOP_REQUEST_TIMEOUT_MILLISECONDS')
+const browserProtocolTimeoutMilliseconds = parsePositiveMilliseconds(process.env.BROWSER_PROTOCOL_TIMEOUT_MILLISECONDS, 45_000, 'BROWSER_PROTOCOL_TIMEOUT_MILLISECONDS')
+const backendRequestTimeoutMilliseconds = parsePositiveMilliseconds(process.env.BACKEND_REQUEST_TIMEOUT_MILLISECONDS, 10_000, 'BACKEND_REQUEST_TIMEOUT_MILLISECONDS')
 const syncConcurrency = parseSyncConcurrency(process.env.PRODUCT_SYNC_CONCURRENCY)
 const chromePath = process.env.CHROME_PATH || '/usr/bin/chromium-browser'
 const chromeProfileDirectory = process.env.CHROME_PROFILE_DIRECTORY || '/data/chrome-profile'
 const statusFile = process.env.STATUS_FILE || '/data/status.json'
 const proxy = parseProxyConfiguration(process.env.PRODUCT_SYNC_PROXY_URL)
+const shopRequestLimiter = new TokenBucket(3, 2)
+const quoteSemaphore = new Semaphore(2)
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
-const isVerificationError = (error) => String(error?.message || error).includes('verification required')
 let workerStatus = {
   state: 'starting',
   proxy_enabled: Boolean(proxy),
@@ -47,7 +56,11 @@ function errorMessage(error) {
 async function backend(path, options = {}) {
   const response = await fetch(`${backendURL}${path}`, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${backendToken}`,
+      ...(options.headers || {}),
+    },
     signal: options.signal || AbortSignal.timeout(backendRequestTimeoutMilliseconds),
   })
   if (!response.ok) throw new Error(`backend ${path} returned HTTP ${response.status}`)
@@ -56,78 +69,60 @@ async function backend(path, options = {}) {
   return payload.data
 }
 
-async function collectProducts(page, token) {
-  const products = await page.evaluate(async ({ shopToken, requestTimeoutMilliseconds }) => {
-    const post = async (path, body) => {
+function ensureJobDeadline(deadlineAt) {
+  if (Date.now() >= deadlineAt) throw new Error('product sync job exceeded the 20 minute limit')
+}
+
+async function postShopAPI(page, shopToken, path, body, deadlineAt) {
+  ensureJobDeadline(deadlineAt)
+  await shopRequestLimiter.take()
+  ensureJobDeadline(deadlineAt)
+  let result
+  try {
+    result = await page.evaluate(async ({ requestPath, requestBody, requestTimeoutMilliseconds, visitorID }) => {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), requestTimeoutMilliseconds)
       try {
-        const response = await fetch(path, {
+        const response = await fetch(requestPath, {
           method: 'POST',
           credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
             Accept: 'application/json',
-            Visitorid: `sub2api${shopToken.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}`,
+            Visitorid: visitorID,
           },
-          body: JSON.stringify(body),
+          body: JSON.stringify(requestBody),
           signal: controller.signal,
         })
         const contentType = response.headers.get('content-type') || ''
-        if (!response.ok || !contentType.includes('application/json')) {
-          throw new Error(`shop API verification required: HTTP ${response.status}`)
+        const text = await response.text()
+        let payload = null
+        if (contentType.toLowerCase().includes('application/json')) {
+          try {
+            payload = JSON.parse(text)
+          } catch {
+            payload = null
+          }
         }
-        const payload = await response.json()
-        if (payload.code !== 1) throw new Error(payload.msg || 'shop API request failed')
-        return payload.data
+        return {
+          status: response.status,
+          contentType,
+          payload,
+          retryAfter: response.headers.get('retry-after') || '',
+        }
       } finally {
         clearTimeout(timer)
       }
-    }
-
-    const info = await post('/shopApi/Shop/info', { token: shopToken, category_key: null })
-    const counts = {
-      card: Number(info.card_count || 0),
-      article: Number(info.article_count || 0),
-      resource: Number(info.resource_count || 0),
-      equity: Number(info.equity_count || 0),
-    }
-    const products = []
-    for (const [goodsType, count] of Object.entries(counts)) {
-      if (count <= 0) continue
-      for (let current = 1; current <= 10; current += 1) {
-        const data = await post('/shopApi/Shop/goodsList', {
-          token: shopToken,
-          keywords: '',
-          category_id: 0,
-          goods_type: goodsType,
-          current,
-          pageSize: 100,
-        })
-        const list = Array.isArray(data.list) ? data.list : []
-        for (const item of list) {
-          const stock = Number(item.extend?.stock_count || 0)
-          const minimumQuantity = Number(item.extend?.limit_count || 1)
-          products.push({
-            goods_key: String(item.goods_key || ''),
-            name: String(item.name || ''),
-            url: String(item.link || ''),
-            image: String(item.image || ''),
-            category: String(item.category?.name || ''),
-            goods_type: String(item.goods_type || goodsType),
-            price: Number(item.price || 0),
-            market_price: Number(item.market_price || 0),
-            stock,
-            minimum_quantity: minimumQuantity,
-          })
-        }
-        const total = Number(data.total || 0)
-        if (list.length < 100 || current * 100 >= total) break
-      }
-    }
-    return products
-  }, { shopToken: token, requestTimeoutMilliseconds: shopRequestTimeoutMilliseconds })
-  return products.filter(isCatalogProductPurchasable)
+    }, {
+      requestPath: path,
+      requestBody: body,
+      requestTimeoutMilliseconds: Math.min(shopRequestTimeoutMilliseconds, Math.max(1, deadlineAt - Date.now())),
+      visitorID: `sub2api${shopToken.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}`,
+    })
+  } catch (error) {
+    throw new Error(`shop API ${path} failed: ${errorMessage(error)}`)
+  }
+  return parseShopHTTPResponse(result)
 }
 
 async function rejectVerificationPage(page) {
@@ -137,59 +132,88 @@ async function rejectVerificationPage(page) {
     hasCaptcha: Boolean(document.querySelector('#captcha-element, #aliyunCaptcha-sliding-slider')),
   }))
   if (isVerificationPageState(state)) {
-    throw new Error('shop API verification required: Alibaba Cloud ESA challenge')
+    const error = new Error('shop API verification required: Alibaba Cloud ESA challenge')
+    error.kind = 'verification'
+    throw error
+  }
+}
+
+async function initializeShopPage(page, recovery = false) {
+  try {
+    await page.goto('https://pay.ldxp.cn/', { waitUntil: 'domcontentloaded', timeout: 20_000 })
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error
+    console.log(`${new Date().toISOString()} shop session navigation timed out; continuing with the loaded document`)
+  }
+  await rejectVerificationPage(page)
+  if (recovery) console.log(`${new Date().toISOString()} shop session recovered after verification backoff`)
+}
+
+function startJobHeartbeat(job) {
+  let stopped = false
+  let pending = Promise.resolve()
+  const send = () => {
+    if (stopped) return
+    pending = pending
+      .then(() => backend('/api/v1/public/account-import/products/sync-heartbeat', {
+        method: 'POST',
+        body: JSON.stringify({ shop_id: job.shop_id, attempt_id: job.attempt_id }),
+      }))
+      .catch((error) => {
+        console.error(`${new Date().toISOString()} heartbeat failed for ${job.shop_name}: ${errorMessage(error)}`)
+      })
+  }
+  const timer = setInterval(send, heartbeatMilliseconds)
+  return async () => {
+    stopped = true
+    clearInterval(timer)
+    await pending
+  }
+}
+
+async function reportJobFailure(job, error) {
+  try {
+    await backend('/api/v1/public/account-import/products/sync-failure', {
+      method: 'POST',
+      body: JSON.stringify({
+        shop_id: job.shop_id,
+        attempt_id: job.attempt_id,
+        error: errorMessage(error),
+      }),
+    })
+  } catch (reportError) {
+    console.error(`${new Date().toISOString()} failed to report sync failure for ${job.shop_name}: ${errorMessage(reportError)}`)
   }
 }
 
 async function syncJob(page, job) {
-  let lastError
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      try {
-        await page.goto(job.shop_url, { waitUntil: 'domcontentloaded', timeout: 20000 })
-      } catch (error) {
-        if (error.name !== 'TimeoutError') throw error
-        console.log(`${new Date().toISOString()} navigation still loading for ${job.shop_name}; trying the API directly`)
-      }
-      await sleep(attempt * 3000)
-      await rejectVerificationPage(page)
-      const products = await collectProducts(page, job.token)
-      const result = await backend('/api/v1/public/account-import/products/sync', {
-        method: 'POST',
-        body: JSON.stringify({ shop_id: job.shop_id, attempt_id: job.attempt_id, products }),
-      })
-      console.log(`${new Date().toISOString()} synced ${job.shop_name}: ${result.accepted} products`)
-      publishStatus({
-        last_success_at: new Date().toISOString(),
-        last_shop_id: job.shop_id,
-        last_error: '',
-      })
-      return
-    } catch (error) {
-      lastError = error
-      if (isVerificationError(error)) throw error
-      await sleep(attempt * 5000)
-    }
-  }
-  throw lastError
-}
-
-async function syncJobWithFailureReport(page, job) {
+  const deadlineAt = Date.now() + maxJobMilliseconds
+  const stopHeartbeat = startJobHeartbeat(job)
   try {
-    await syncJob(page, job)
+    const snapshot = await collectAuthoritativeSnapshot({
+      shopToken: job.token,
+      quoteSemaphore,
+      post: (path, body) => postShopAPI(page, job.token, path, body, deadlineAt),
+    })
+    await stopHeartbeat()
+    ensureJobDeadline(deadlineAt)
+    const result = await backend('/api/v1/public/account-import/products/sync', {
+      method: 'POST',
+      body: JSON.stringify({
+        shop_id: job.shop_id,
+        attempt_id: job.attempt_id,
+        ...snapshot,
+      }),
+    })
+    console.log(`${new Date().toISOString()} synced ${job.shop_name}: ${result.accepted}/${snapshot.source_product_count} sellable products`)
+    publishStatus({
+      last_success_at: new Date().toISOString(),
+      last_shop_id: job.shop_id,
+      last_error: '',
+    })
   } catch (error) {
-    try {
-      await backend('/api/v1/public/account-import/products/sync-failure', {
-        method: 'POST',
-        body: JSON.stringify({
-          shop_id: job.shop_id,
-          attempt_id: job.attempt_id,
-          error: errorMessage(error),
-        }),
-      })
-    } catch (reportError) {
-      console.error(`${new Date().toISOString()} failed to report sync failure for ${job.shop_name}: ${errorMessage(reportError)}`)
-    }
+    await stopHeartbeat()
+    await reportJobFailure(job, error)
     throw error
   }
 }
@@ -197,7 +221,7 @@ async function syncJobWithFailureReport(page, job) {
 async function runBrowser() {
   fs.mkdirSync(chromeProfileDirectory, { recursive: true })
   for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
-    fs.rmSync(`${chromeProfileDirectory}/${name}`, { force: true, recursive: true })
+    fs.rmSync(`${chromeProfileDirectory}/${name}`, { force: true })
   }
   const context = await chromium.launchPersistentContext(chromeProfileDirectory, {
     executablePath: chromePath,
@@ -235,21 +259,33 @@ async function runBrowser() {
     else await route.continue()
   })
   const existingPages = context.pages()
-  const pages = []
-  for (let index = 0; index < syncConcurrency; index += 1) {
-    pages.push(existingPages[index] || await context.newPage())
+  for (const page of existingPages.slice(syncConcurrency)) {
+    await page.close()
+  }
+  const pages = existingPages.slice(0, syncConcurrency)
+  while (pages.length < syncConcurrency) {
+    pages.push(await context.newPage())
+  }
+  try {
+    await Promise.all(pages.map((page) => initializeShopPage(page)))
+  } catch (error) {
+    if (activeBrowserContext === context) activeBrowserContext = undefined
+    await context.close().catch(() => {})
+    throw error
   }
   const browser = context.browser()
+  let pressureFailures = 0
   publishStatus({
     state: 'idle',
     active_jobs: 0,
     browser_engine: 'playwright',
     sync_concurrency: syncConcurrency,
+    quote_concurrency: 2,
+    request_rate_per_second: 3,
     browser_started_at: new Date().toISOString(),
   })
 
   while (browser?.isConnected() && !stopping) {
-    let nextPoll = pollMilliseconds
     try {
       const data = await backend(`/api/v1/public/account-import/products/sync-job?limit=${syncConcurrency}`)
       const jobs = Array.isArray(data.jobs) && data.jobs.length > 0
@@ -260,47 +296,85 @@ async function runBrowser() {
         active_jobs: jobs.length,
         last_poll_at: new Date().toISOString(),
       })
-      if (jobs.length > 0) {
-        const results = await Promise.allSettled(jobs.map((job, index) => syncJobWithFailureReport(pages[index], job)))
-        const failures = results
-          .map((result, index) => ({ result, job: jobs[index] }))
-          .filter(({ result }) => result.status === 'rejected')
-        for (const { result, job } of failures) {
-          console.error(`${new Date().toISOString()} sync failed for ${job.shop_name}: ${errorMessage(result.reason)}`)
-        }
-        const verificationFailure = failures.find(({ result }) => isVerificationError(result.reason))
-        if (verificationFailure) throw verificationFailure.result.reason
-        if (failures.length > 0) throw failures[0].result.reason
-        publishStatus({ state: 'idle', active_jobs: 0 })
+      if (jobs.length === 0) {
+        await sleep(idlePollMilliseconds)
+        continue
       }
-    } catch (error) {
-      const message = errorMessage(error)
-      console.error(`${new Date().toISOString()} sync batch failed: ${message}`)
+
+      const results = await Promise.allSettled(jobs.map((job, index) => syncJob(pages[index], job)))
+      const failures = results
+        .map((result, index) => ({ result, job: jobs[index] }))
+        .filter(({ result }) => result.status === 'rejected')
+      for (const { result, job } of failures) {
+        console.error(`${new Date().toISOString()} sync failed for ${job.shop_name}: ${errorMessage(result.reason)}`)
+      }
+      const pressureFailure = failures.find(({ result }) => isPressureError(result.reason))
+      if (pressureFailure) {
+        pressureFailures += 1
+        const waitMilliseconds = pressureBackoffMilliseconds(pressureFailures)
+        const reason = pressureFailure.result.reason
+        publishStatus({
+          state: 'blocked',
+          active_jobs: 0,
+          pressure_failure_count: pressureFailures,
+          retry_at: new Date(Date.now() + waitMilliseconds).toISOString(),
+          last_error_at: new Date().toISOString(),
+          last_error: errorMessage(reason),
+        })
+        console.log(`${new Date().toISOString()} applying product sync pressure backoff for ${Math.round(waitMilliseconds / 1000)} seconds`)
+        await sleep(waitMilliseconds)
+        if (reason?.kind === 'verification' && !stopping) {
+          try {
+            await Promise.all(pages.map((page) => initializeShopPage(page, true)))
+          } catch (recoveryError) {
+            console.error(`${new Date().toISOString()} verification recovery failed: ${errorMessage(recoveryError)}`)
+          }
+        }
+        continue
+      }
+
+      if (failures.length === 0) pressureFailures = 0
       publishStatus({
-        state: isVerificationError(error) ? 'blocked' : 'error',
+        state: failures.length > 0 ? 'error' : 'idle',
+        active_jobs: 0,
+        ...(failures.length > 0 ? {
+          last_error_at: new Date().toISOString(),
+          last_error: errorMessage(failures[0].result.reason),
+        } : {}),
+      })
+      await sleep(activePollMilliseconds)
+    } catch (error) {
+      console.error(`${new Date().toISOString()} sync polling failed: ${errorMessage(error)}`)
+      publishStatus({
+        state: 'error',
         active_jobs: 0,
         last_error_at: new Date().toISOString(),
-        last_error: message,
+        last_error: errorMessage(error),
       })
-      if (isVerificationError(error)) {
-        nextPoll = verificationCooldownMilliseconds
-        console.log(`${new Date().toISOString()} pausing product sync after shop verification challenge`)
-      }
+      await sleep(idlePollMilliseconds)
     }
-    await sleep(nextPoll)
   }
   if (activeBrowserContext === context) activeBrowserContext = undefined
 }
 
 async function main() {
+  if (!backendToken) throw new Error('PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN is required')
   publishStatus({ state: 'starting' })
   console.log(`${new Date().toISOString()} product sync worker starting; proxy=${proxy ? 'enabled' : 'disabled'}`)
+  let browserPressureFailures = 0
   while (!stopping) {
     try {
       await runBrowser()
+      browserPressureFailures = 0
     } catch (error) {
-      console.error(`${new Date().toISOString()} browser restart: ${error.message}`)
-      await sleep(15000)
+      console.error(`${new Date().toISOString()} browser restart: ${errorMessage(error)}`)
+      publishStatus({ state: 'error', last_error: errorMessage(error) })
+      if (isPressureError(error)) browserPressureFailures += 1
+      else browserPressureFailures = 0
+      const restartDelay = isPressureError(error)
+        ? pressureBackoffMilliseconds(browserPressureFailures)
+        : 15_000
+      await sleep(restartDelay)
     }
   }
 }

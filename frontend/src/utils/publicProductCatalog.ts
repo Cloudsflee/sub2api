@@ -2,14 +2,6 @@ import type { PublicAccountImportProduct } from '@/api/publicAccountImport'
 
 const productNameCollator = new Intl.Collator(undefined, { numeric: true })
 
-export interface LivePublicProductSnapshot {
-  price: number
-  marketPrice?: number
-  stock: number
-  minimumQuantity: number
-  updatedAt: string
-}
-
 export type LivePublicProductAvailability = 'available' | 'unavailable' | 'unknown'
 
 function normalizeSearchText(value: string | undefined): string {
@@ -21,12 +13,43 @@ function normalizeSearchText(value: string | undefined): string {
 }
 
 function normalizeMinimumQuantity(value: unknown): number {
+  const parsed = normalizeAPINumber(value)
+  return parsed !== null && Number.isInteger(parsed) && parsed > 0 ? parsed : 1
+}
+
+function normalizeAPINumber(value: unknown): number | null {
+  if (value === null || value === undefined || typeof value === 'boolean') return null
+  if (typeof value === 'string' && value.trim() === '') return null
   const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function normalizeLiveStatus(value: unknown): LivePublicProductAvailability {
+  if (value === true || value === 1 || value === '1') return 'available'
+  if (value === false || value === 0 || value === '0') return 'unavailable'
+  const normalized = String(value ?? '').trim().toLocaleLowerCase()
+  if (['active', 'enabled', 'on_sale', 'onsale', 'selling'].includes(normalized)) return 'available'
+  if (['inactive', 'disabled', 'off_sale', 'offsale', 'sold_out', 'deleted'].includes(normalized)) return 'unavailable'
+  return 'unknown'
 }
 
 export function publicProductMinimumQuantity(product: PublicAccountImportProduct): number {
   return normalizeMinimumQuantity(product.minimum_quantity)
+}
+
+export function publicProductPayablePrice(product: PublicAccountImportProduct): number {
+  const payablePrice = normalizeAPINumber(product.payable_price)
+  return payablePrice !== null && payablePrice >= 0 ? payablePrice : product.price
+}
+
+export function publicProductUnitPrice(product: PublicAccountImportProduct): number {
+  const unitPrice = normalizeAPINumber(product.unit_price)
+  if (unitPrice !== null && unitPrice >= 0) return unitPrice
+  const payablePrice = normalizeAPINumber(product.payable_price)
+  if (payablePrice !== null && payablePrice >= 0) {
+    return payablePrice / publicProductMinimumQuantity(product)
+  }
+  return product.price
 }
 
 function publicProductNameMatches(
@@ -40,10 +63,9 @@ function publicProductNameMatches(
 }
 
 export function filterAndSortPublicProducts(
-  products: PublicAccountImportProduct[],
-  query: string,
-  priceOrder: 'desc' | 'asc',
-  sortPrices: ReadonlyMap<string, number>
+	products: PublicAccountImportProduct[],
+	query: string,
+	priceOrder: 'desc' | 'asc'
 ): PublicAccountImportProduct[] {
   const normalizedQuery = normalizeSearchText(query)
   const includedKeywords = new Set<string>()
@@ -62,8 +84,8 @@ export function filterAndSortPublicProducts(
     && publicProductNameMatches(product, included, excluded))
 
   matchedProducts.sort((left, right) => {
-    const leftPrice = sortPrices.get(left.id) ?? left.price
-    const rightPrice = sortPrices.get(right.id) ?? right.price
+		const leftPrice = publicProductUnitPrice(left)
+		const rightPrice = publicProductUnitPrice(right)
     const priceDifference = priceOrder === 'desc' ? rightPrice - leftPrice : leftPrice - rightPrice
     if (priceDifference !== 0) return priceDifference
 
@@ -76,21 +98,22 @@ export function filterAndSortPublicProducts(
 }
 
 export function livePublicProductAvailability(
-  response: any,
-  fallbackStock?: number
+	response: any
 ): LivePublicProductAvailability {
   const data = response?.data
   if (response?.code === 1 && data) {
     const rawStatus = data.status
-    if (rawStatus !== undefined && rawStatus !== null && Number(rawStatus) !== 1) return 'unavailable'
+		if (rawStatus === undefined || rawStatus === null || rawStatus === '') return 'unknown'
+		const status = normalizeLiveStatus(rawStatus)
+		if (status !== 'available') return status
 
     const rawStock = data.extend?.stock_count
-    let stock = Number(fallbackStock)
-    if (rawStock !== undefined && rawStock !== null && rawStock !== '') {
-      stock = Number(rawStock)
-    }
-    const minimumQuantity = normalizeMinimumQuantity(data.extend?.limit_count)
-    if (Number.isFinite(stock) && stock < minimumQuantity) return 'unavailable'
+		const rawMinimumQuantity = data.extend?.limit_count
+		const stock = normalizeAPINumber(rawStock)
+		const minimumQuantity = normalizeAPINumber(rawMinimumQuantity)
+		if (stock === null || minimumQuantity === null || !Number.isInteger(stock) || stock < 0
+			|| !Number.isInteger(minimumQuantity) || minimumQuantity < 1) return 'unknown'
+		if (stock < minimumQuantity) return 'unavailable'
     return 'available'
   }
 
@@ -105,6 +128,43 @@ export function livePublicProductAvailability(
   return response?.code === 0 && explicitlyUnavailable ? 'unavailable' : 'unknown'
 }
 
+export function livePublicProductMinimumQuantity(data: any): number | null {
+  const stock = normalizeAPINumber(data?.extend?.stock_count)
+  const minimumQuantity = normalizeAPINumber(data?.extend?.limit_count)
+  if (stock === null || minimumQuantity === null || !Number.isInteger(stock) || stock < 0
+    || !Number.isInteger(minimumQuantity) || minimumQuantity < 1 || stock < minimumQuantity) {
+    return null
+  }
+  return minimumQuantity
+}
+
+export function livePublicProductQuoteAvailability(response: any): LivePublicProductAvailability {
+  if (response?.code !== 1) {
+    return livePublicProductAvailability(response)
+  }
+  if (!response.data || typeof response.data !== 'object') return 'unknown'
+  if (response.data.status !== undefined) {
+    const status = normalizeLiveStatus(response.data.status)
+    if (status !== 'available') return status
+  }
+  const totalAmount = normalizeAPINumber(response.data.total_amount)
+  return totalAmount !== null && totalAmount >= 0 ? 'available' : 'unknown'
+}
+
+export function selectLivePublicProductPaymentChannel(channels: any[]): any | null {
+  if (!Array.isArray(channels)) return null
+  const valid = channels.filter((channel) => {
+    if (!channel || (typeof channel.id !== 'number' && typeof channel.id !== 'string')) return false
+    if (String(channel.id).trim() === '' || channel.enabled === false || channel.disabled === true) return false
+    return channel.status === undefined || normalizeLiveStatus(channel.status) === 'available'
+  })
+  return valid.find((channel) => (
+    channel.is_default === true || Number(channel.is_default) === 1
+    || channel.default === true || Number(channel.default) === 1
+    || channel.isDefault === true || channel.selected === true
+  )) || valid[0] || null
+}
+
 export function publicProductGoodsKey(productURL: string): string {
   try {
     const parsed = new URL(productURL)
@@ -114,35 +174,5 @@ export function publicProductGoodsKey(productURL: string): string {
     return match ? decodeURIComponent(match[1]) : ''
   } catch {
     return ''
-  }
-}
-
-export function normalizeLivePublicProduct(
-  product: PublicAccountImportProduct,
-  data: any,
-  verifiedAt = new Date()
-): LivePublicProductSnapshot | null {
-  if (!data || data.price === undefined || data.price === null) return null
-  const price = Number(data.price)
-  const rawMarketPrice = Number(data.market_price)
-  const rawStock = data.extend?.stock_count
-  const reportedStock = rawStock === undefined || rawStock === null || rawStock === ''
-    ? Number.NaN
-    : Number(rawStock)
-  const stock = Number.isFinite(reportedStock) ? reportedStock : product.stock
-  const minimumQuantity = normalizeMinimumQuantity(
-    data.extend?.limit_count ?? product.minimum_quantity
-  )
-  if (!Number.isFinite(price) || price < 0 || price > 1_000_000 || stock < minimumQuantity) return null
-
-  const marketPrice = Number.isFinite(rawMarketPrice) && rawMarketPrice >= 0 && rawMarketPrice <= 1_000_000
-    ? rawMarketPrice
-    : product.market_price
-  return {
-    price,
-    marketPrice,
-    stock,
-    minimumQuantity,
-    updatedAt: verifiedAt.toISOString(),
   }
 }

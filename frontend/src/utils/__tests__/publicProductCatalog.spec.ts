@@ -3,8 +3,10 @@ import type { PublicAccountImportProduct } from '@/api/publicAccountImport'
 import {
   filterAndSortPublicProducts,
   livePublicProductAvailability,
-  normalizeLivePublicProduct,
-  publicProductGoodsKey,
+	livePublicProductQuoteAvailability,
+	publicProductPayablePrice,
+	publicProductGoodsKey,
+	publicProductUnitPrice,
 } from '../publicProductCatalog'
 
 const product: PublicAccountImportProduct = {
@@ -16,6 +18,8 @@ const product: PublicAccountImportProduct = {
   url: 'https://pay.ldxp.cn/item/abc123',
   goods_type: 'card',
   price: 1.3,
+	payable_price: 2.4,
+	unit_price: 1.2,
   market_price: 2,
   stock: 8,
   minimum_quantity: 1,
@@ -26,13 +30,20 @@ function createProduct(
   id: string,
   overrides: Partial<PublicAccountImportProduct> = {}
 ): PublicAccountImportProduct {
-  return {
+	const result = {
     ...product,
     id,
     name: `Product ${id}`,
     url: `https://pay.ldxp.cn/item/${id}`,
     ...overrides,
   }
+	if (overrides.price !== undefined && overrides.unit_price === undefined) {
+		result.unit_price = overrides.price
+	}
+	if (overrides.price !== undefined && overrides.payable_price === undefined) {
+		result.payable_price = overrides.price
+	}
+	return result
 }
 
 describe('filterAndSortPublicProducts', () => {
@@ -63,12 +74,12 @@ describe('filterAndSortPublicProducts', () => {
     { label: 'deduplicates keywords', query: 'alpha alpha cloud', expected: ['product-name'] },
     { label: 'requires every keyword to match', query: 'alpha missing', expected: [] },
   ])('$label', ({ query, expected }) => {
-    const result = filterAndSortPublicProducts(matchingCatalog, query, 'asc', new Map())
+		const result = filterAndSortPublicProducts(matchingCatalog, query, 'asc')
     expect(result.map(({ id }) => id)).toEqual(expected)
   })
 
   it('does not match shop names, categories, or product types', () => {
-    const result = filterAndSortPublicProducts(matchingCatalog, 'k12', 'asc', new Map())
+		const result = filterAndSortPublicProducts(matchingCatalog, 'k12', 'asc')
     expect(result).toEqual([])
   })
 
@@ -79,7 +90,7 @@ describe('filterAndSortPublicProducts', () => {
       createProduct('legitimate-negative-detail', { name: 'GPT Plus Account - 非日抛', price: 4 }),
     ]
 
-    const result = filterAndSortPublicProducts(catalog, 'plus -非plus', 'asc', new Map())
+		const result = filterAndSortPublicProducts(catalog, 'plus -非plus', 'asc')
     expect(result.map(({ id }) => id)).toEqual(['legitimate-negative-detail', 'positive'])
   })
 
@@ -91,9 +102,9 @@ describe('filterAndSortPublicProducts', () => {
       createProduct('k12', { name: 'GPT K12 Account', price: 4 }),
     ]
 
-    expect(filterAndSortPublicProducts(catalog, 'plus -free -proxy', 'asc', new Map()).map(({ id }) => id))
+		expect(filterAndSortPublicProducts(catalog, 'plus -free -proxy', 'asc').map(({ id }) => id))
       .toEqual(['account'])
-    expect(filterAndSortPublicProducts(catalog, '-free -proxy', 'asc', new Map()).map(({ id }) => id))
+		expect(filterAndSortPublicProducts(catalog, '-free -proxy', 'asc').map(({ id }) => id))
       .toEqual(['account', 'k12'])
   })
 
@@ -103,7 +114,7 @@ describe('filterAndSortPublicProducts', () => {
       createProduct('shop-match', { name: 'GPT Plus Account', shop_name: 'Free Shop', price: 2 }),
     ]
 
-    const result = filterAndSortPublicProducts(catalog, 'plus －ＦＲＥＥ', 'asc', new Map())
+		const result = filterAndSortPublicProducts(catalog, 'plus －ＦＲＥＥ', 'asc')
     expect(result.map(({ id }) => id)).toEqual(['shop-match'])
   })
 
@@ -115,7 +126,7 @@ describe('filterAndSortPublicProducts', () => {
       createProduct('cheapest', { name: 'Budget K12 Account', price: 1 }),
     ]
 
-    const result = filterAndSortPublicProducts(catalog, 'k12', 'asc', new Map())
+		const result = filterAndSortPublicProducts(catalog, 'k12', 'asc')
     expect(result.map(({ id }) => id)).toEqual([
       'cheapest',
       'name-substring',
@@ -124,21 +135,19 @@ describe('filterAndSortPublicProducts', () => {
     ])
   })
 
-  it('uses current sort prices to order matches in either direction', () => {
+	it('uses authoritative unit prices to order matches in either direction', () => {
     const catalog = [
       createProduct('low', { name: 'Match Zeta', price: 100 }),
       createProduct('high', { name: 'Match Alpha', price: 100 }),
       createProduct('middle', { name: 'Match Beta', price: 100 }),
     ]
-    const sortPrices = new Map([
-      ['low', 5],
-      ['high', 30],
-      ['middle', 10],
-    ])
+		catalog[0].unit_price = 5
+		catalog[1].unit_price = 30
+		catalog[2].unit_price = 10
 
-    expect(filterAndSortPublicProducts(catalog, 'match', 'desc', sortPrices).map(({ id }) => id))
+		expect(filterAndSortPublicProducts(catalog, 'match', 'desc').map(({ id }) => id))
       .toEqual(['high', 'middle', 'low'])
-    expect(filterAndSortPublicProducts(catalog, 'match', 'asc', sortPrices).map(({ id }) => id))
+		expect(filterAndSortPublicProducts(catalog, 'match', 'asc').map(({ id }) => id))
       .toEqual(['low', 'middle', 'high'])
   })
 
@@ -148,9 +157,9 @@ describe('filterAndSortPublicProducts', () => {
       createProduct('same-price-b', { name: 'Item 10', price: 20 }),
       createProduct('same-price-a', { name: 'Item 2', price: 20 }),
     ]
-    const sortPrices = new Map([['lower-cached-price', 30]])
+		catalog[0].unit_price = 30
 
-    const result = filterAndSortPublicProducts(catalog, '  　\t ', 'desc', sortPrices)
+		const result = filterAndSortPublicProducts(catalog, '  　\t ', 'desc')
     expect(result.map(({ id }) => id)).toEqual([
       'lower-cached-price',
       'same-price-a',
@@ -173,7 +182,7 @@ describe('filterAndSortPublicProducts', () => {
     ]
     const originalValue = JSON.stringify(catalog)
 
-    const result = filterAndSortPublicProducts(catalog, 'shared', 'asc', new Map())
+		const result = filterAndSortPublicProducts(catalog, 'shared', 'asc')
 
     expect(result.map(({ id }) => id)).toEqual(['a', 'b', 'c'])
     expect(result).not.toBe(catalog)
@@ -192,39 +201,25 @@ describe('publicProductGoodsKey', () => {
   })
 })
 
-describe('normalizeLivePublicProduct', () => {
-  it('uses the live detail price and stock', () => {
-    const verifiedAt = new Date('2026-07-14T10:00:00Z')
-    expect(normalizeLivePublicProduct(product, {
-      price: '0.75',
-      market_price: '1',
-      extend: { stock_count: 20 },
-    }, verifiedAt)).toEqual({
-      price: 0.75,
-      marketPrice: 1,
-      stock: 20,
-      minimumQuantity: 1,
-      updatedAt: '2026-07-14T10:00:00.000Z',
-    })
-  })
+describe('authoritative catalog prices', () => {
+	it('uses payable price for display and unit price for sorting', () => {
+		expect(publicProductPayablePrice(product)).toBe(2.4)
+		expect(publicProductUnitPrice(product)).toBe(1.2)
+	})
 
-  it('keeps cached stock when the detail response omits it', () => {
-    expect(normalizeLivePublicProduct(product, { price: 1 })).toMatchObject({ stock: 8 })
-  })
-
-  it('rejects missing prices and unavailable stock', () => {
-    expect(normalizeLivePublicProduct(product, { extend: { stock_count: 2 } })).toBeNull()
-    expect(normalizeLivePublicProduct(product, { price: 1, extend: { stock_count: 0 } })).toBeNull()
-    expect(normalizeLivePublicProduct(product, {
-      price: 1,
-      extend: { limit_count: 50 },
-    })).toBeNull()
-  })
+	it('derives unit price from payable price and falls back to the legacy list price', () => {
+		expect(publicProductUnitPrice({ ...product, unit_price: undefined, payable_price: 6, minimum_quantity: 3 })).toBe(2)
+		expect(publicProductUnitPrice({ ...product, unit_price: undefined, payable_price: undefined, price: 7 })).toBe(7)
+		expect(publicProductPayablePrice({ ...product, payable_price: null as any, price: 7 })).toBe(7)
+	})
 })
 
 describe('livePublicProductAvailability', () => {
   it('recognizes available and explicitly unavailable products', () => {
-    expect(livePublicProductAvailability({ code: 1, data: { status: 1, price: 1 } })).toBe('available')
+		expect(livePublicProductAvailability({
+			code: 1,
+			data: { status: 1, extend: { stock_count: 2, limit_count: 1 } },
+		})).toBe('available')
     expect(livePublicProductAvailability({
       code: 0,
       msg: '商品未上架，如有疑问请联系商家',
@@ -232,12 +227,12 @@ describe('livePublicProductAvailability', () => {
     })).toBe('unavailable')
     expect(livePublicProductAvailability({
       code: 1,
-      data: { status: 1, price: 1, extend: { stock_count: 0 } },
+			data: { status: 1, extend: { stock_count: 0, limit_count: 1 } },
     })).toBe('unavailable')
     expect(livePublicProductAvailability({
       code: 1,
-      data: { status: 1, price: 1, extend: { limit_count: 50 } },
-    }, 7)).toBe('unavailable')
+			data: { status: 1, extend: { stock_count: 7, limit_count: 50 } },
+		})).toBe('unavailable')
     expect(livePublicProductAvailability({
       code: 0,
       msg: '库存不足，无法购买',
@@ -250,15 +245,21 @@ describe('livePublicProductAvailability', () => {
     })).toBe('unavailable')
   })
 
-  it('accepts a successful read-only quote without stock fields', () => {
-    expect(livePublicProductAvailability({
-      code: 1,
-      data: { original_amount: 1, total_amount: 1 },
-    })).toBe('available')
-  })
+	it('accepts a successful read-only quote only through total_amount validation', () => {
+		expect(livePublicProductQuoteAvailability({
+			code: 1,
+			data: { original_amount: 1, total_amount: 1 },
+		})).toBe('available')
+		expect(livePublicProductQuoteAvailability({ code: 1, data: {} })).toBe('unknown')
+		expect(livePublicProductQuoteAvailability({ code: 1, data: { total_amount: null } })).toBe('unknown')
+		expect(livePublicProductQuoteAvailability({ code: 1, data: { status: 'invalid', total_amount: 1 } })).toBe('unknown')
+	})
 
   it('does not mistake transient API failures for delisted products', () => {
     expect(livePublicProductAvailability({ code: 0, msg: '请求频繁，请稍后重试', data: null })).toBe('unknown')
-    expect(livePublicProductAvailability({ code: 1, data: null })).toBe('unknown')
+		expect(livePublicProductAvailability({ code: 1, data: null })).toBe('unknown')
+		expect(livePublicProductAvailability({ code: 1, data: { status: 1, extend: {} } })).toBe('unknown')
+		expect(livePublicProductAvailability({ code: 1, data: { status: 'invalid', extend: { stock_count: 1, limit_count: 1 } } })).toBe('unknown')
+		expect(livePublicProductAvailability({ code: 1, data: { status: 1, extend: { stock_count: null, limit_count: 1 } } })).toBe('unknown')
   })
 })

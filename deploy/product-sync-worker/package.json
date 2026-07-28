@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "test": "node --check index.js && node --test worker-utils.test.js"
+    "test": "node --check index.js && node --check catalog-sync.js && node --test *.test.js"
   },
   "dependencies": {
     "playwright-core": "1.61.1"

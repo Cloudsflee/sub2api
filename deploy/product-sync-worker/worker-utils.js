@@ -1,5 +1,13 @@
 const supportedProxyProtocols = new Set(['http:', 'https:', 'socks5:'])
 
+class ShopSyncError extends Error {
+  constructor(kind, message) {
+    super(message)
+    this.name = 'ShopSyncError'
+    this.kind = kind
+  }
+}
+
 function parsePositiveMilliseconds(value, fallback, name) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -12,9 +20,7 @@ function parsePositiveMilliseconds(value, fallback, name) {
 function parseSyncConcurrency(value, fallback = 2) {
   if (value === undefined || value === null || value === '') return fallback
   const parsed = Number(value)
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 5) {
-    throw new Error('PRODUCT_SYNC_CONCURRENCY must be an integer between 1 and 5')
-  }
+  if (parsed !== 2) throw new Error('PRODUCT_SYNC_CONCURRENCY must be 2')
   return parsed
 }
 
@@ -56,19 +62,260 @@ function isVerificationPageState(state) {
     || value.includes('滑动验证')
 }
 
-function isCatalogProductPurchasable(product) {
-  const stock = Number(product?.stock)
-  const minimumQuantity = Number(product?.minimum_quantity)
-  return Number.isInteger(stock)
-    && Number.isInteger(minimumQuantity)
-    && minimumQuantity > 0
-    && stock >= minimumQuantity
+function unavailableMessage(value) {
+  const message = String(value || '').toLowerCase()
+  return /商品.*(?:不存在|未上架|下架|售罄|删除)/.test(message)
+    || /(?:库存|存货).*(?:不足|不够|售罄|无货)/.test(message)
+    || /(?:低于|小于).*成本价.*(?:无法|不能|不可)?.*购买/.test(message)
+    || /(?:无法|不能|不可).*购买.*(?:库存|成本价)/.test(message)
+    || /(?:product|goods).*(?:not found|unavailable|off shelf|sold out|deleted)/.test(message)
+    || /(?:insufficient|not enough|out of) stock/.test(message)
+    || /(?:below|lower than).*(?:cost|cost price)/.test(message)
+}
+
+function normalizeNonNegativeInteger(value) {
+  if (value === null || value === undefined || typeof value === 'boolean'
+    || (typeof value === 'string' && value.trim() === '')) return null
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null
+}
+
+function normalizePositiveInteger(value) {
+  if (value === null || value === undefined || typeof value === 'boolean'
+    || (typeof value === 'string' && value.trim() === '')) return null
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+function normalizeNonNegativeAmount(value) {
+  if (value === null || value === undefined || typeof value === 'boolean'
+    || (typeof value === 'string' && value.trim() === '')) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+function normalizeGoodsStatus(value) {
+  if (value === true || value === 1 || value === '1') return 'available'
+  if (value === false || value === 0 || value === '0') return 'unavailable'
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (['active', 'enabled', 'on_sale', 'onsale', 'selling'].includes(normalized)) return 'available'
+  if (['inactive', 'disabled', 'off_sale', 'offsale', 'sold_out', 'deleted'].includes(normalized)) return 'unavailable'
+  return 'unknown'
+}
+
+function catalogProductState(item, fallbackGoodsType) {
+  const goodsKey = String(item?.goods_key || '').trim()
+  if (!goodsKey || goodsKey.length > 100) {
+    return { state: 'unknown', reason: 'catalog item has no valid goods_key' }
+  }
+  const status = normalizeGoodsStatus(item?.status ?? item?.extend?.status)
+  if (status === 'unknown') return { state: 'unknown', reason: `catalog item ${goodsKey} has no valid status` }
+  if (status === 'unavailable') return { state: 'unavailable', goodsKey }
+
+  const stock = normalizeNonNegativeInteger(item?.extend?.stock_count)
+  const minimumQuantity = normalizePositiveInteger(item?.extend?.limit_count)
+  if (stock === null || minimumQuantity === null) {
+    return { state: 'unknown', reason: `catalog item ${goodsKey} has invalid stock or minimum quantity` }
+  }
+  if (stock < minimumQuantity) return { state: 'unavailable', goodsKey }
+
+  const name = String(item?.name || '').trim()
+  const url = String(item?.link || '').trim()
+  const goodsType = String(item?.goods_type || fallbackGoodsType || '').trim().toLowerCase()
+  const price = normalizeNonNegativeAmount(item?.price)
+  const marketPrice = item?.market_price === undefined || item?.market_price === null || item?.market_price === ''
+    ? 0
+    : normalizeNonNegativeAmount(item.market_price)
+  if (!name || !url || !['card', 'article', 'resource', 'equity'].includes(goodsType) || price === null || marketPrice === null) {
+    return { state: 'unknown', reason: `catalog item ${goodsKey} is missing required fields` }
+  }
+
+  return {
+    state: 'candidate',
+    goodsKey,
+    product: {
+      goods_key: goodsKey,
+      name,
+      url,
+      image: String(item?.image || '').trim(),
+      category: String(item?.category?.name || '').trim(),
+      goods_type: goodsType,
+      price,
+      market_price: marketPrice,
+      stock,
+      minimum_quantity: minimumQuantity,
+    },
+  }
+}
+
+function channelIsValid(channel) {
+  if (!channel || typeof channel !== 'object') return false
+  const id = channel.id
+  if ((typeof id !== 'string' && typeof id !== 'number') || String(id).trim() === '') return false
+  if (channel.enabled === false || channel.disabled === true) return false
+  if (channel.status !== undefined && normalizeGoodsStatus(channel.status) !== 'available') return false
+  return true
+}
+
+function channelIsDefault(channel) {
+  return channel.is_default === true || channel.is_default === 1 || channel.is_default === '1'
+    || channel.default === true || channel.default === 1 || channel.default === '1'
+    || channel.isDefault === true || channel.selected === true
+}
+
+function selectPaymentChannel(channels) {
+  if (!Array.isArray(channels)) return null
+  const valid = channels.filter(channelIsValid)
+  return valid.find(channelIsDefault) || valid[0] || null
+}
+
+function quoteResult(payload) {
+  if (!payload || typeof payload !== 'object') return { state: 'unknown', reason: 'quote response is invalid' }
+  if (payload.code !== 1) {
+    return unavailableMessage(payload.msg)
+      ? { state: 'unavailable' }
+      : { state: 'unknown', reason: String(payload.msg || 'quote request failed') }
+  }
+  if (!payload.data || typeof payload.data !== 'object') {
+    return { state: 'unknown', reason: 'quote response has no data' }
+  }
+  if (payload.data.status !== undefined) {
+    const status = normalizeGoodsStatus(payload.data.status)
+    if (status === 'unavailable') return { state: 'unavailable' }
+    if (status === 'unknown') return { state: 'unknown', reason: 'quote response has an invalid status' }
+  }
+  const totalAmount = normalizeNonNegativeAmount(payload.data.total_amount)
+  return totalAmount === null
+    ? { state: 'unknown', reason: 'quote response has no valid total_amount' }
+    : { state: 'available', totalAmount }
+}
+
+function parseShopHTTPResponse(result) {
+  if (!result || typeof result !== 'object') throw new ShopSyncError('unknown', 'shop API returned no response')
+  if (result.status === 429) throw new ShopSyncError('rate_limit', 'shop API returned HTTP 429')
+  const contentType = String(result.contentType || '').toLowerCase()
+  if (!contentType.includes('application/json')) {
+    throw new ShopSyncError('verification', `shop API verification required: HTTP ${result.status || 0}`)
+  }
+  if (!Number.isInteger(result.status) || result.status < 200 || result.status >= 300) {
+    throw new ShopSyncError('unknown', `shop API returned HTTP ${result.status || 0}`)
+  }
+  if (!result.payload || typeof result.payload !== 'object') {
+    throw new ShopSyncError('unknown', 'shop API returned invalid JSON')
+  }
+  return result.payload
+}
+
+function isPressureError(error) {
+  return error?.kind === 'rate_limit' || error?.kind === 'verification'
+}
+
+function pressureBackoffMilliseconds(failureCount, random = Math.random) {
+  const delays = [60_000, 300_000, 900_000]
+  const base = delays[Math.min(Math.max(1, failureCount), delays.length) - 1]
+  const jitter = 0.9 + Math.max(0, Math.min(1, Number(random()))) * 0.2
+  return Math.round(base * jitter)
+}
+
+class TokenBucket {
+  constructor(ratePerSecond, capacity, options = {}) {
+    if (!(ratePerSecond > 0) || !(capacity > 0)) throw new Error('token bucket limits must be positive')
+    this.ratePerMillisecond = ratePerSecond / 1000
+    this.capacity = capacity
+    this.tokens = capacity
+    this.now = options.now || Date.now
+    this.sleep = options.sleep || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
+    this.updatedAt = this.now()
+  }
+
+  async take() {
+    while (true) {
+      const now = this.now()
+      this.tokens = Math.min(this.capacity, this.tokens + Math.max(0, now - this.updatedAt) * this.ratePerMillisecond)
+      this.updatedAt = now
+      if (this.tokens >= 1) {
+        this.tokens -= 1
+        return
+      }
+      await this.sleep(Math.max(1, Math.ceil((1 - this.tokens) / this.ratePerMillisecond)))
+    }
+  }
+}
+
+class Semaphore {
+  constructor(limit) {
+    if (!Number.isInteger(limit) || limit < 1) throw new Error('semaphore limit must be a positive integer')
+    this.limit = limit
+    this.active = 0
+    this.queue = []
+  }
+
+  async acquire() {
+    if (this.active < this.limit) {
+      this.active += 1
+      return
+    }
+    await new Promise((resolve) => this.queue.push(resolve))
+  }
+
+  release() {
+    const next = this.queue.shift()
+    if (next) next()
+    else this.active -= 1
+  }
+
+  async run(task) {
+    await this.acquire()
+    try {
+      return await task()
+    } finally {
+      this.release()
+    }
+  }
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length)
+  let nextIndex = 0
+  let firstError
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (!firstError) {
+      const index = nextIndex
+      nextIndex += 1
+      if (index >= items.length) return
+      try {
+        results[index] = await mapper(items[index], index)
+      } catch (error) {
+        firstError = error
+      }
+    }
+  })
+  await Promise.all(workers)
+  if (firstError) throw firstError
+  return results
+}
+
+function simulatedTokenBucketDuration(requestCount, ratePerSecond = 3, capacity = 2) {
+  if (!Number.isInteger(requestCount) || requestCount <= 0) return 0
+  return Math.max(0, requestCount - capacity) / ratePerSecond * 1000
 }
 
 module.exports = {
-  isCatalogProductPurchasable,
+  Semaphore,
+  ShopSyncError,
+  TokenBucket,
+  catalogProductState,
+  isPressureError,
   isVerificationPageState,
+  mapWithConcurrency,
+  normalizeNonNegativeInteger,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
+  parseShopHTTPResponse,
   parseSyncConcurrency,
+  pressureBackoffMilliseconds,
+  quoteResult,
+  selectPaymentChannel,
+  simulatedTokenBucketDuration,
+  unavailableMessage,
 }

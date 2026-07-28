@@ -35,7 +35,11 @@ vi.mock('@/api/publicAccountImport', async () => {
   return {
     ...actual,
     getPublicAccountImportGroups: getGroups,
-    getPublicAccountImportProducts: getProducts,
+		getPublicAccountImportProductsWithETag: async (...args: unknown[]) => ({
+			notModified: false,
+			etag: '"catalog"',
+			data: await getProducts(...args),
+		}),
     getPublicAccountImportShops: getShops,
     requestPublicAccountImportProductRefresh: requestRefresh,
     submitPublicAccountImport: submitImport,
@@ -78,6 +82,9 @@ function status(
     shop_id: shopId,
     state,
     updated_at: shopId === 'one' ? '2026-07-27T01:00:00Z' : '',
+		snapshot_state: shopId === 'one' ? 'fresh' : 'pending',
+		snapshot_updated_at: shopId === 'one' ? '2026-07-27T01:00:00Z' : '',
+		snapshot_expires_at: shopId === 'one' ? '2026-07-27T01:30:00Z' : '',
     retry_after_seconds: retryAfterSeconds,
   }
 }
@@ -90,6 +97,7 @@ function catalog(statuses: PublicAccountImportProductSyncStatus[]): PublicAccoun
     queued_shops: statuses.filter((item) => item.state === 'queued').length,
     refreshing_shops: statuses.filter((item) => item.state === 'refreshing').length,
     failed_shops: statuses.filter((item) => item.state === 'failed').length,
+		expired_shops: statuses.filter((item) => item.snapshot_state === 'expired').length,
     refresh_seconds: 900,
     shop_sync_statuses: statuses,
   }
@@ -138,6 +146,7 @@ describe('PublicAccountImportView per-shop product refresh', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+		vi.restoreAllMocks()
   })
 
   it('shows separate refresh buttons only for supported shops and applies server states', async () => {
@@ -216,6 +225,57 @@ describe('PublicAccountImportView per-shop product refresh', () => {
     expect(refreshButtons(wrapper)[0].attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
+
+	it('polls an idle catalog every sixty seconds', async () => {
+		vi.useFakeTimers()
+		const wrapper = mountView()
+		await flushPromises()
+		expect(getProducts).toHaveBeenCalledTimes(1)
+
+		await vi.advanceTimersByTimeAsync(10_000)
+		expect(getProducts).toHaveBeenCalledTimes(1)
+		await vi.advanceTimersByTimeAsync(50_000)
+		await flushPromises()
+		expect(getProducts).toHaveBeenCalledTimes(2)
+		wrapper.unmount()
+	})
+
+	it('pauses catalog polling while hidden and refreshes immediately when visible', async () => {
+		vi.useFakeTimers()
+		let hidden = false
+		vi.spyOn(document, 'hidden', 'get').mockImplementation(() => hidden)
+		const wrapper = mountView()
+		await flushPromises()
+		expect(getProducts).toHaveBeenCalledTimes(1)
+
+		hidden = true
+		document.dispatchEvent(new Event('visibilitychange'))
+		await vi.advanceTimersByTimeAsync(60_000)
+		expect(getProducts).toHaveBeenCalledTimes(1)
+
+		hidden = false
+		document.dispatchEvent(new Event('visibilitychange'))
+		await flushPromises()
+		expect(getProducts).toHaveBeenCalledTimes(2)
+		wrapper.unmount()
+	})
+
+	it('does not restart polling when an in-flight catalog request finishes after unmount', async () => {
+		vi.useFakeTimers()
+		let resolveCatalog!: (value: PublicAccountImportProductsResponse) => void
+		getProducts.mockReturnValueOnce(new Promise((resolve) => {
+			resolveCatalog = resolve
+		}))
+		const wrapper = mountView()
+		expect(getProducts).toHaveBeenCalledTimes(1)
+
+		wrapper.unmount()
+		resolveCatalog(catalog([status('one'), status('two')]))
+		await flushPromises()
+		await vi.advanceTimersByTimeAsync(60_000)
+
+		expect(getProducts).toHaveBeenCalledTimes(1)
+	})
 
   it('refreshes shop sync statuses immediately after submitting a new shop', async () => {
     submitShop.mockResolvedValue({

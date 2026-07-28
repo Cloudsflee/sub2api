@@ -90,6 +90,8 @@ services:
       # Anonymous Codex account JSON import portal
       - PUBLIC_ACCOUNT_IMPORT_ENABLED=${PUBLIC_ACCOUNT_IMPORT_ENABLED:-false}
       - PUBLIC_ACCOUNT_IMPORT_GROUP_IDS=${PUBLIC_ACCOUNT_IMPORT_GROUP_IDS:-*}
+      - PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN=${PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN:-}
+      - PUBLIC_ACCOUNT_IMPORT_PRODUCT_STRICT_MODE=${PUBLIC_ACCOUNT_IMPORT_PRODUCT_STRICT_MODE:-false}
 
       # =======================================================================
       # JWT Configuration
@@ -193,6 +195,42 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  # Enable with: docker compose -f docker-compose.local.yml --profile public-account-import up -d
+  product-sync-worker:
+    profiles: ["public-account-import"]
+    image: ${PRODUCT_SYNC_WORKER_IMAGE:-sub2api-product-sync-worker:local}
+    build:
+      context: ./product-sync-worker
+    container_name: sub2api-product-sync-worker
+    restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: 768m
+    pids_limit: 256
+    environment:
+      - BACKEND_URL=http://sub2api:8080
+      - PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN=${PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN:-}
+      - PRODUCT_SYNC_CONCURRENCY=2
+      - PRODUCT_SYNC_PROXY_URL=${PRODUCT_SYNC_PROXY_URL:-}
+      - TZ=${TZ:-Asia/Shanghai}
+    volumes:
+      - ./data/product-sync-worker:/data:Z
+    depends_on:
+      sub2api:
+        condition: service_healthy
+    networks:
+      - sub2api-network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "node", "-e", "const s=JSON.parse(require('fs').readFileSync('/data/status.json'));if(['stopped','stopping'].includes(s.state))process.exit(1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   # ===========================================================================
   # PostgreSQL Database

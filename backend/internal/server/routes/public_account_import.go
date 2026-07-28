@@ -17,6 +17,7 @@ func RegisterPublicAccountImportRoutes(v1 *gin.RouterGroup, h *handler.Handlers,
 		publicImport.POST("/products/refresh", h.Admin.Account.RequestPublicAccountImportProductRefresh)
 		publicImport.POST("/products/sync", h.Admin.Account.SubmitPublicAccountImportProductSync)
 		publicImport.POST("/products/sync-failure", h.Admin.Account.FailPublicAccountImportProductSync)
+		publicImport.POST("/products/sync-heartbeat", h.Admin.Account.HeartbeatPublicAccountImportProductSync)
 		publicImport.POST("", h.Admin.Account.PublicImportCodexSessions)
 	}
 }
