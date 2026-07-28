@@ -80,13 +80,6 @@ function normalizeNonNegativeInteger(value) {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : null
 }
 
-function normalizePositiveInteger(value) {
-  if (value === null || value === undefined || typeof value === 'boolean'
-    || (typeof value === 'string' && value.trim() === '')) return null
-  const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
-}
-
 function normalizeNonNegativeAmount(value) {
   if (value === null || value === undefined || typeof value === 'boolean'
     || (typeof value === 'string' && value.trim() === '')) return null
@@ -120,10 +113,11 @@ function catalogProductState(item, fallbackGoodsType) {
   }
 
   const stock = normalizeNonNegativeInteger(item?.extend?.stock_count)
-  const minimumQuantity = normalizePositiveInteger(item?.extend?.limit_count)
-  if (stock === null || minimumQuantity === null) {
+  const configuredMinimumQuantity = normalizeNonNegativeInteger(item?.extend?.limit_count)
+  if (stock === null || configuredMinimumQuantity === null) {
     return { state: 'unknown', reason: `catalog item ${goodsKey} has invalid stock or minimum quantity` }
   }
+  const minimumQuantity = Math.max(configuredMinimumQuantity, 1)
   if (stock < minimumQuantity) return { state: 'unavailable', goodsKey }
 
   const name = String(item?.name || '').trim()

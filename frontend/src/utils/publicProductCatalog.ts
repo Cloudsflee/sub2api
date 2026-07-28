@@ -24,6 +24,11 @@ function normalizeAPINumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function normalizeLiveMinimumQuantity(value: unknown): number | null {
+	const parsed = normalizeAPINumber(value)
+	return parsed !== null && Number.isInteger(parsed) && parsed >= 0 ? Math.max(parsed, 1) : null
+}
+
 function normalizeLiveStatus(value: unknown): LivePublicProductAvailability {
   if (value === true || value === 1 || value === '1') return 'available'
   if (value === false || value === 0 || value === '0') return 'unavailable'
@@ -110,9 +115,8 @@ export function livePublicProductAvailability(
     const rawStock = data.extend?.stock_count
 		const rawMinimumQuantity = data.extend?.limit_count
 		const stock = normalizeAPINumber(rawStock)
-		const minimumQuantity = normalizeAPINumber(rawMinimumQuantity)
-		if (stock === null || minimumQuantity === null || !Number.isInteger(stock) || stock < 0
-			|| !Number.isInteger(minimumQuantity) || minimumQuantity < 1) return 'unknown'
+		const minimumQuantity = normalizeLiveMinimumQuantity(rawMinimumQuantity)
+		if (stock === null || minimumQuantity === null || !Number.isInteger(stock) || stock < 0) return 'unknown'
 		if (stock < minimumQuantity) return 'unavailable'
     return 'available'
   }
@@ -130,9 +134,8 @@ export function livePublicProductAvailability(
 
 export function livePublicProductMinimumQuantity(data: any): number | null {
   const stock = normalizeAPINumber(data?.extend?.stock_count)
-  const minimumQuantity = normalizeAPINumber(data?.extend?.limit_count)
-  if (stock === null || minimumQuantity === null || !Number.isInteger(stock) || stock < 0
-    || !Number.isInteger(minimumQuantity) || minimumQuantity < 1 || stock < minimumQuantity) {
+  const minimumQuantity = normalizeLiveMinimumQuantity(data?.extend?.limit_count)
+  if (stock === null || minimumQuantity === null || !Number.isInteger(stock) || stock < 0 || stock < minimumQuantity) {
     return null
   }
   return minimumQuantity

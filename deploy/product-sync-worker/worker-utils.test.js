@@ -22,7 +22,9 @@ const {
 
 test('catalogProductState validates status, stock, and minimum quantity from real list shapes', () => {
   const [available, soldOut, disabled] = fixture.goodsList.data.list
-  assert.equal(catalogProductState(available, 'card').state, 'candidate')
+  const availableState = catalogProductState(available, 'card')
+  assert.equal(availableState.state, 'candidate')
+  assert.equal(availableState.product.minimum_quantity, 1)
   assert.equal(catalogProductState(soldOut, 'card').state, 'unavailable')
   assert.equal(catalogProductState(disabled, 'card').state, 'unavailable')
   assert.equal(catalogProductState({ ...available, status: undefined }, 'card').state, 'unknown')
@@ -31,6 +33,7 @@ test('catalogProductState validates status, stock, and minimum quantity from rea
   assert.equal(catalogProductState({ ...available, extend: { ...available.extend, status: 0 } }, 'card').state, 'unavailable')
   assert.equal(catalogProductState({ ...available, extend: {} }, 'card').state, 'unknown')
   assert.equal(catalogProductState({ ...available, extend: { ...available.extend, stock_count: null } }, 'card').state, 'unknown')
+  assert.equal(catalogProductState({ ...available, extend: { ...available.extend, limit_count: -1 } }, 'card').state, 'unknown')
   assert.equal(catalogProductState({ ...available, price: '' }, 'card').state, 'unknown')
 })
 

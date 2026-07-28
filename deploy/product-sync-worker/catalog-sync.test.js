@@ -48,7 +48,7 @@ test('collectAuthoritativeSnapshot uses goodsList totals and publishes one compl
       price: 1.25,
       market_price: 2,
       stock: 8,
-      minimum_quantity: 2,
+      minimum_quantity: 1,
       payable_price: 2.2,
       quote_verified_at: '2026-07-28T02:00:00.000Z',
     }],
@@ -60,7 +60,7 @@ test('collectAuthoritativeSnapshot uses goodsList totals and publishes one compl
   )
   assert.deepEqual(calls.find(({ path: value }) => value.endsWith('/getGoodsPrice')).body, {
     goods_key: 'available-card',
-    quantity: 2,
+    quantity: 1,
     coupon_code: '',
     channel_id: 30,
   })

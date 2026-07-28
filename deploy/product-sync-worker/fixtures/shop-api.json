@@ -24,7 +24,7 @@
           "price": "1.25",
           "market_price": "2.00",
           "category": { "name": "Accounts" },
-          "extend": { "stock_count": "8", "limit_count": "2" }
+          "extend": { "stock_count": "8", "limit_count": "0" }
         },
         {
           "goods_key": "sold-out-card",

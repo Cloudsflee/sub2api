@@ -3,6 +3,7 @@ import type { PublicAccountImportProduct } from '@/api/publicAccountImport'
 import {
   filterAndSortPublicProducts,
   livePublicProductAvailability,
+	livePublicProductMinimumQuantity,
 	livePublicProductQuoteAvailability,
 	publicProductPayablePrice,
 	publicProductGoodsKey,
@@ -220,6 +221,11 @@ describe('livePublicProductAvailability', () => {
 			code: 1,
 			data: { status: 1, extend: { stock_count: 2, limit_count: 1 } },
 		})).toBe('available')
+		expect(livePublicProductAvailability({
+			code: 1,
+			data: { status: 1, extend: { stock_count: 2, limit_count: 0 } },
+		})).toBe('available')
+		expect(livePublicProductMinimumQuantity({ extend: { stock_count: 2, limit_count: 0 } })).toBe(1)
     expect(livePublicProductAvailability({
       code: 0,
       msg: '商品未上架，如有疑问请联系商家',
@@ -261,5 +267,6 @@ describe('livePublicProductAvailability', () => {
 		expect(livePublicProductAvailability({ code: 1, data: { status: 1, extend: {} } })).toBe('unknown')
 		expect(livePublicProductAvailability({ code: 1, data: { status: 'invalid', extend: { stock_count: 1, limit_count: 1 } } })).toBe('unknown')
 		expect(livePublicProductAvailability({ code: 1, data: { status: 1, extend: { stock_count: null, limit_count: 1 } } })).toBe('unknown')
+		expect(livePublicProductAvailability({ code: 1, data: { status: 1, extend: { stock_count: 1, limit_count: -1 } } })).toBe('unknown')
   })
 })

@@ -139,10 +139,10 @@ describe('PublicAccountImportView product click verification', () => {
     const replace = vi.fn()
     const close = vi.fn()
     vi.spyOn(window, 'open').mockReturnValue({ opener: null, location: { replace }, close } as any)
-    vi.stubGlobal('fetch', vi.fn()
+    const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         code: 1,
-        data: { status: 1, user: { token: 'shop-token' }, price: 1000, extend: { stock_count: 8, limit_count: 2 } },
+        data: { status: 1, user: { token: 'shop-token' }, price: 1000, extend: { stock_count: 8, limit_count: 0 } },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         code: 1,
@@ -151,7 +151,8 @@ describe('PublicAccountImportView product click verification', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ code: 1, data: { total_amount: 500 } }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
-      })))
+      }))
+    vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountView()
     await flushPromises()
 
@@ -159,6 +160,7 @@ describe('PublicAccountImportView product click verification', () => {
 
     expect(replace).toHaveBeenCalledWith('https://pay.ldxp.cn/item/goods')
     expect(close).not.toHaveBeenCalled()
+		expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toMatchObject({ quantity: 1 })
     expect(wrapper.text()).toContain('¥4')
     expect(wrapper.text()).not.toContain('¥500')
     wrapper.unmount()
