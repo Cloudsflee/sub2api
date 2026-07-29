@@ -85,8 +85,9 @@ health-restart timer immediately before the live switch.
 
 Deploy the compatible worker image first with the existing two-lane/four-port
 configuration and the new `1.75g` limit. After its health check passes, stop the
-worker, pass the nine-exit proxy gate, atomically update the six-lane variables,
-and recreate only the worker. Within three minutes, `/data/status.json` must
+worker, pass the six-active-exit proxy gate, atomically update the six-lane
+variables, and recreate only the worker. Within three minutes,
+`/data/status.json` must
 report six lanes, six contexts, six pages, a per-lane rate of `0.75`, a
 global rate of `4.5`, and no container restart.
 

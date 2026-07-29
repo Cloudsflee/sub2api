@@ -12,7 +12,7 @@ probe shop tokens, and generated Mihomo configuration outside the repository
 and logs, with root-only permissions. The service account only needs read
 access to the generated configuration and write access to its state directory.
 
-## Nine-exit gate
+## Six-active-exit gate
 
 Probe candidates in subscription order through a separate temporary Mihomo
 instance. Its configuration, subscription credentials, and protected shop
@@ -22,19 +22,21 @@ listeners while selecting candidates and do not print credentials or tokens.
 A candidate qualifies only when all of these checks pass through its listener:
 
 - `https://api.ipify.org` returns a parseable public IP address;
-- the address is different from every already selected exit;
+- primary addresses are different from every already selected primary exit;
 - `https://pay.ldxp.cn/` finishes with HTTP 200;
 - the protected shop API returns JSON.
 
 Prefer six primary exits from different node families. Pair the three fallbacks
 with lanes 1-3 by position, preferring a different family, then a different
 region, then a different IPv4
-`/24` or IPv6 `/48` from the primary. After nine candidates qualify, generate
-the final listeners, validate the Mihomo configuration, back up the active
-configuration, replace it atomically, and restart the dedicated service. Repeat
-all four checks through each final listener. If the final check has fewer than
-nine unique public exits, restore the backup immediately and keep the worker at
-two lanes.
+`/24` or IPv6 `/48` from the primary. Prefer globally distinct fallback IPs,
+but require each fallback only to differ from its paired primary because the
+fallback is inactive until that lane rotates. After all nine endpoints qualify,
+generate the final listeners, validate the Mihomo configuration, back up the
+active configuration, replace it atomically, and restart the dedicated service. Repeat
+all four checks through each final listener. Restore the backup immediately and
+keep the worker at two lanes if the six final primary listeners have fewer than
+six unique public exits or a fallback shares its paired primary IP.
 
 The production worker contract is deliberately bounded:
 
