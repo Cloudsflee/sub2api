@@ -55,13 +55,13 @@ function parseProxyConfiguration(value, name = 'PRODUCT_SYNC_PROXY_URL') {
   }
 }
 
-function parseProxyConfigurations(value, legacyValue) {
+function parseProxyConfigurations(value, legacyValue, name = 'PRODUCT_SYNC_PROXY_URLS') {
   const raw = String(value || '').trim()
   const entries = raw
     ? raw.split(/[\s,]+/).filter(Boolean)
     : String(legacyValue || '').trim() ? [String(legacyValue).trim()] : []
-  if (entries.length > 2) throw new Error('PRODUCT_SYNC_PROXY_URLS supports at most 2 proxies')
-  return entries.map((entry, index) => parseProxyConfiguration(entry, `PRODUCT_SYNC_PROXY_URLS entry ${index + 1}`))
+  if (entries.length > 2) throw new Error(`${name} supports at most 2 proxies`)
+  return entries.map((entry, index) => parseProxyConfiguration(entry, `${name} entry ${index + 1}`))
 }
 
 function proxyLanesForConcurrency(concurrency, configurations) {
@@ -77,6 +77,27 @@ function proxyLanesForConcurrency(concurrency, configurations) {
     throw new Error('PRODUCT_SYNC_PROXY_URLS entries must be distinct')
   }
   return configurations.length > 0 ? configurations : [null]
+}
+
+function proxyPoolsForConcurrency(concurrency, configurations, fallbackConfigurations = []) {
+  const laneProxies = proxyLanesForConcurrency(concurrency, configurations)
+  if (!Array.isArray(fallbackConfigurations)) throw new Error('fallback proxy configurations must be an array')
+  if (fallbackConfigurations.length > 0 && configurations.length === 0) {
+    throw new Error('PRODUCT_SYNC_PROXY_FALLBACK_URLS requires PRODUCT_SYNC_PROXY_URLS')
+  }
+  if (fallbackConfigurations.length > 0 && fallbackConfigurations.length !== concurrency) {
+    throw new Error('PRODUCT_SYNC_PROXY_FALLBACK_URLS count must match PRODUCT_SYNC_CONCURRENCY')
+  }
+
+  const allProxies = [...configurations, ...fallbackConfigurations]
+  const proxyKeys = allProxies.map((proxy) => `${proxy.server}\0${proxy.username}\0${proxy.password}`)
+  if (new Set(proxyKeys).size !== proxyKeys.length) {
+    throw new Error('all product sync proxy endpoints must be distinct')
+  }
+
+  return laneProxies.map((proxy, index) => (
+    fallbackConfigurations[index] ? [proxy, fallbackConfigurations[index]] : [proxy]
+  ))
 }
 
 function isVerificationPageState(state) {
@@ -391,6 +412,7 @@ module.exports = {
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
   proxyLanesForConcurrency,
+  proxyPoolsForConcurrency,
   quoteResult,
   selectPaymentChannel,
   shopRequestError,

@@ -12,11 +12,15 @@ upstream exits have been verified to use different IP addresses:
 ```env
 PRODUCT_SYNC_CONCURRENCY=2
 PRODUCT_SYNC_PROXY_URLS=http://proxy-a.internal:17891,http://proxy-b.internal:17892
+PRODUCT_SYNC_PROXY_FALLBACK_URLS=http://proxy-c.internal:17893,http://proxy-d.internal:17894
 ```
 
 `PRODUCT_SYNC_PROXY_URL` remains supported for a single-lane deployment. Pass
 proxy values to the `product-sync-worker` service without committing secrets.
-The worker writes its lane states, last success, and last error to
+Fallback endpoints are optional, must have the same count as the primary
+endpoints, and all configured endpoints must be distinct. Pools are paired by
+position: lane 1 uses A/C and lane 2 uses B/D. The worker writes its lane
+states, active proxy, last success, and last error to
 `/data/status.json`. Configure the required shared token first:
 
 ```env
@@ -34,16 +38,21 @@ PRODUCT_SYNC_CONCURRENCY=1
 ```
 
 The shared token is required by both the worker and application. Single-lane
-mode uses one persistent Chromium context. Two-lane mode uses one Chromium
-process with two isolated contexts and one page per context. Each lane remains
-on its own proxy for an entire shop, is limited to 1 request/second without a
-burst, and quotes sequentially. Each shop publishes immediately after every
-source product is classified as sellable or explicitly unavailable.
+mode without a fallback uses one persistent Chromium context; a configured
+fallback uses one rotatable isolated context instead. Two-lane mode uses one
+Chromium process with two isolated contexts and one page per context. Each lane
+remains limited to 1 request/second without a burst and quotes sequentially.
+Each shop publishes immediately after every source product is classified as
+sellable or explicitly unavailable.
 
 Jobs send a heartbeat every 30 seconds. Missing heartbeats release a lease
 after 90 seconds, while a single attempt can run for at most 20 minutes. HTTP
 429, verification challenges, proxy failures, and browser transport failures
 back off independently per lane for 1, 5, then 15 minutes with jitter.
+After a completed pressure backoff, a lane with a fallback closes its old
+context before opening one context and one page on the alternate endpoint, then
+continues the same in-memory shop snapshot. The other lane is not restarted or
+sped up, and the worker never has more active contexts than configured lanes.
 Completed batches and idle workers poll again after ten seconds.
 
 The local Compose profile applies a 1 CPU, 768 MiB memory, and 256 PID limit,

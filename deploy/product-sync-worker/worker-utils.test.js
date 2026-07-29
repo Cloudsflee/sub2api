@@ -17,6 +17,7 @@ const {
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
   proxyLanesForConcurrency,
+  proxyPoolsForConcurrency,
   quoteResult,
   selectPaymentChannel,
   shopRequestError,
@@ -254,6 +255,35 @@ test('proxyLanesForConcurrency rejects unsafe concurrency fallback to one exit I
   assert.throws(() => proxyLanesForConcurrency(2, []), /requires two/)
   assert.throws(() => proxyLanesForConcurrency(2, proxies.slice(0, 1)), /count must match/)
   assert.throws(() => proxyLanesForConcurrency(2, [proxies[0], proxies[0]]), /must be distinct/)
+})
+
+test('proxyPoolsForConcurrency creates lane-local fallback pools with four distinct endpoints', () => {
+  const primary = parseProxyConfigurations('http://proxy-a:17891,http://proxy-b:17892')
+  const fallback = parseProxyConfigurations(
+    'http://proxy-c:17893,http://proxy-d:17894',
+    '',
+    'PRODUCT_SYNC_PROXY_FALLBACK_URLS'
+  )
+  assert.deepEqual(
+    proxyPoolsForConcurrency(2, primary, fallback).map((pool) => pool.map((proxy) => proxy.server)),
+    [
+      ['http://proxy-a:17891', 'http://proxy-c:17893'],
+      ['http://proxy-b:17892', 'http://proxy-d:17894'],
+    ]
+  )
+  assert.deepEqual(proxyPoolsForConcurrency(1, [], []), [[null]])
+  assert.throws(
+    () => proxyPoolsForConcurrency(2, primary, fallback.slice(0, 1)),
+    /count must match/
+  )
+  assert.throws(
+    () => proxyPoolsForConcurrency(2, primary, [fallback[0], primary[0]]),
+    /all product sync proxy endpoints must be distinct/
+  )
+  assert.throws(
+    () => proxyPoolsForConcurrency(1, [], fallback.slice(0, 1)),
+    /requires PRODUCT_SYNC_PROXY_URLS/
+  )
 })
 
 test('isVerificationPageState detects the Alibaba ESA challenge', () => {

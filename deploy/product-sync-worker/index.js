@@ -11,7 +11,7 @@ const {
   parseShopHTTPResponse,
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
-  proxyLanesForConcurrency,
+  proxyPoolsForConcurrency,
   shopRequestError,
   withPressureRecovery,
 } = require('./worker-utils')
@@ -33,13 +33,20 @@ const configuredProxies = parseProxyConfigurations(
   process.env.PRODUCT_SYNC_PROXY_URLS,
   process.env.PRODUCT_SYNC_PROXY_URL
 )
-const laneProxies = proxyLanesForConcurrency(syncConcurrency, configuredProxies)
+const configuredFallbackProxies = parseProxyConfigurations(
+  process.env.PRODUCT_SYNC_PROXY_FALLBACK_URLS,
+  '',
+  'PRODUCT_SYNC_PROXY_FALLBACK_URLS'
+)
+const laneProxyPools = proxyPoolsForConcurrency(syncConcurrency, configuredProxies, configuredFallbackProxies)
+const laneProxies = laneProxyPools.map((pool) => pool[0])
+const configuredProxyCount = configuredProxies.length + configuredFallbackProxies.length
 const shopRequestsPerSecond = 1
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 let workerStatus = {
   state: 'starting',
-  proxy_enabled: configuredProxies.length > 0,
-  proxy_count: configuredProxies.length,
+  proxy_enabled: configuredProxyCount > 0,
+  proxy_count: configuredProxyCount,
   started_at: new Date().toISOString(),
 }
 const laneStatuses = Array.from({ length: syncConcurrency }, (_, index) => ({ index, state: 'starting' }))
@@ -173,7 +180,7 @@ async function postShopAPIWithPressureRecovery(lane, shopToken, path, body, dead
       },
       recover: async () => {
         if (stopping) throw new Error('product sync worker is stopping')
-        await initializeShopPage(lane.page, true)
+        await recoverLaneAfterPressure(lane)
         publishLaneStatus(lane, {
           state: 'syncing',
           retry_at: '',
@@ -313,7 +320,7 @@ function browserContextOptions(proxy) {
   }
 }
 
-async function prepareLane(context, index, proxy) {
+async function prepareLaneContext(context, recovery = false) {
   context.setDefaultTimeout(browserProtocolTimeoutMilliseconds)
   await context.addInitScript(() => {
     Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => undefined, configurable: true })
@@ -329,16 +336,66 @@ async function prepareLane(context, index, proxy) {
     await page.close()
   }
   const page = existingPages[0] || await context.newPage()
-  await initializeShopPage(page)
+  await initializeShopPage(page, recovery)
+  return page
+}
+
+async function prepareLane(context, index, proxyPool) {
+  const page = await prepareLaneContext(context)
   return {
     index,
     context,
     page,
-    proxy,
+    proxyPool,
+    proxyIndex: 0,
+    proxy: proxyPool[0],
     pressureState: { failureCount: 0 },
     quoteSemaphore: new Semaphore(1),
     requestLimiter: new TokenBucket(shopRequestsPerSecond, 1),
   }
+}
+
+async function recoverLaneAfterPressure(lane) {
+  if (lane.proxyPool.length < 2) {
+    await initializeShopPage(lane.page, true)
+    return
+  }
+
+  const previousContext = lane.context
+  const previousProxy = lane.proxy
+  const nextProxyIndex = (lane.proxyIndex + 1) % lane.proxyPool.length
+  const nextProxy = lane.proxyPool[nextProxyIndex]
+  lane.context = null
+  lane.page = null
+  lane.proxyIndex = nextProxyIndex
+  lane.proxy = nextProxy
+  activeBrowserContexts[lane.index] = null
+
+  let replacementContext
+  try {
+    await previousContext?.close().catch(() => {})
+    if (stopping) throw new Error('product sync worker is stopping')
+    if (!activeBrowser?.isConnected()) throw new Error('product sync browser is not connected')
+    replacementContext = await activeBrowser.newContext(browserContextOptions(nextProxy))
+    const replacementPage = await prepareLaneContext(replacementContext, true)
+    if (stopping) throw new Error('product sync worker is stopping')
+    lane.context = replacementContext
+    lane.page = replacementPage
+    activeBrowserContexts[lane.index] = replacementContext
+  } catch (error) {
+    await replacementContext?.close().catch(() => {})
+    if (activeBrowserContexts[lane.index] === replacementContext) activeBrowserContexts[lane.index] = null
+    const restartError = error instanceof Error ? error : new Error(String(error))
+    restartError.restartBrowser = true
+    throw restartError
+  }
+
+  console.log(`${new Date().toISOString()} lane ${lane.index + 1} rotated product sync proxy after pressure backoff: ${previousProxy?.server || 'direct'} -> ${nextProxy?.server || 'direct'}`)
+  publishLaneStatus(lane, {
+    proxy_server: nextProxy?.server || '',
+    proxy_pool_position: nextProxyIndex + 1,
+    proxy_rotated_at: new Date().toISOString(),
+  })
 }
 
 async function runLane(lane) {
@@ -370,6 +427,7 @@ async function runLane(lane) {
         })
       } catch (error) {
         console.error(`${new Date().toISOString()} lane ${lane.index + 1} sync failed for ${job.shop_name}: ${errorMessage(error)}`)
+        if (error?.restartBrowser) throw error
         if (!isPressureError(error)) {
           publishLaneStatus(lane, {
             state: 'error',
@@ -392,11 +450,12 @@ async function runLane(lane) {
           })
           console.log(`${new Date().toISOString()} lane ${lane.index + 1} applying product sync pressure backoff for ${Math.round(waitMilliseconds / 1000)} seconds`)
           await sleep(waitMilliseconds)
-          if (error?.kind === 'verification' && !stopping) {
+          if (!stopping) {
             try {
-              await initializeShopPage(lane.page, true)
+              await recoverLaneAfterPressure(lane)
             } catch (recoveryError) {
-              console.error(`${new Date().toISOString()} lane ${lane.index + 1} verification recovery failed: ${errorMessage(recoveryError)}`)
+              console.error(`${new Date().toISOString()} lane ${lane.index + 1} pressure recovery failed: ${errorMessage(recoveryError)}`)
+              if (recoveryError?.restartBrowser) throw recoveryError
             }
           }
           publishLaneStatus(lane, { state: 'idle', retry_at: '' })
@@ -404,6 +463,7 @@ async function runLane(lane) {
       }
       await sleep(activePollMilliseconds)
     } catch (error) {
+      if (error?.restartBrowser) throw error
       console.error(`${new Date().toISOString()} lane ${lane.index + 1} sync polling failed: ${errorMessage(error)}`)
       publishLaneStatus(lane, {
         state: 'error',
@@ -422,7 +482,8 @@ async function runBrowser() {
   const lanes = []
   let browser
   try {
-    if (syncConcurrency === 1) {
+    const usesRotatableContexts = laneProxyPools.some((pool) => pool.length > 1)
+    if (syncConcurrency === 1 && !usesRotatableContexts) {
       fs.mkdirSync(chromeProfileDirectory, { recursive: true })
       for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
         fs.rmSync(`${chromeProfileDirectory}/${name}`, { force: true })
@@ -442,8 +503,13 @@ async function runBrowser() {
     activeBrowser = browser
     activeBrowserContexts = contexts
     for (let index = 0; index < contexts.length; index += 1) {
-      lanes.push(await prepareLane(contexts[index], index, laneProxies[index]))
-      publishLaneStatus(lanes[index], { state: 'idle', proxy_server: laneProxies[index]?.server || '' })
+      lanes.push(await prepareLane(contexts[index], index, laneProxyPools[index]))
+      publishLaneStatus(lanes[index], {
+        state: 'idle',
+        proxy_server: laneProxies[index]?.server || '',
+        proxy_pool_position: 1,
+        proxy_pool_size: laneProxyPools[index].length,
+      })
     }
     publishStatus({
       browser_engine: 'playwright',
@@ -456,7 +522,7 @@ async function runBrowser() {
   } finally {
     if (activeBrowser === browser) activeBrowser = undefined
     if (activeBrowserContexts === contexts) activeBrowserContexts = []
-    await Promise.all(contexts.map((context) => context.close().catch(() => {})))
+    await Promise.all(contexts.filter(Boolean).map((context) => context.close().catch(() => {})))
     await browser?.close().catch(() => {})
   }
 }
@@ -464,7 +530,7 @@ async function runBrowser() {
 async function main() {
   if (!backendToken) throw new Error('PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN is required')
   publishStatus({ state: 'starting' })
-  console.log(`${new Date().toISOString()} product sync worker starting; proxy_lanes=${configuredProxies.length}`)
+  console.log(`${new Date().toISOString()} product sync worker starting; proxy_lanes=${configuredProxies.length}; proxy_endpoints=${configuredProxyCount}`)
   let browserPressureFailures = 0
   while (!stopping) {
     try {
@@ -488,7 +554,7 @@ async function shutdown(signal) {
   stopping = true
   publishStatus({ state: 'stopping', stop_signal: signal })
   try {
-    await Promise.all(activeBrowserContexts.map((context) => context.close().catch(() => {})))
+    await Promise.all(activeBrowserContexts.filter(Boolean).map((context) => context.close().catch(() => {})))
     await activeBrowser?.close().catch(() => {})
   } catch (error) {
     console.error(`${new Date().toISOString()} browser shutdown failed: ${errorMessage(error)}`)
