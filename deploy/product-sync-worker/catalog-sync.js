@@ -12,7 +12,7 @@ const PRODUCT_SCHEMA_VERSION = 2
 const GOODS_TYPES = ['card', 'article', 'resource', 'equity']
 const PAGE_SIZE = 100
 const MAX_PRODUCTS = 1000
-const QUOTE_CONCURRENCY = 2
+const QUOTE_CONCURRENCY = 1
 
 function requireSuccessfulPayload(payload, label) {
   if (!payload || payload.code !== 1 || !payload.data || typeof payload.data !== 'object') {

@@ -30,7 +30,7 @@ const statusFile = process.env.STATUS_FILE || '/data/status.json'
 const proxy = parseProxyConfiguration(process.env.PRODUCT_SYNC_PROXY_URL)
 const shopRequestsPerSecond = 1
 const shopRequestLimiter = new TokenBucket(shopRequestsPerSecond, 1)
-const quoteSemaphore = new Semaphore(2)
+const quoteSemaphore = new Semaphore(1)
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 let workerStatus = {
   state: 'starting',
@@ -282,7 +282,7 @@ async function runBrowser() {
     active_jobs: 0,
     browser_engine: 'playwright',
     sync_concurrency: syncConcurrency,
-    quote_concurrency: 2,
+    quote_concurrency: 1,
     request_rate_per_second: shopRequestsPerSecond,
     browser_started_at: new Date().toISOString(),
   })

@@ -175,7 +175,7 @@ test('collectAuthoritativeSnapshot aborts the whole shop on invalid explicit sta
   }), /total_amount/)
 })
 
-test('collectAuthoritativeSnapshot limits quote concurrency to two', async () => {
+test('collectAuthoritativeSnapshot processes quotes sequentially', async () => {
   const count = 6
   const base = fixture.goodsList.data.list[0]
   const list = clone(fixture.goodsList)
@@ -205,7 +205,7 @@ test('collectAuthoritativeSnapshot limits quote concurrency to two', async () =>
     },
   })
   assert.equal(channelCalls, 1)
-  assert.equal(maximumActiveQuotes, 2)
+  assert.equal(maximumActiveQuotes, 1)
 })
 
 test('collectAuthoritativeSnapshot fully paginates stable list totals', async () => {

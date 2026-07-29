@@ -18,10 +18,10 @@ function parsePositiveMilliseconds(value, fallback, name) {
   return Math.floor(parsed)
 }
 
-function parseSyncConcurrency(value, fallback = 2) {
+function parseSyncConcurrency(value, fallback = 1) {
   if (value === undefined || value === null || value === '') return fallback
   const parsed = Number(value)
-  if (parsed !== 2) throw new Error('PRODUCT_SYNC_CONCURRENCY must be 2')
+  if (parsed !== 1) throw new Error('PRODUCT_SYNC_CONCURRENCY must be 1')
   return parsed
 }
 

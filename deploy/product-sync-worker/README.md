@@ -27,14 +27,14 @@ SHOP_REQUEST_TIMEOUT_MILLISECONDS=20000
 BROWSER_PROTOCOL_TIMEOUT_MILLISECONDS=45000
 BACKEND_REQUEST_TIMEOUT_MILLISECONDS=10000
 CHROME_PROFILE_DIRECTORY=/data/chrome-profile
-PRODUCT_SYNC_CONCURRENCY=2
+PRODUCT_SYNC_CONCURRENCY=1
 ```
 
 The shared token is required by both the worker and application. The worker
-uses one persistent Chromium context with exactly two pages. Shop requests are
-globally limited to 1 request/second without a burst, and quote requests
-have a global concurrency of two. A shop publishes only after every source
-product is classified as sellable or explicitly unavailable.
+uses one persistent Chromium context with exactly one page and processes one
+shop at a time. Shop requests are globally limited to 1 request/second without
+a burst, and quote requests are sequential. Each shop publishes immediately
+after every source product is classified as sellable or explicitly unavailable.
 
 Jobs send a heartbeat every 30 seconds. Missing heartbeats release a lease
 after 90 seconds, while a single attempt can run for at most 20 minutes. HTTP
