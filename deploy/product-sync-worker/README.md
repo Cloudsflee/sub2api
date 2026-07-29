@@ -32,15 +32,15 @@ PRODUCT_SYNC_CONCURRENCY=2
 
 The shared token is required by both the worker and application. The worker
 uses one persistent Chromium context with exactly two pages. Shop requests are
-globally limited to 2 requests/second with a burst of two, and quote requests
+globally limited to 1 request/second without a burst, and quote requests
 have a global concurrency of two. A shop publishes only after every source
 product is classified as sellable or explicitly unavailable.
 
 Jobs send a heartbeat every 30 seconds. Missing heartbeats release a lease
 after 90 seconds, while a single attempt can run for at most 20 minutes. HTTP
 429, verification challenges, and browser transport failures back off for 1,
-5, then 15 minutes with jitter. Completed batches poll again after one second;
-idle workers poll every ten seconds.
+5, then 15 minutes with jitter. Completed batches and idle workers poll again
+after ten seconds.
 
 The local Compose profile applies a 1 CPU, 768 MiB memory, and 256 PID limit,
 plus `10 MiB x 3` JSON log rotation:

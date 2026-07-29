@@ -102,10 +102,10 @@ test('shopRequestError classifies browser transport failures as pressure errors'
   assert.equal(isPressureError(applicationError), false)
 })
 
-test('TokenBucket enforces two requests per second with a capacity of two', async () => {
+test('TokenBucket enforces one request per second without a burst', async () => {
   let now = 0
   const waits = []
-  const bucket = new TokenBucket(2, 2, {
+  const bucket = new TokenBucket(1, 1, {
     now: () => now,
     sleep: async (milliseconds) => {
       waits.push(milliseconds)
@@ -113,10 +113,9 @@ test('TokenBucket enforces two requests per second with a capacity of two', asyn
     },
   })
   await bucket.take()
-  await bucket.take()
   assert.equal(now, 0)
   await bucket.take()
-  assert.equal(now, 500)
+  assert.equal(now, 1_000)
   assert.equal(waits.length, 1)
 })
 
@@ -131,10 +130,10 @@ test('55-shop pressure simulation stays bounded for 2725 products and a 647-prod
   assert.equal(shopCounts.length, 55)
   assert.equal(shopCounts.reduce((sum, count) => sum + count, 0), 2725)
   assert.equal(Math.max(...shopCounts), 647)
-  assert.ok(simulatedTokenBucketDuration(2725) > 22 * 60_000)
-  assert.ok(simulatedTokenBucketDuration(2725) < 23 * 60_000)
-  assert.ok(simulatedTokenBucketDuration(647) > 5 * 60_000)
-  assert.ok(simulatedTokenBucketDuration(647) < 6 * 60_000)
+  assert.ok(simulatedTokenBucketDuration(2725) > 45 * 60_000)
+  assert.ok(simulatedTokenBucketDuration(2725) < 46 * 60_000)
+  assert.ok(simulatedTokenBucketDuration(647) > 10 * 60_000)
+  assert.ok(simulatedTokenBucketDuration(647) < 11 * 60_000)
 })
 
 test('pressure backoff uses one, five, and fifteen minute tiers with bounded jitter', () => {

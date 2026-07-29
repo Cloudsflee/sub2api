@@ -17,7 +17,7 @@ const {
 const backendURL = process.env.BACKEND_URL || 'http://sub2api:8080'
 const backendToken = String(process.env.PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN || '').trim()
 const idlePollMilliseconds = 10_000
-const activePollMilliseconds = 1_000
+const activePollMilliseconds = 10_000
 const heartbeatMilliseconds = 30_000
 const maxJobMilliseconds = 20 * 60_000
 const shopRequestTimeoutMilliseconds = parsePositiveMilliseconds(process.env.SHOP_REQUEST_TIMEOUT_MILLISECONDS, 20_000, 'SHOP_REQUEST_TIMEOUT_MILLISECONDS')
@@ -28,8 +28,8 @@ const chromePath = process.env.CHROME_PATH || '/usr/bin/chromium-browser'
 const chromeProfileDirectory = process.env.CHROME_PROFILE_DIRECTORY || '/data/chrome-profile'
 const statusFile = process.env.STATUS_FILE || '/data/status.json'
 const proxy = parseProxyConfiguration(process.env.PRODUCT_SYNC_PROXY_URL)
-const shopRequestsPerSecond = 2
-const shopRequestLimiter = new TokenBucket(shopRequestsPerSecond, 2)
+const shopRequestsPerSecond = 1
+const shopRequestLimiter = new TokenBucket(shopRequestsPerSecond, 1)
 const quoteSemaphore = new Semaphore(2)
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 let workerStatus = {
