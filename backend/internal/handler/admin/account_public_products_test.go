@@ -282,6 +282,28 @@ func TestSelectPublicAccountImportProductSyncShopsReservesAutomaticSlot(t *testi
 	require.Equal(t, []PublicAccountImportShop{{ID: "automatic"}}, selected)
 }
 
+func TestSelectPublicAccountImportProductSyncShopsLimitsManualWorkToOneOfFiveSlots(t *testing.T) {
+	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	shops := []PublicAccountImportShop{
+		{ID: "manual-one"}, {ID: "manual-two"},
+		{ID: "automatic-one"}, {ID: "automatic-two"}, {ID: "automatic-three"}, {ID: "automatic-four"},
+	}
+	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+		"manual-one":      {RefreshRequestedAt: now.Add(-2 * time.Minute).Format(time.RFC3339Nano)},
+		"manual-two":      {RefreshRequestedAt: now.Add(-time.Minute).Format(time.RFC3339Nano)},
+		"automatic-one":   {},
+		"automatic-two":   {},
+		"automatic-three": {},
+		"automatic-four":  {},
+	}}
+
+	selected := selectPublicAccountImportProductSyncShops(shops, store, now, 5)
+	require.Len(t, selected, 5)
+	require.Equal(t, []string{"manual-one", "automatic-one", "automatic-two", "automatic-three", "automatic-four"}, []string{
+		selected[0].ID, selected[1].ID, selected[2].ID, selected[3].ID, selected[4].ID,
+	})
+}
+
 func TestPublicAccountImportProductRefreshStatusIncludesAutomaticFailure(t *testing.T) {
 	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
 	shops := []PublicAccountImportShop{{ID: "failed"}}
@@ -388,8 +410,70 @@ func TestCountPublicAccountImportProductActiveSyncsUsesValidLeasesOnly(t *testin
 	}}
 
 	require.Equal(t, 2, countPublicAccountImportProductActiveSyncs(shops, store, now))
-	require.Equal(t, 2, publicAccountImportProductMaxSyncJobs)
-	require.Zero(t, publicAccountImportProductMaxSyncJobs-countPublicAccountImportProductActiveSyncs(shops, store, now))
+	require.Equal(t, 5, publicAccountImportProductMaxSyncJobs)
+	require.Equal(t, 3, publicAccountImportProductMaxSyncJobs-countPublicAccountImportProductActiveSyncs(shops, store, now))
+}
+
+func TestPublicAccountImportProductSyncLeaseHasThirtyMinuteAttemptLimit(t *testing.T) {
+	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	require.Equal(t, 90*time.Second, publicAccountImportProductSyncLeaseAge)
+	require.Equal(t, 30*time.Minute, publicAccountImportProductSyncMaxAge)
+	require.True(t, publicAccountImportProductSyncIsActive(publicAccountImportProductShopCache{
+		SyncStartedAt:   now.Add(-publicAccountImportProductSyncMaxAge).Format(time.RFC3339Nano),
+		SyncHeartbeatAt: now.Format(time.RFC3339Nano),
+	}, now))
+	require.False(t, publicAccountImportProductSyncIsActive(publicAccountImportProductShopCache{
+		SyncStartedAt:   now.Add(-publicAccountImportProductSyncMaxAge - time.Second).Format(time.RFC3339Nano),
+		SyncHeartbeatAt: now.Format(time.RFC3339Nano),
+	}, now))
+}
+
+func TestPublicAccountImportProductSyncLeasesFiveJobsAndWithholdsTheSixth(t *testing.T) {
+	now := time.Now().UTC()
+	shops := make([]PublicAccountImportShop, 0, 6)
+	store := publicAccountImportProductStore{Shops: make(map[string]publicAccountImportProductShopCache, 6)}
+	for index := 1; index <= 6; index++ {
+		shopID := fmt.Sprintf("shop-%d", index)
+		shops = append(shops, PublicAccountImportShop{
+			ID: shopID, Name: shopID, URL: fmt.Sprintf("https://pay.ldxp.cn/shop/token-%d", index),
+		})
+		store.Shops[shopID] = publicAccountImportProductShopCache{
+			SchemaVersion: publicAccountImportProductSchemaVersion,
+			UpdatedAt:     now.Add(-time.Hour).Format(time.RFC3339Nano),
+			Products:      []PublicAccountImportProduct{},
+		}
+	}
+	router := newPublicProductTestRouter(t, shops, store)
+
+	publicProductCacheMu.Lock()
+	publicProductLastJobAt = time.Time{}
+	publicProductCacheMu.Unlock()
+	batch := performPublicProductRequest(t, router, http.MethodGet, "/products/sync-job?limit=6", nil)
+	require.Equal(t, http.StatusOK, batch.Code, batch.Body.String())
+	batchData := decodePublicProductResponse[PublicAccountImportProductSyncJobResponse](t, batch.Body.Bytes())
+	require.Len(t, batchData.Jobs, 5)
+	require.Equal(t, []string{"shop-1", "shop-2", "shop-3", "shop-4", "shop-5"}, []string{
+		batchData.Jobs[0].ShopID, batchData.Jobs[1].ShopID, batchData.Jobs[2].ShopID, batchData.Jobs[3].ShopID, batchData.Jobs[4].ShopID,
+	})
+
+	publicProductCacheMu.Lock()
+	publicProductLastJobAt = time.Time{}
+	publicProductCacheMu.Unlock()
+	full := performPublicProductRequest(t, router, http.MethodGet, "/products/sync-job?limit=6", nil)
+	fullData := decodePublicProductResponse[PublicAccountImportProductSyncJobResponse](t, full.Body.Bytes())
+	require.Nil(t, fullData.Job)
+	require.Empty(t, fullData.Jobs)
+
+	publicProductCacheMu.Lock()
+	expired := publicProductCache.Shops["shop-1"]
+	expired.SyncHeartbeatAt = time.Now().UTC().Add(-publicAccountImportProductSyncLeaseAge - time.Second).Format(time.RFC3339Nano)
+	publicProductCache.Shops["shop-1"] = expired
+	publicProductLastJobAt = time.Time{}
+	publicProductCacheMu.Unlock()
+	released := performPublicProductRequest(t, router, http.MethodGet, "/products/sync-job?limit=6", nil)
+	releasedData := decodePublicProductResponse[PublicAccountImportProductSyncJobResponse](t, released.Body.Bytes())
+	require.Len(t, releasedData.Jobs, 1)
+	require.Equal(t, "shop-6", releasedData.Jobs[0].ShopID)
 }
 
 func TestPublicAccountImportProductSingleShopRefreshFlow(t *testing.T) {

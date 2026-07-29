@@ -21,8 +21,17 @@ function parsePositiveMilliseconds(value, fallback, name) {
 function parseSyncConcurrency(value, fallback = 1) {
   if (value === undefined || value === null || value === '') return fallback
   const parsed = Number(value)
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 2) {
-    throw new Error('PRODUCT_SYNC_CONCURRENCY must be 1 or 2')
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 5) {
+    throw new Error('PRODUCT_SYNC_CONCURRENCY must be between 1 and 5')
+  }
+  return parsed
+}
+
+function parseRequestRatePerLane(value, fallback = 1) {
+  if (value === undefined || value === null || String(value).trim() === '') return fallback
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0.1 || parsed > 1) {
+    throw new Error('PRODUCT_SYNC_REQUEST_RATE_PER_LANE must be between 0.1 and 1')
   }
   return parsed
 }
@@ -60,7 +69,7 @@ function parseProxyConfigurations(value, legacyValue, name = 'PRODUCT_SYNC_PROXY
   const entries = raw
     ? raw.split(/[\s,]+/).filter(Boolean)
     : String(legacyValue || '').trim() ? [String(legacyValue).trim()] : []
-  if (entries.length > 2) throw new Error(`${name} supports at most 2 proxies`)
+  if (entries.length > 5) throw new Error(`${name} supports at most 5 proxies`)
   return entries.map((entry, index) => parseProxyConfiguration(entry, `${name} entry ${index + 1}`))
 }
 
@@ -70,7 +79,7 @@ function proxyLanesForConcurrency(concurrency, configurations) {
     throw new Error('PRODUCT_SYNC_PROXY_URLS count must match PRODUCT_SYNC_CONCURRENCY')
   }
   if (concurrency > 1 && configurations.length === 0) {
-    throw new Error('PRODUCT_SYNC_CONCURRENCY=2 requires two PRODUCT_SYNC_PROXY_URLS entries')
+    throw new Error(`PRODUCT_SYNC_CONCURRENCY=${concurrency} requires ${concurrency} PRODUCT_SYNC_PROXY_URLS entries`)
   }
   const laneKeys = configurations.map((proxy) => `${proxy.server}\0${proxy.username}\0${proxy.password}`)
   if (new Set(laneKeys).size !== laneKeys.length) {
@@ -252,6 +261,9 @@ function quoteResult(payload) {
 function parseShopHTTPResponse(result) {
   if (!result || typeof result !== 'object') throw new ShopSyncError('unknown', 'shop API returned no response')
   if (result.status === 429) throw new ShopSyncError('rate_limit', 'shop API returned HTTP 429')
+  if (result.status === 502 || result.status === 520) {
+    throw new ShopSyncError('network', `shop API returned HTTP ${result.status}`)
+  }
   const contentType = String(result.contentType || '').toLowerCase()
   if (!contentType.includes('application/json')) {
     throw new ShopSyncError('verification', `shop API verification required: HTTP ${result.status || 0}`)
@@ -322,20 +334,56 @@ class TokenBucket {
     this.now = options.now || Date.now
     this.sleep = options.sleep || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
     this.updatedAt = this.now()
+    this.pending = Promise.resolve()
   }
 
-  async take() {
+  take() {
+    const request = this.pending.then(() => this.takeNext())
+    this.pending = request.catch(() => {})
+    return request
+  }
+
+  async takeNext() {
     while (true) {
       const now = this.now()
       this.tokens = Math.min(this.capacity, this.tokens + Math.max(0, now - this.updatedAt) * this.ratePerMillisecond)
       this.updatedAt = now
       if (this.tokens >= 1) {
         this.tokens -= 1
-        return
+        return now
       }
       await this.sleep(Math.max(1, Math.ceil((1 - this.tokens) / this.ratePerMillisecond)))
     }
   }
+}
+
+async function takeRequestTokens(laneLimiter, globalLimiter) {
+  if (!laneLimiter || typeof laneLimiter.take !== 'function') throw new Error('lane request limiter is required')
+  if (!globalLimiter || typeof globalLimiter.take !== 'function') throw new Error('global request limiter is required')
+  await laneLimiter.take()
+  await globalLimiter.take()
+}
+
+async function closeContextThenCreate(previousContext, createContext) {
+  if (typeof createContext !== 'function') throw new Error('replacement context factory is required')
+  await previousContext?.close().catch(() => {})
+  return createContext()
+}
+
+function browserResourceCounts(contexts) {
+  const activeContexts = Array.isArray(contexts) ? contexts.filter(Boolean) : []
+  let pageCount = 0
+  for (const context of activeContexts) {
+    try {
+      const pages = context.pages()
+      pageCount += Array.isArray(pages)
+        ? pages.filter((page) => typeof page?.isClosed !== 'function' || !page.isClosed()).length
+        : 0
+    } catch {
+      // A context can disappear while status is being collected.
+    }
+  }
+  return { contextCount: activeContexts.length, pageCount }
 }
 
 class Semaphore {
@@ -400,7 +448,9 @@ module.exports = {
   Semaphore,
   ShopSyncError,
   TokenBucket,
+  browserResourceCounts,
   catalogProductState,
+  closeContextThenCreate,
   isPressureError,
   isVerificationPageState,
   mapWithConcurrency,
@@ -408,6 +458,7 @@ module.exports = {
   parsePositiveMilliseconds,
   parseProxyConfiguration,
   parseProxyConfigurations,
+  parseRequestRatePerLane,
   parseShopHTTPResponse,
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
@@ -418,6 +469,7 @@ module.exports = {
   shopRequestError,
   shopUnavailableMessage,
   simulatedTokenBucketDuration,
+  takeRequestTokens,
   unavailableMessage,
   withPressureRecovery,
 }

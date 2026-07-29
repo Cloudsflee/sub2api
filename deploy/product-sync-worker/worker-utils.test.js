@@ -4,15 +4,19 @@ const path = require('node:path')
 const test = require('node:test')
 
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'shop-api.json'), 'utf8'))
+const workloadFixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'sync-workload.json'), 'utf8'))
 const {
   ShopSyncError,
   TokenBucket,
+  browserResourceCounts,
   catalogProductState,
+  closeContextThenCreate,
   isPressureError,
   isVerificationPageState,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
   parseProxyConfigurations,
+  parseRequestRatePerLane,
   parseShopHTTPResponse,
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
@@ -23,6 +27,7 @@ const {
   shopRequestError,
   shopUnavailableMessage,
   simulatedTokenBucketDuration,
+  takeRequestTokens,
   withPressureRecovery,
 } = require('./worker-utils')
 
@@ -80,7 +85,7 @@ test('shopUnavailableMessage accepts only explicit permanent shop failures', () 
   assert.equal(shopUnavailableMessage('系统繁忙，请稍后重试'), false)
 })
 
-test('parseShopHTTPResponse classifies verification pages and HTTP 429 as pressure errors', () => {
+test('parseShopHTTPResponse classifies verification pages and HTTP 429/502/520 as pressure errors', () => {
   assert.throws(
     () => parseShopHTTPResponse(fixture.verificationHTTP),
     (error) => error instanceof ShopSyncError && error.kind === 'verification' && isPressureError(error)
@@ -89,6 +94,12 @@ test('parseShopHTTPResponse classifies verification pages and HTTP 429 as pressu
     () => parseShopHTTPResponse(fixture.rateLimitHTTP),
     (error) => error instanceof ShopSyncError && error.kind === 'rate_limit' && isPressureError(error)
   )
+  for (const status of [502, 520]) {
+    assert.throws(
+      () => parseShopHTTPResponse({ status, contentType: 'application/json', payload: { code: 0 } }),
+      (error) => error instanceof ShopSyncError && error.kind === 'network' && isPressureError(error)
+    )
+  }
   assert.deepEqual(parseShopHTTPResponse({
     status: 200,
     contentType: 'application/json; charset=utf-8',
@@ -132,21 +143,54 @@ test('TokenBucket enforces one request per second without a burst', async () => 
   assert.equal(waits.length, 1)
 })
 
-test('55-shop pressure simulation stays bounded for 2725 products and a 647-product shop', () => {
-  const shopCounts = [647]
-  let remaining = 2725 - 647
-  for (let index = 0; index < 54; index += 1) {
-    const count = Math.floor(remaining / (54 - index))
-    shopCounts.push(count)
-    remaining -= count
+test('0.75 request/second lane and concurrent 3.75 request/second global buckets have no burst', async () => {
+  let laneNow = 0
+  const laneBucket = new TokenBucket(0.75, 1, {
+    now: () => laneNow,
+    sleep: async (milliseconds) => { laneNow += milliseconds },
+  })
+  await laneBucket.take()
+  await laneBucket.take()
+  assert.equal(laneNow, 1_334)
+
+  let globalNow = 0
+  const globalBucket = new TokenBucket(3.75, 1, {
+    now: () => globalNow,
+    sleep: async (milliseconds) => { globalNow += milliseconds },
+  })
+  const globalRequestTimes = await Promise.all(
+    Array.from({ length: 5 }, () => globalBucket.take())
+  )
+  assert.deepEqual(globalRequestTimes, [0, 267, 534, 801, 1_068])
+})
+
+test('requests take the lane token before the shared global token', async () => {
+  const calls = []
+  await takeRequestTokens(
+    { take: async () => calls.push('lane') },
+    { take: async () => calls.push('global') }
+  )
+  assert.deepEqual(calls, ['lane', 'global'])
+})
+
+test('five-lane 53-shop workload completes between 20 and 22 minutes without pressure', () => {
+  const shopCounts = workloadFixture.shop_product_counts
+  assert.equal(shopCounts.length, 53)
+  assert.equal(shopCounts.reduce((sum, count) => sum + count, 0), 3981)
+  assert.equal(Math.max(...shopCounts), 898)
+
+  const laneAvailableAt = [0, 0, 0, 0, 0]
+  const laneCompletedAt = [0, 0, 0, 0, 0]
+  for (const productCount of shopCounts) {
+    const laneIndex = laneAvailableAt.indexOf(Math.min(...laneAvailableAt))
+    const requestCount = productCount + Math.ceil(productCount / 100) + 5
+    laneCompletedAt[laneIndex] = laneAvailableAt[laneIndex]
+      + simulatedTokenBucketDuration(requestCount, 0.75, 1)
+    laneAvailableAt[laneIndex] = laneCompletedAt[laneIndex] + 10_000
   }
-  assert.equal(shopCounts.length, 55)
-  assert.equal(shopCounts.reduce((sum, count) => sum + count, 0), 2725)
-  assert.equal(Math.max(...shopCounts), 647)
-  assert.ok(simulatedTokenBucketDuration(2725) > 45 * 60_000)
-  assert.ok(simulatedTokenBucketDuration(2725) < 46 * 60_000)
-  assert.ok(simulatedTokenBucketDuration(647) > 10 * 60_000)
-  assert.ok(simulatedTokenBucketDuration(647) < 11 * 60_000)
+  const cycleMilliseconds = Math.max(...laneCompletedAt)
+  assert.ok(cycleMilliseconds > 20 * 60_000)
+  assert.ok(cycleMilliseconds < 22 * 60_000)
 })
 
 test('pressure backoff uses one, five, and fifteen minute tiers with bounded jitter', () => {
@@ -232,58 +276,90 @@ test('parseProxyConfiguration rejects unsafe or unsupported forms', () => {
   assert.throws(() => parseProxyConfiguration('socks5://user:pass@proxy.example:1080'), /authenticated SOCKS5/)
 })
 
-test('parseProxyConfigurations supports two isolated proxy lanes and the legacy variable', () => {
+test('parseProxyConfigurations supports five isolated proxy lanes and the legacy variable', () => {
   assert.deepEqual(parseProxyConfigurations(
-    'http://proxy-a.internal:17891, http://proxy-b.internal:17892',
+    'http://proxy-a.internal:17891, http://proxy-b.internal:17892, http://proxy-c.internal:17893, http://proxy-d.internal:17894, http://proxy-e.internal:17895',
     'http://ignored.internal:8080'
   ).map((proxy) => proxy.server), [
     'http://proxy-a.internal:17891',
     'http://proxy-b.internal:17892',
+    'http://proxy-c.internal:17893',
+    'http://proxy-d.internal:17894',
+    'http://proxy-e.internal:17895',
   ])
   assert.equal(parseProxyConfigurations('', 'http://legacy.internal:8080')[0].server, 'http://legacy.internal:8080')
   assert.deepEqual(parseProxyConfigurations('', ''), [])
   assert.throws(
-    () => parseProxyConfigurations('http://a:1,http://b:2,http://c:3'),
-    /at most 2 proxies/
+    () => parseProxyConfigurations('http://a:1,http://b:2,http://c:3,http://d:4,http://e:5,http://f:6'),
+    /at most 5 proxies/
   )
 })
 
 test('proxyLanesForConcurrency rejects unsafe concurrency fallback to one exit IP', () => {
-  const proxies = parseProxyConfigurations('http://proxy-a:17891,http://proxy-b:17892')
-  assert.deepEqual(proxyLanesForConcurrency(2, proxies), proxies)
+  const proxies = parseProxyConfigurations('http://proxy-a:17891,http://proxy-b:17892,http://proxy-c:17893,http://proxy-d:17894,http://proxy-e:17895')
+  for (let concurrency = 1; concurrency <= 5; concurrency += 1) {
+    assert.deepEqual(proxyLanesForConcurrency(concurrency, proxies.slice(0, concurrency)), proxies.slice(0, concurrency))
+  }
   assert.deepEqual(proxyLanesForConcurrency(1, []), [null])
-  assert.throws(() => proxyLanesForConcurrency(2, []), /requires two/)
-  assert.throws(() => proxyLanesForConcurrency(2, proxies.slice(0, 1)), /count must match/)
-  assert.throws(() => proxyLanesForConcurrency(2, [proxies[0], proxies[0]]), /must be distinct/)
+  assert.throws(() => proxyLanesForConcurrency(5, []), /requires 5/)
+  assert.throws(() => proxyLanesForConcurrency(5, proxies.slice(0, 4)), /count must match/)
+  assert.throws(() => proxyLanesForConcurrency(5, [proxies[0], proxies[1], proxies[2], proxies[3], proxies[0]]), /must be distinct/)
 })
 
-test('proxyPoolsForConcurrency creates lane-local fallback pools with four distinct endpoints', () => {
-  const primary = parseProxyConfigurations('http://proxy-a:17891,http://proxy-b:17892')
+test('proxyPoolsForConcurrency creates five lane-local fallback pools with ten distinct endpoints', () => {
+  const primary = parseProxyConfigurations('http://proxy-a:17891,http://proxy-b:17892,http://proxy-c:17893,http://proxy-d:17894,http://proxy-e:17895')
   const fallback = parseProxyConfigurations(
-    'http://proxy-c:17893,http://proxy-d:17894',
+    'http://proxy-f:17896,http://proxy-g:17897,http://proxy-h:17898,http://proxy-i:17899,http://proxy-j:17900',
     '',
     'PRODUCT_SYNC_PROXY_FALLBACK_URLS'
   )
   assert.deepEqual(
-    proxyPoolsForConcurrency(2, primary, fallback).map((pool) => pool.map((proxy) => proxy.server)),
+    proxyPoolsForConcurrency(5, primary, fallback).map((pool) => pool.map((proxy) => proxy.server)),
     [
-      ['http://proxy-a:17891', 'http://proxy-c:17893'],
-      ['http://proxy-b:17892', 'http://proxy-d:17894'],
+      ['http://proxy-a:17891', 'http://proxy-f:17896'],
+      ['http://proxy-b:17892', 'http://proxy-g:17897'],
+      ['http://proxy-c:17893', 'http://proxy-h:17898'],
+      ['http://proxy-d:17894', 'http://proxy-i:17899'],
+      ['http://proxy-e:17895', 'http://proxy-j:17900'],
     ]
   )
   assert.deepEqual(proxyPoolsForConcurrency(1, [], []), [[null]])
   assert.throws(
-    () => proxyPoolsForConcurrency(2, primary, fallback.slice(0, 1)),
+    () => proxyPoolsForConcurrency(5, primary, fallback.slice(0, 4)),
     /count must match/
   )
   assert.throws(
-    () => proxyPoolsForConcurrency(2, primary, [fallback[0], primary[0]]),
+    () => proxyPoolsForConcurrency(5, primary, [fallback[0], fallback[1], fallback[2], fallback[3], primary[0]]),
     /all product sync proxy endpoints must be distinct/
   )
   assert.throws(
     () => proxyPoolsForConcurrency(1, [], fallback.slice(0, 1)),
     /requires PRODUCT_SYNC_PROXY_URLS/
   )
+})
+
+test('lane context rotation closes the old context before creating its replacement', async () => {
+  const events = []
+  const replacement = { id: 'replacement' }
+  const result = await closeContextThenCreate({
+    close: async () => {
+      events.push('close-started')
+      await Promise.resolve()
+      events.push('close-finished')
+    },
+  }, async () => {
+    events.push('create')
+    return replacement
+  })
+  assert.equal(result, replacement)
+  assert.deepEqual(events, ['close-started', 'close-finished', 'create'])
+})
+
+test('browserResourceCounts reports five live contexts and one page per lane', () => {
+  const contexts = Array.from({ length: 5 }, () => ({
+    pages: () => [{ isClosed: () => false }, { isClosed: () => true }],
+  }))
+  assert.deepEqual(browserResourceCounts(contexts), { contextCount: 5, pageCount: 5 })
 })
 
 test('isVerificationPageState detects the Alibaba ESA challenge', () => {
@@ -302,6 +378,15 @@ test('timing and bounded concurrency configuration are validated', () => {
   assert.equal(parseSyncConcurrency(undefined), 1)
   assert.equal(parseSyncConcurrency('1'), 1)
   assert.equal(parseSyncConcurrency('2'), 2)
-  assert.throws(() => parseSyncConcurrency('0'), /must be 1 or 2/)
-  assert.throws(() => parseSyncConcurrency('5'), /must be 1 or 2/)
+  assert.equal(parseSyncConcurrency('3'), 3)
+  assert.equal(parseSyncConcurrency('4'), 4)
+  assert.equal(parseSyncConcurrency('5'), 5)
+  assert.throws(() => parseSyncConcurrency('0'), /between 1 and 5/)
+  assert.throws(() => parseSyncConcurrency('6'), /between 1 and 5/)
+  assert.equal(parseRequestRatePerLane(undefined), 1)
+  assert.equal(parseRequestRatePerLane('0.1'), 0.1)
+  assert.equal(parseRequestRatePerLane('0.75'), 0.75)
+  assert.equal(parseRequestRatePerLane('1'), 1)
+  assert.throws(() => parseRequestRatePerLane('0.09'), /between 0.1 and 1/)
+  assert.throws(() => parseRequestRatePerLane('1.01'), /between 0.1 and 1/)
 })

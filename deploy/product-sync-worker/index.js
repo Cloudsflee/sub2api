@@ -4,15 +4,19 @@ const { collectAuthoritativeSnapshot } = require('./catalog-sync')
 const {
   Semaphore,
   TokenBucket,
+  browserResourceCounts,
+  closeContextThenCreate,
   isPressureError,
   isVerificationPageState,
   parsePositiveMilliseconds,
   parseProxyConfigurations,
+  parseRequestRatePerLane,
   parseShopHTTPResponse,
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
   proxyPoolsForConcurrency,
   shopRequestError,
+  takeRequestTokens,
   withPressureRecovery,
 } = require('./worker-utils')
 
@@ -21,11 +25,12 @@ const backendToken = String(process.env.PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN
 const idlePollMilliseconds = 10_000
 const activePollMilliseconds = 10_000
 const heartbeatMilliseconds = 30_000
-const maxJobMilliseconds = 20 * 60_000
+const maxJobMilliseconds = 30 * 60_000
 const shopRequestTimeoutMilliseconds = parsePositiveMilliseconds(process.env.SHOP_REQUEST_TIMEOUT_MILLISECONDS, 20_000, 'SHOP_REQUEST_TIMEOUT_MILLISECONDS')
 const browserProtocolTimeoutMilliseconds = parsePositiveMilliseconds(process.env.BROWSER_PROTOCOL_TIMEOUT_MILLISECONDS, 45_000, 'BROWSER_PROTOCOL_TIMEOUT_MILLISECONDS')
 const backendRequestTimeoutMilliseconds = parsePositiveMilliseconds(process.env.BACKEND_REQUEST_TIMEOUT_MILLISECONDS, 10_000, 'BACKEND_REQUEST_TIMEOUT_MILLISECONDS')
 const syncConcurrency = parseSyncConcurrency(process.env.PRODUCT_SYNC_CONCURRENCY)
+const requestRatePerLane = parseRequestRatePerLane(process.env.PRODUCT_SYNC_REQUEST_RATE_PER_LANE)
 const chromePath = process.env.CHROME_PATH || '/usr/bin/chromium-browser'
 const chromeProfileDirectory = process.env.CHROME_PROFILE_DIRECTORY || '/data/chrome-profile'
 const statusFile = process.env.STATUS_FILE || '/data/status.json'
@@ -41,12 +46,16 @@ const configuredFallbackProxies = parseProxyConfigurations(
 const laneProxyPools = proxyPoolsForConcurrency(syncConcurrency, configuredProxies, configuredFallbackProxies)
 const laneProxies = laneProxyPools.map((pool) => pool[0])
 const configuredProxyCount = configuredProxies.length + configuredFallbackProxies.length
-const shopRequestsPerSecond = 1
+const globalRequestRate = Number((syncConcurrency * requestRatePerLane).toFixed(10))
+const globalRequestLimiter = new TokenBucket(globalRequestRate, 1)
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 let workerStatus = {
   state: 'starting',
   proxy_enabled: configuredProxyCount > 0,
   proxy_count: configuredProxyCount,
+  sync_concurrency: syncConcurrency,
+  request_rate_per_second_per_lane: requestRatePerLane,
+  request_rate_per_second_global: globalRequestRate,
   started_at: new Date().toISOString(),
 }
 const laneStatuses = Array.from({ length: syncConcurrency }, (_, index) => ({ index, state: 'starting' }))
@@ -55,7 +64,14 @@ let activeBrowserContexts = []
 let stopping = false
 
 function publishStatus(values) {
-  workerStatus = { ...workerStatus, ...values, updated_at: new Date().toISOString() }
+  const resources = browserResourceCounts(activeBrowserContexts)
+  workerStatus = {
+    ...workerStatus,
+    ...values,
+    browser_context_count: resources.contextCount,
+    browser_page_count: resources.pageCount,
+    updated_at: new Date().toISOString(),
+  }
   const temporary = `${statusFile}.tmp`
   try {
     fs.writeFileSync(temporary, `${JSON.stringify(workerStatus, null, 2)}\n`, { mode: 0o600 })
@@ -107,12 +123,12 @@ async function backend(path, options = {}) {
 }
 
 function ensureJobDeadline(deadlineAt) {
-  if (Date.now() >= deadlineAt) throw new Error('product sync job exceeded the 20 minute limit')
+  if (Date.now() >= deadlineAt) throw new Error('product sync job exceeded the 30 minute limit')
 }
 
 async function postShopAPI(lane, shopToken, path, body, deadlineAt) {
   ensureJobDeadline(deadlineAt)
-  await lane.requestLimiter.take()
+  await takeRequestTokens(lane.requestLimiter, globalRequestLimiter)
   ensureJobDeadline(deadlineAt)
   let result
   try {
@@ -351,7 +367,7 @@ async function prepareLane(context, index, proxyPool) {
     proxy: proxyPool[0],
     pressureState: { failureCount: 0 },
     quoteSemaphore: new Semaphore(1),
-    requestLimiter: new TokenBucket(shopRequestsPerSecond, 1),
+    requestLimiter: new TokenBucket(requestRatePerLane, 1),
   }
 }
 
@@ -373,10 +389,11 @@ async function recoverLaneAfterPressure(lane) {
 
   let replacementContext
   try {
-    await previousContext?.close().catch(() => {})
-    if (stopping) throw new Error('product sync worker is stopping')
-    if (!activeBrowser?.isConnected()) throw new Error('product sync browser is not connected')
-    replacementContext = await activeBrowser.newContext(browserContextOptions(nextProxy))
+    replacementContext = await closeContextThenCreate(previousContext, async () => {
+      if (stopping) throw new Error('product sync worker is stopping')
+      if (!activeBrowser?.isConnected()) throw new Error('product sync browser is not connected')
+      return activeBrowser.newContext(browserContextOptions(nextProxy))
+    })
     const replacementPage = await prepareLaneContext(replacementContext, true)
     if (stopping) throw new Error('product sync worker is stopping')
     lane.context = replacementContext
@@ -515,7 +532,8 @@ async function runBrowser() {
       browser_engine: 'playwright',
       sync_concurrency: syncConcurrency,
       quote_concurrency_per_lane: 1,
-      request_rate_per_second_per_lane: shopRequestsPerSecond,
+      request_rate_per_second_per_lane: requestRatePerLane,
+      request_rate_per_second_global: globalRequestRate,
       browser_started_at: new Date().toISOString(),
     })
     await Promise.all(lanes.map((lane) => runLane(lane)))

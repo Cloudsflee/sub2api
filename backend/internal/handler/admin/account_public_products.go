@@ -36,10 +36,10 @@ const (
 	publicAccountImportProductRefreshCooldown = 5 * time.Minute
 	publicAccountImportProductRetryAge        = 1 * time.Minute
 	publicAccountImportProductSyncLeaseAge    = 90 * time.Second
-	publicAccountImportProductSyncMaxAge      = 20 * time.Minute
+	publicAccountImportProductSyncMaxAge      = 30 * time.Minute
 	publicAccountImportProductMaxCacheAge     = 30 * time.Minute
 	publicAccountImportProductRefreshMaxAge   = 30 * time.Minute
-	publicAccountImportProductMaxSyncJobs     = 2
+	publicAccountImportProductMaxSyncJobs     = 5
 	publicAccountImportProductMaxProducts     = 1000
 	publicAccountImportProductMaxBody         = 8 << 20
 	publicAccountImportProductFailureMaxBody  = 8 << 10
