@@ -99,6 +99,7 @@ test('shopRequestError classifies browser transport failures as pressure errors'
   for (const error of [
     new TypeError('Failed to fetch'),
     Object.assign(new Error('signal is aborted without reason'), { name: 'AbortError' }),
+    new Error('page.evaluate: AbortError: signal is aborted without reason'),
     new Error('page.evaluate: NetworkError when attempting to fetch resource'),
     new Error('net::ERR_PROXY_CONNECTION_FAILED'),
   ]) {

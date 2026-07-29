@@ -249,7 +249,7 @@ function shopRequestError(path, error) {
   const message = String(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 500)
   const name = String(error?.name || '').toLowerCase()
   const isNetworkFailure = name === 'aborterror'
-    || /failed to fetch|fetch failed|networkerror|network request failed|load failed|net::err_/i.test(message)
+    || /aborterror|signal is aborted|failed to fetch|fetch failed|networkerror|network request failed|load failed|net::err_/i.test(message)
   return new ShopSyncError(
     isNetworkFailure ? 'network' : 'unknown',
     `shop API ${path} failed: ${message}`
