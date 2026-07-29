@@ -39,7 +39,7 @@ const (
 	publicAccountImportProductSyncMaxAge      = 30 * time.Minute
 	publicAccountImportProductMaxCacheAge     = 30 * time.Minute
 	publicAccountImportProductRefreshMaxAge   = 30 * time.Minute
-	publicAccountImportProductMaxSyncJobs     = 5
+	publicAccountImportProductMaxSyncJobs     = 6
 	publicAccountImportProductMaxProducts     = 1000
 	publicAccountImportProductMaxBody         = 8 << 20
 	publicAccountImportProductFailureMaxBody  = 8 << 10

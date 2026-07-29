@@ -21,8 +21,8 @@ function parsePositiveMilliseconds(value, fallback, name) {
 function parseSyncConcurrency(value, fallback = 1) {
   if (value === undefined || value === null || value === '') return fallback
   const parsed = Number(value)
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 5) {
-    throw new Error('PRODUCT_SYNC_CONCURRENCY must be between 1 and 5')
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 6) {
+    throw new Error('PRODUCT_SYNC_CONCURRENCY must be between 1 and 6')
   }
   return parsed
 }
@@ -69,7 +69,7 @@ function parseProxyConfigurations(value, legacyValue, name = 'PRODUCT_SYNC_PROXY
   const entries = raw
     ? raw.split(/[\s,]+/).filter(Boolean)
     : String(legacyValue || '').trim() ? [String(legacyValue).trim()] : []
-  if (entries.length > 5) throw new Error(`${name} supports at most 5 proxies`)
+  if (entries.length > 6) throw new Error(`${name} supports at most 6 proxies`)
   return entries.map((entry, index) => parseProxyConfiguration(entry, `${name} entry ${index + 1}`))
 }
 
@@ -94,8 +94,8 @@ function proxyPoolsForConcurrency(concurrency, configurations, fallbackConfigura
   if (fallbackConfigurations.length > 0 && configurations.length === 0) {
     throw new Error('PRODUCT_SYNC_PROXY_FALLBACK_URLS requires PRODUCT_SYNC_PROXY_URLS')
   }
-  if (fallbackConfigurations.length > 0 && fallbackConfigurations.length !== concurrency) {
-    throw new Error('PRODUCT_SYNC_PROXY_FALLBACK_URLS count must match PRODUCT_SYNC_CONCURRENCY')
+  if (fallbackConfigurations.length > concurrency) {
+    throw new Error('PRODUCT_SYNC_PROXY_FALLBACK_URLS count cannot exceed PRODUCT_SYNC_CONCURRENCY')
   }
 
   const allProxies = [...configurations, ...fallbackConfigurations]
