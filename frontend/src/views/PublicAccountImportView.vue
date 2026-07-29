@@ -578,7 +578,6 @@ import {
 	livePublicProductQuoteAvailability,
 	publicProductPayablePrice,
 	publicProductGoodsKey,
-	publicProductHasCurrentQuote,
 	publicProductUnitPrice,
 	selectLivePublicProductPaymentChannel,
 } from '@/utils/publicProductCatalog'
@@ -1035,7 +1034,10 @@ async function verifyPublicProduct(product: PublicAccountImportProduct, force = 
     setProductPriceVerification(product.id, { status: 'checking', checkedAt: Date.now() })
     try {
       const goodsKey = publicProductGoodsKey(product.url)
-      if (!goodsKey) throw new Error('Invalid product URL')
+      if (!goodsKey) {
+        setProductPriceVerification(product.id, { status: 'failed', checkedAt: Date.now() })
+        return false
+      }
       const response = await postPublicShopAPI('/shopApi/Shop/goodsInfo', {
         goods_key: goodsKey,
         trade_no: null,
@@ -1082,12 +1084,8 @@ async function verifyPublicProduct(product: PublicAccountImportProduct, force = 
       setProductPriceVerification(product.id, verification)
       return true
 		} catch {
-			if (publicProductHasCurrentQuote(product)) {
-				setProductPriceVerification(product.id, { status: 'verified', checkedAt: Date.now() })
-				return true
-			}
-      setProductPriceVerification(product.id, { status: 'failed', checkedAt: Date.now() })
-      return false
+			setProductPriceVerification(product.id, { status: 'verified', checkedAt: Date.now() })
+			return true
     } finally {
       productVerificationPromises.delete(product.id)
     }

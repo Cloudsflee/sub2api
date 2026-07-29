@@ -2,7 +2,6 @@ import type { PublicAccountImportProduct } from '@/api/publicAccountImport'
 
 const productNameCollator = new Intl.Collator(undefined, { numeric: true })
 const inventorylessGoodsTypes = new Set(['article', 'resource', 'equity'])
-const maximumCatalogQuoteAgeMilliseconds = 30 * 60_000
 
 export type LivePublicProductAvailability = 'available' | 'unavailable' | 'unknown'
 
@@ -72,27 +71,6 @@ export function publicProductUnitPrice(product: PublicAccountImportProduct): num
     return payablePrice / publicProductMinimumQuantity(product)
   }
   return product.price
-}
-
-export function publicProductHasCurrentQuote(
-	product: PublicAccountImportProduct,
-	now = Date.now()
-): boolean {
-	const verifiedAt = Date.parse(product.quote_verified_at || '')
-	const payablePrice = normalizeAPINumber(product.payable_price)
-	const unitPrice = normalizeAPINumber(product.unit_price)
-	const stock = normalizeAPINumber(product.stock)
-	const minimumQuantity = normalizeAPINumber(product.minimum_quantity)
-	if (!Number.isFinite(verifiedAt) || payablePrice === null || payablePrice < 0
-		|| unitPrice === null || unitPrice < 0 || stock === null || !Number.isInteger(stock)
-		|| minimumQuantity === null || !Number.isInteger(minimumQuantity)
-		|| minimumQuantity < 1 || stock < minimumQuantity) return false
-
-	const quoteAge = now - verifiedAt
-	if (quoteAge < -60_000 || quoteAge > maximumCatalogQuoteAgeMilliseconds) return false
-	const expectedUnitPrice = payablePrice / minimumQuantity
-	const tolerance = Math.max(1, Math.abs(expectedUnitPrice)) * 1e-9
-	return Math.abs(unitPrice - expectedUnitPrice) <= tolerance
 }
 
 function publicProductNameMatches(

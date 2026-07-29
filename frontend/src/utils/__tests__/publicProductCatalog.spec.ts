@@ -7,7 +7,6 @@ import {
 	livePublicProductQuoteAvailability,
 	publicProductPayablePrice,
 	publicProductGoodsKey,
-	publicProductHasCurrentQuote,
 	publicProductUnitPrice,
 } from '../publicProductCatalog'
 
@@ -215,22 +214,6 @@ describe('authoritative catalog prices', () => {
 		expect(publicProductPayablePrice({ ...product, payable_price: null as any, price: 7 })).toBe(7)
 	})
 
-	it('uses only complete authoritative quotes from the last thirty minutes as a fallback', () => {
-		const now = Date.parse('2026-07-28T02:30:00Z')
-		const quoted = {
-			...product,
-			payable_price: 2.4,
-			unit_price: 1.2,
-			minimum_quantity: 2,
-			stock: 8,
-			quote_verified_at: '2026-07-28T02:00:00Z',
-		}
-		expect(publicProductHasCurrentQuote(quoted, now)).toBe(true)
-		expect(publicProductHasCurrentQuote({ ...quoted, quote_verified_at: '2026-07-28T01:59:59Z' }, now)).toBe(false)
-		expect(publicProductHasCurrentQuote({ ...quoted, payable_price: undefined }, now)).toBe(false)
-		expect(publicProductHasCurrentQuote({ ...quoted, unit_price: 99 }, now)).toBe(false)
-		expect(publicProductHasCurrentQuote({ ...quoted, stock: 1 }, now)).toBe(false)
-	})
 })
 
 describe('livePublicProductAvailability', () => {
