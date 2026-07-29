@@ -22,6 +22,7 @@ const {
   shopRequestError,
   shopUnavailableMessage,
   simulatedTokenBucketDuration,
+  withPressureRecovery,
 } = require('./worker-utils')
 
 test('catalogProductState validates status, stock, and minimum quantity from real list shapes', () => {
@@ -153,6 +154,58 @@ test('pressure backoff uses one, five, and fifteen minute tiers with bounded jit
   assert.equal(pressureBackoffMilliseconds(10, () => 0.5), 900_000)
   assert.equal(pressureBackoffMilliseconds(1, () => 0), 54_000)
   assert.equal(pressureBackoffMilliseconds(1, () => 1), 66_000)
+})
+
+test('pressure recovery retries the active operation without discarding completed shop work', async () => {
+  const waits = []
+  const backoffs = []
+  const recoveries = []
+  const state = { failureCount: 0 }
+  let attempts = 0
+  const result = await withPressureRecovery(async () => {
+    attempts += 1
+    if (attempts === 1) throw new ShopSyncError('verification', 'HTTP 520')
+    if (attempts === 2) throw new ShopSyncError('rate_limit', 'HTTP 429')
+    return 'verified quote'
+  }, {
+    state,
+    deadlineAt: 30 * 60_000,
+    now: () => 0,
+    random: () => 0.5,
+    sleep: async (milliseconds) => waits.push(milliseconds),
+    onBackoff: async (details) => backoffs.push(details.failureCount),
+    recover: async (details) => recoveries.push(details.failureCount),
+  })
+
+  assert.equal(result, 'verified quote')
+  assert.equal(attempts, 3)
+  assert.equal(state.failureCount, 2)
+  assert.deepEqual(waits, [60_000, 300_000])
+  assert.deepEqual(backoffs, [1, 2])
+  assert.deepEqual(recoveries, [1, 2])
+})
+
+test('pressure recovery stops before a backoff would exceed the shop deadline', async () => {
+  let slept = false
+  await assert.rejects(() => withPressureRecovery(
+    async () => { throw new ShopSyncError('verification', 'HTTP 520') },
+    {
+      deadlineAt: 60_000,
+      now: () => 0,
+      random: () => 0.5,
+      sleep: async () => { slept = true },
+    }
+  ), /before its deadline/)
+  assert.equal(slept, false)
+})
+
+test('pressure recovery does not retry unknown validation failures', async () => {
+  let attempts = 0
+  await assert.rejects(() => withPressureRecovery(async () => {
+    attempts += 1
+    throw new ShopSyncError('unknown', 'invalid quote')
+  }), /invalid quote/)
+  assert.equal(attempts, 1)
 })
 
 test('parseProxyConfiguration removes credentials from the Chromium proxy argument', () => {

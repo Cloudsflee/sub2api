@@ -267,6 +267,31 @@ function pressureBackoffMilliseconds(failureCount, random = Math.random) {
   return Math.round(base * jitter)
 }
 
+async function withPressureRecovery(task, options = {}) {
+  if (typeof task !== 'function') throw new Error('pressure recovery task is required')
+  const state = options.state || { failureCount: 0 }
+  const now = options.now || Date.now
+  const sleep = options.sleep || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
+  const random = options.random || Math.random
+  const deadlineAt = Number.isFinite(options.deadlineAt) ? options.deadlineAt : Number.POSITIVE_INFINITY
+
+  while (true) {
+    try {
+      return await task()
+    } catch (error) {
+      if (!isPressureError(error)) throw error
+      state.failureCount = Math.max(0, Number(state.failureCount) || 0) + 1
+      const waitMilliseconds = pressureBackoffMilliseconds(state.failureCount, random)
+      if (now() + waitMilliseconds >= deadlineAt) {
+        throw new ShopSyncError('unknown', 'product sync job cannot recover from upstream pressure before its deadline')
+      }
+      await options.onBackoff?.({ error, failureCount: state.failureCount, waitMilliseconds })
+      await sleep(waitMilliseconds)
+      await options.recover?.({ error, failureCount: state.failureCount, waitMilliseconds })
+    }
+  }
+}
+
 class TokenBucket {
   constructor(ratePerSecond, capacity, options = {}) {
     if (!(ratePerSecond > 0) || !(capacity > 0)) throw new Error('token bucket limits must be positive')
@@ -372,4 +397,5 @@ module.exports = {
   shopUnavailableMessage,
   simulatedTokenBucketDuration,
   unavailableMessage,
+  withPressureRecovery,
 }

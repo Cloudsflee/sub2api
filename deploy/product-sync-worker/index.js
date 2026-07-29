@@ -13,6 +13,7 @@ const {
   pressureBackoffMilliseconds,
   proxyLanesForConcurrency,
   shopRequestError,
+  withPressureRecovery,
 } = require('./worker-utils')
 
 const backendURL = process.env.BACKEND_URL || 'http://sub2api:8080'
@@ -154,6 +155,34 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt) {
   return parseShopHTTPResponse(result)
 }
 
+async function postShopAPIWithPressureRecovery(lane, shopToken, path, body, deadlineAt) {
+  return withPressureRecovery(
+    () => postShopAPI(lane, shopToken, path, body, deadlineAt),
+    {
+      state: lane.pressureState,
+      deadlineAt,
+      onBackoff: async ({ error, failureCount, waitMilliseconds }) => {
+        publishLaneStatus(lane, {
+          state: 'blocked',
+          pressure_failure_count: failureCount,
+          retry_at: new Date(Date.now() + waitMilliseconds).toISOString(),
+          last_error_at: new Date().toISOString(),
+          last_error: errorMessage(error),
+        })
+        console.log(`${new Date().toISOString()} lane ${lane.index + 1} preserving the active shop and applying product sync pressure backoff for ${Math.round(waitMilliseconds / 1000)} seconds`)
+      },
+      recover: async () => {
+        if (stopping) throw new Error('product sync worker is stopping')
+        await initializeShopPage(lane.page, true)
+        publishLaneStatus(lane, {
+          state: 'syncing',
+          retry_at: '',
+        })
+      },
+    }
+  )
+}
+
 async function rejectVerificationPage(page) {
   const state = await page.evaluate(() => ({
     title: document.title,
@@ -227,7 +256,7 @@ async function syncJob(lane, job) {
     const snapshot = await collectAuthoritativeSnapshot({
       shopToken: job.token,
       quoteSemaphore: lane.quoteSemaphore,
-      post: (path, body) => postShopAPI(lane, job.token, path, body, deadlineAt),
+      post: (path, body) => postShopAPIWithPressureRecovery(lane, job.token, path, body, deadlineAt),
     })
     await stopHeartbeat()
     ensureJobDeadline(deadlineAt)
@@ -306,7 +335,7 @@ async function prepareLane(context, index, proxy) {
     context,
     page,
     proxy,
-    pressureFailures: 0,
+    pressureState: { failureCount: 0 },
     quoteSemaphore: new Semaphore(1),
     requestLimiter: new TokenBucket(shopRequestsPerSecond, 1),
   }
@@ -331,7 +360,7 @@ async function runLane(lane) {
 
       try {
         await syncJob(lane, job)
-        lane.pressureFailures = 0
+        lane.pressureState.failureCount = 0
         publishLaneStatus(lane, {
           state: 'idle',
           active_shop_id: '',
@@ -350,13 +379,13 @@ async function runLane(lane) {
             last_error: errorMessage(error),
           })
         } else {
-          lane.pressureFailures += 1
-          const waitMilliseconds = pressureBackoffMilliseconds(lane.pressureFailures)
+          lane.pressureState.failureCount += 1
+          const waitMilliseconds = pressureBackoffMilliseconds(lane.pressureState.failureCount)
           publishLaneStatus(lane, {
             state: 'blocked',
             active_shop_id: '',
             active_shop_name: '',
-            pressure_failure_count: lane.pressureFailures,
+            pressure_failure_count: lane.pressureState.failureCount,
             retry_at: new Date(Date.now() + waitMilliseconds).toISOString(),
             last_error_at: new Date().toISOString(),
             last_error: errorMessage(error),
