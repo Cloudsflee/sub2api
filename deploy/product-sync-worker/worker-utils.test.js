@@ -20,6 +20,7 @@ const {
   quoteResult,
   selectPaymentChannel,
   shopRequestError,
+  shopUnavailableMessage,
   simulatedTokenBucketDuration,
 } = require('./worker-utils')
 
@@ -68,6 +69,13 @@ test('quoteResult accepts only finite non-negative total_amount values', () => {
   assert.equal(quoteResult({ code: 1, data: { total_amount: null } }).state, 'unknown')
   assert.equal(quoteResult({ code: 1, data: { total_amount: '' } }).state, 'unknown')
   assert.equal(quoteResult({ code: 1, data: {} }).state, 'unknown')
+})
+
+test('shopUnavailableMessage accepts only explicit permanent shop failures', () => {
+  assert.equal(shopUnavailableMessage('店铺链接不存在'), true)
+  assert.equal(shopUnavailableMessage('This shop does not exist'), true)
+  assert.equal(shopUnavailableMessage('店铺接口请求失败'), false)
+  assert.equal(shopUnavailableMessage('系统繁忙，请稍后重试'), false)
 })
 
 test('parseShopHTTPResponse classifies verification pages and HTTP 429 as pressure errors', () => {

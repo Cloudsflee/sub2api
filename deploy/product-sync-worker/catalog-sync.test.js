@@ -99,6 +99,29 @@ test('collectAuthoritativeSnapshot accepts an explicitly empty or entirely unava
   assert.deepEqual(unavailable.products, [])
 })
 
+test('collectAuthoritativeSnapshot publishes an empty snapshot when the shop explicitly does not exist', async () => {
+  const calls = []
+  const snapshot = await collectAuthoritativeSnapshot({
+    shopToken: 'deleted-shop-token',
+    post: async (requestPath, body) => {
+      calls.push({ path: requestPath, body })
+      return { code: 0, msg: '店铺链接不存在', data: null }
+    },
+  })
+
+  assert.deepEqual(snapshot, {
+    schema_version: 2,
+    source_product_count: 0,
+    sellable_product_count: 0,
+    unavailable_product_count: 0,
+    products: [],
+  })
+  assert.deepEqual(calls, [{
+    path: '/shopApi/Shop/info',
+    body: { token: 'deleted-shop-token', category_key: null },
+  }])
+})
+
 test('collectAuthoritativeSnapshot treats an explicit quote rejection as unavailable', async () => {
   const list = clone(fixture.goodsList)
   list.data.total = 1

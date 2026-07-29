@@ -100,6 +100,12 @@ function unavailableMessage(value) {
     || /(?:below|lower than).*(?:cost|cost price)/.test(message)
 }
 
+function shopUnavailableMessage(value) {
+  const message = String(value || '').trim().toLowerCase()
+  return /(?:店铺|商店)(?:链接)?.*(?:不存在|已关闭|已删除|已注销|已停用)/.test(message)
+    || /(?:shop|store).*(?:not found|does not exist|closed|deleted|disabled)/.test(message)
+}
+
 function normalizeNonNegativeInteger(value) {
   if (value === null || value === undefined || typeof value === 'boolean'
     || (typeof value === 'string' && value.trim() === '')) return null
@@ -363,6 +369,7 @@ module.exports = {
   quoteResult,
   selectPaymentChannel,
   shopRequestError,
+  shopUnavailableMessage,
   simulatedTokenBucketDuration,
   unavailableMessage,
 }

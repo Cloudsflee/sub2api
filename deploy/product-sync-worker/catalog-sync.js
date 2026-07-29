@@ -6,6 +6,7 @@ const {
   normalizeNonNegativeInteger,
   quoteResult,
   selectPaymentChannel,
+  shopUnavailableMessage,
 } = require('./worker-utils')
 
 const PRODUCT_SCHEMA_VERSION = 2
@@ -39,6 +40,15 @@ async function collectAuthoritativeSnapshot(options) {
   }
 
   const infoPayload = await post('/shopApi/Shop/info', { token: shopToken, category_key: null })
+  if (infoPayload?.code !== 1 && shopUnavailableMessage(infoPayload?.msg)) {
+    return {
+      schema_version: PRODUCT_SCHEMA_VERSION,
+      source_product_count: 0,
+      sellable_product_count: 0,
+      unavailable_product_count: 0,
+      products: [],
+    }
+  }
   requireSuccessfulPayload(infoPayload, 'shop info')
   const candidates = []
   let unavailableCount = 0
