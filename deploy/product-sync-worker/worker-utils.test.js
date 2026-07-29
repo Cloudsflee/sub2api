@@ -12,9 +12,11 @@ const {
   isVerificationPageState,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
+  parseProxyConfigurations,
   parseShopHTTPResponse,
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
+  proxyLanesForConcurrency,
   quoteResult,
   selectPaymentChannel,
   shopRequestError,
@@ -167,6 +169,31 @@ test('parseProxyConfiguration rejects unsafe or unsupported forms', () => {
   assert.throws(() => parseProxyConfiguration('socks5://user:pass@proxy.example:1080'), /authenticated SOCKS5/)
 })
 
+test('parseProxyConfigurations supports two isolated proxy lanes and the legacy variable', () => {
+  assert.deepEqual(parseProxyConfigurations(
+    'http://proxy-a.internal:17891, http://proxy-b.internal:17892',
+    'http://ignored.internal:8080'
+  ).map((proxy) => proxy.server), [
+    'http://proxy-a.internal:17891',
+    'http://proxy-b.internal:17892',
+  ])
+  assert.equal(parseProxyConfigurations('', 'http://legacy.internal:8080')[0].server, 'http://legacy.internal:8080')
+  assert.deepEqual(parseProxyConfigurations('', ''), [])
+  assert.throws(
+    () => parseProxyConfigurations('http://a:1,http://b:2,http://c:3'),
+    /at most 2 proxies/
+  )
+})
+
+test('proxyLanesForConcurrency rejects unsafe concurrency fallback to one exit IP', () => {
+  const proxies = parseProxyConfigurations('http://proxy-a:17891,http://proxy-b:17892')
+  assert.deepEqual(proxyLanesForConcurrency(2, proxies), proxies)
+  assert.deepEqual(proxyLanesForConcurrency(1, []), [null])
+  assert.throws(() => proxyLanesForConcurrency(2, []), /requires two/)
+  assert.throws(() => proxyLanesForConcurrency(2, proxies.slice(0, 1)), /count must match/)
+  assert.throws(() => proxyLanesForConcurrency(2, [proxies[0], proxies[0]]), /must be distinct/)
+})
+
 test('isVerificationPageState detects the Alibaba ESA challenge', () => {
   assert.equal(isVerificationPageState({
     title: 'Verification',
@@ -176,12 +203,13 @@ test('isVerificationPageState detects the Alibaba ESA challenge', () => {
   assert.equal(isVerificationPageState({ title: 'Shop', text: 'Products', hasCaptcha: false }), false)
 })
 
-test('timing and fixed concurrency configuration are validated', () => {
+test('timing and bounded concurrency configuration are validated', () => {
   assert.equal(parsePositiveMilliseconds(undefined, 20_000, 'TIMEOUT'), 20_000)
   assert.equal(parsePositiveMilliseconds('1500.9', 20_000, 'TIMEOUT'), 1500)
   assert.throws(() => parsePositiveMilliseconds('0', 20_000, 'TIMEOUT'), /positive number/)
   assert.equal(parseSyncConcurrency(undefined), 1)
   assert.equal(parseSyncConcurrency('1'), 1)
-  assert.throws(() => parseSyncConcurrency('2'), /must be 1/)
-  assert.throws(() => parseSyncConcurrency('5'), /must be 1/)
+  assert.equal(parseSyncConcurrency('2'), 2)
+  assert.throws(() => parseSyncConcurrency('0'), /must be 1 or 2/)
+  assert.throws(() => parseSyncConcurrency('5'), /must be 1 or 2/)
 })

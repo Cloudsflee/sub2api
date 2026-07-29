@@ -1,0 +1,30 @@
+[Unit]
+Description=Sub2API product synchronization proxy
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sub2api-product-proxy
+Group=sub2api-product-proxy
+ExecStart=/usr/local/bin/mihomo -d /var/lib/sub2api-product-proxy -f /etc/sub2api-product-proxy/config.yaml
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadOnlyPaths=/etc/sub2api-product-proxy
+ReadWritePaths=/var/lib/sub2api-product-proxy
+MemoryMax=128M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

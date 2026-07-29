@@ -210,8 +210,9 @@ services:
     environment:
       - BACKEND_URL=http://sub2api:8080
       - PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN=${PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN:-}
-      - PRODUCT_SYNC_CONCURRENCY=1
+      - PRODUCT_SYNC_CONCURRENCY=${PRODUCT_SYNC_CONCURRENCY:-1}
       - PRODUCT_SYNC_PROXY_URL=${PRODUCT_SYNC_PROXY_URL:-}
+      - PRODUCT_SYNC_PROXY_URLS=${PRODUCT_SYNC_PROXY_URLS:-}
       - TZ=${TZ:-Asia/Shanghai}
     volumes:
       - ./data/product-sync-worker:/data:Z

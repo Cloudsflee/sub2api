@@ -21,11 +21,13 @@ function parsePositiveMilliseconds(value, fallback, name) {
 function parseSyncConcurrency(value, fallback = 1) {
   if (value === undefined || value === null || value === '') return fallback
   const parsed = Number(value)
-  if (parsed !== 1) throw new Error('PRODUCT_SYNC_CONCURRENCY must be 1')
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 2) {
+    throw new Error('PRODUCT_SYNC_CONCURRENCY must be 1 or 2')
+  }
   return parsed
 }
 
-function parseProxyConfiguration(value) {
+function parseProxyConfiguration(value, name = 'PRODUCT_SYNC_PROXY_URL') {
   const raw = String(value || '').trim()
   if (!raw) return null
 
@@ -33,13 +35,13 @@ function parseProxyConfiguration(value) {
   try {
     parsed = new URL(raw)
   } catch {
-    throw new Error('PRODUCT_SYNC_PROXY_URL must be a valid URL')
+    throw new Error(`${name} must be a valid URL`)
   }
   if (!supportedProxyProtocols.has(parsed.protocol)) {
-    throw new Error('PRODUCT_SYNC_PROXY_URL must use http, https, or socks5')
+    throw new Error(`${name} must use http, https, or socks5`)
   }
   if (!parsed.hostname || (parsed.pathname !== '' && parsed.pathname !== '/') || parsed.search || parsed.hash) {
-    throw new Error('PRODUCT_SYNC_PROXY_URL must contain only proxy credentials, host, and port')
+    throw new Error(`${name} must contain only proxy credentials, host, and port`)
   }
   const username = decodeURIComponent(parsed.username)
   const password = decodeURIComponent(parsed.password)
@@ -51,6 +53,30 @@ function parseProxyConfiguration(value) {
     username,
     password,
   }
+}
+
+function parseProxyConfigurations(value, legacyValue) {
+  const raw = String(value || '').trim()
+  const entries = raw
+    ? raw.split(/[\s,]+/).filter(Boolean)
+    : String(legacyValue || '').trim() ? [String(legacyValue).trim()] : []
+  if (entries.length > 2) throw new Error('PRODUCT_SYNC_PROXY_URLS supports at most 2 proxies')
+  return entries.map((entry, index) => parseProxyConfiguration(entry, `PRODUCT_SYNC_PROXY_URLS entry ${index + 1}`))
+}
+
+function proxyLanesForConcurrency(concurrency, configurations) {
+  if (!Array.isArray(configurations)) throw new Error('proxy configurations must be an array')
+  if (configurations.length > 0 && configurations.length !== concurrency) {
+    throw new Error('PRODUCT_SYNC_PROXY_URLS count must match PRODUCT_SYNC_CONCURRENCY')
+  }
+  if (concurrency > 1 && configurations.length === 0) {
+    throw new Error('PRODUCT_SYNC_CONCURRENCY=2 requires two PRODUCT_SYNC_PROXY_URLS entries')
+  }
+  const laneKeys = configurations.map((proxy) => `${proxy.server}\0${proxy.username}\0${proxy.password}`)
+  if (new Set(laneKeys).size !== laneKeys.length) {
+    throw new Error('PRODUCT_SYNC_PROXY_URLS entries must be distinct')
+  }
+  return configurations.length > 0 ? configurations : [null]
 }
 
 function isVerificationPageState(state) {
@@ -329,9 +355,11 @@ module.exports = {
   normalizeNonNegativeInteger,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
+  parseProxyConfigurations,
   parseShopHTTPResponse,
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
+  proxyLanesForConcurrency,
   quoteResult,
   selectPaymentChannel,
   shopRequestError,

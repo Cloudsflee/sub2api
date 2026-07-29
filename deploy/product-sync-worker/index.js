@@ -7,10 +7,11 @@ const {
   isPressureError,
   isVerificationPageState,
   parsePositiveMilliseconds,
-  parseProxyConfiguration,
+  parseProxyConfigurations,
   parseShopHTTPResponse,
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
+  proxyLanesForConcurrency,
   shopRequestError,
 } = require('./worker-utils')
 
@@ -27,17 +28,22 @@ const syncConcurrency = parseSyncConcurrency(process.env.PRODUCT_SYNC_CONCURRENC
 const chromePath = process.env.CHROME_PATH || '/usr/bin/chromium-browser'
 const chromeProfileDirectory = process.env.CHROME_PROFILE_DIRECTORY || '/data/chrome-profile'
 const statusFile = process.env.STATUS_FILE || '/data/status.json'
-const proxy = parseProxyConfiguration(process.env.PRODUCT_SYNC_PROXY_URL)
+const configuredProxies = parseProxyConfigurations(
+  process.env.PRODUCT_SYNC_PROXY_URLS,
+  process.env.PRODUCT_SYNC_PROXY_URL
+)
+const laneProxies = proxyLanesForConcurrency(syncConcurrency, configuredProxies)
 const shopRequestsPerSecond = 1
-const shopRequestLimiter = new TokenBucket(shopRequestsPerSecond, 1)
-const quoteSemaphore = new Semaphore(1)
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 let workerStatus = {
   state: 'starting',
-  proxy_enabled: Boolean(proxy),
+  proxy_enabled: configuredProxies.length > 0,
+  proxy_count: configuredProxies.length,
   started_at: new Date().toISOString(),
 }
-let activeBrowserContext
+const laneStatuses = Array.from({ length: syncConcurrency }, (_, index) => ({ index, state: 'starting' }))
+let activeBrowser
+let activeBrowserContexts = []
 let stopping = false
 
 function publishStatus(values) {
@@ -49,6 +55,27 @@ function publishStatus(values) {
   } catch (error) {
     console.error(`${new Date().toISOString()} failed to publish worker status: ${error.message}`)
   }
+}
+
+function publishLaneStatus(lane, values) {
+  laneStatuses[lane.index] = {
+    ...laneStatuses[lane.index],
+    ...values,
+    index: lane.index,
+    updated_at: new Date().toISOString(),
+  }
+  const states = laneStatuses.map((status) => status.state)
+  const state = stopping ? 'stopping'
+    : states.includes('syncing') ? 'syncing'
+      : states.includes('blocked') ? 'blocked'
+        : states.includes('error') ? 'error'
+          : states.every((value) => value === 'starting') ? 'starting'
+            : 'idle'
+  publishStatus({
+    state,
+    active_jobs: states.filter((value) => value === 'syncing').length,
+    lanes: laneStatuses,
+  })
 }
 
 function errorMessage(error) {
@@ -75,13 +102,13 @@ function ensureJobDeadline(deadlineAt) {
   if (Date.now() >= deadlineAt) throw new Error('product sync job exceeded the 20 minute limit')
 }
 
-async function postShopAPI(page, shopToken, path, body, deadlineAt) {
+async function postShopAPI(lane, shopToken, path, body, deadlineAt) {
   ensureJobDeadline(deadlineAt)
-  await shopRequestLimiter.take()
+  await lane.requestLimiter.take()
   ensureJobDeadline(deadlineAt)
   let result
   try {
-    result = await page.evaluate(async ({ requestPath, requestBody, requestTimeoutMilliseconds, visitorID }) => {
+    result = await lane.page.evaluate(async ({ requestPath, requestBody, requestTimeoutMilliseconds, visitorID }) => {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), requestTimeoutMilliseconds)
       try {
@@ -142,13 +169,18 @@ async function rejectVerificationPage(page) {
 
 async function initializeShopPage(page, recovery = false) {
   try {
-    await page.goto('https://pay.ldxp.cn/', { waitUntil: 'domcontentloaded', timeout: 20_000 })
+    try {
+      await page.goto('https://pay.ldxp.cn/', { waitUntil: 'domcontentloaded', timeout: 20_000 })
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error
+      console.log(`${new Date().toISOString()} shop session navigation timed out; continuing with the loaded document`)
+    }
+    await rejectVerificationPage(page)
+    if (recovery) console.log(`${new Date().toISOString()} shop session recovered after verification backoff`)
   } catch (error) {
-    if (error.name !== 'TimeoutError') throw error
-    console.log(`${new Date().toISOString()} shop session navigation timed out; continuing with the loaded document`)
+    if (error?.kind) throw error
+    throw shopRequestError('/', error)
   }
-  await rejectVerificationPage(page)
-  if (recovery) console.log(`${new Date().toISOString()} shop session recovered after verification backoff`)
 }
 
 function startJobHeartbeat(job) {
@@ -188,14 +220,14 @@ async function reportJobFailure(job, error) {
   }
 }
 
-async function syncJob(page, job) {
+async function syncJob(lane, job) {
   const deadlineAt = Date.now() + maxJobMilliseconds
   const stopHeartbeat = startJobHeartbeat(job)
   try {
     const snapshot = await collectAuthoritativeSnapshot({
       shopToken: job.token,
-      quoteSemaphore,
-      post: (path, body) => postShopAPI(page, job.token, path, body, deadlineAt),
+      quoteSemaphore: lane.quoteSemaphore,
+      post: (path, body) => postShopAPI(lane, job.token, path, body, deadlineAt),
     })
     await stopHeartbeat()
     ensureJobDeadline(deadlineAt)
@@ -220,22 +252,11 @@ async function syncJob(page, job) {
   }
 }
 
-async function runBrowser() {
-  fs.mkdirSync(chromeProfileDirectory, { recursive: true })
-  for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
-    fs.rmSync(`${chromeProfileDirectory}/${name}`, { force: true })
-  }
-  const context = await chromium.launchPersistentContext(chromeProfileDirectory, {
+function browserLaunchOptions() {
+  return {
     executablePath: chromePath,
     headless: true,
     timeout: browserProtocolTimeoutMilliseconds,
-    viewport: { width: 1024, height: 768 },
-    locale: 'zh-CN',
-    timezoneId: 'Asia/Shanghai',
-    colorScheme: 'light',
-    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
-    extraHTTPHeaders: { 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
-    ...(proxy ? { proxy } : {}),
     args: [
       '--no-sandbox',
       '--disable-dev-shm-usage',
@@ -248,8 +269,22 @@ async function runBrowser() {
       '--lang=zh-CN',
       '--window-size=1024,768',
     ],
-  })
-  activeBrowserContext = context
+  }
+}
+
+function browserContextOptions(proxy) {
+  return {
+    viewport: { width: 1024, height: 768 },
+    locale: 'zh-CN',
+    timezoneId: 'Asia/Shanghai',
+    colorScheme: 'light',
+    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+    extraHTTPHeaders: { 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
+    ...(proxy ? { proxy } : {}),
+  }
+}
+
+async function prepareLane(context, index, proxy) {
   context.setDefaultTimeout(browserProtocolTimeoutMilliseconds)
   await context.addInitScript(() => {
     Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => undefined, configurable: true })
@@ -261,108 +296,146 @@ async function runBrowser() {
     else await route.continue()
   })
   const existingPages = context.pages()
-  for (const page of existingPages.slice(syncConcurrency)) {
+  for (const page of existingPages.slice(1)) {
     await page.close()
   }
-  const pages = existingPages.slice(0, syncConcurrency)
-  while (pages.length < syncConcurrency) {
-    pages.push(await context.newPage())
+  const page = existingPages[0] || await context.newPage()
+  await initializeShopPage(page)
+  return {
+    index,
+    context,
+    page,
+    proxy,
+    pressureFailures: 0,
+    quoteSemaphore: new Semaphore(1),
+    requestLimiter: new TokenBucket(shopRequestsPerSecond, 1),
   }
-  try {
-    await Promise.all(pages.map((page) => initializeShopPage(page)))
-  } catch (error) {
-    if (activeBrowserContext === context) activeBrowserContext = undefined
-    await context.close().catch(() => {})
-    throw error
-  }
-  const browser = context.browser()
-  let pressureFailures = 0
-  publishStatus({
-    state: 'idle',
-    active_jobs: 0,
-    browser_engine: 'playwright',
-    sync_concurrency: syncConcurrency,
-    quote_concurrency: 1,
-    request_rate_per_second: shopRequestsPerSecond,
-    browser_started_at: new Date().toISOString(),
-  })
+}
 
-  while (browser?.isConnected() && !stopping) {
+async function runLane(lane) {
+  if (lane.index > 0) await sleep(lane.index * 1_100)
+  while (activeBrowser?.isConnected() && !stopping) {
     try {
-      const data = await backend(`/api/v1/public/account-import/products/sync-job?limit=${syncConcurrency}`)
-      const jobs = Array.isArray(data.jobs) && data.jobs.length > 0
-        ? data.jobs.slice(0, syncConcurrency)
-        : data.job ? [data.job] : []
-      publishStatus({
-        state: jobs.length > 0 ? 'syncing' : 'idle',
-        active_jobs: jobs.length,
+      const data = await backend('/api/v1/public/account-import/products/sync-job?limit=1')
+      const job = Array.isArray(data.jobs) && data.jobs.length > 0 ? data.jobs[0] : data.job
+      publishLaneStatus(lane, {
+        state: job ? 'syncing' : 'idle',
         last_poll_at: new Date().toISOString(),
+        active_shop_id: job?.shop_id || '',
+        active_shop_name: job?.shop_name || '',
       })
-      if (jobs.length === 0) {
+      if (!job) {
         await sleep(idlePollMilliseconds)
         continue
       }
 
-      const results = await Promise.allSettled(jobs.map((job, index) => syncJob(pages[index], job)))
-      const failures = results
-        .map((result, index) => ({ result, job: jobs[index] }))
-        .filter(({ result }) => result.status === 'rejected')
-      for (const { result, job } of failures) {
-        console.error(`${new Date().toISOString()} sync failed for ${job.shop_name}: ${errorMessage(result.reason)}`)
-      }
-      const pressureFailure = failures.find(({ result }) => isPressureError(result.reason))
-      if (pressureFailure) {
-        pressureFailures += 1
-        const waitMilliseconds = pressureBackoffMilliseconds(pressureFailures)
-        const reason = pressureFailure.result.reason
-        publishStatus({
-          state: 'blocked',
-          active_jobs: 0,
-          pressure_failure_count: pressureFailures,
-          retry_at: new Date(Date.now() + waitMilliseconds).toISOString(),
-          last_error_at: new Date().toISOString(),
-          last_error: errorMessage(reason),
+      try {
+        await syncJob(lane, job)
+        lane.pressureFailures = 0
+        publishLaneStatus(lane, {
+          state: 'idle',
+          active_shop_id: '',
+          active_shop_name: '',
+          last_error: '',
+          retry_at: '',
         })
-        console.log(`${new Date().toISOString()} applying product sync pressure backoff for ${Math.round(waitMilliseconds / 1000)} seconds`)
-        await sleep(waitMilliseconds)
-        if (reason?.kind === 'verification' && !stopping) {
-          try {
-            await Promise.all(pages.map((page) => initializeShopPage(page, true)))
-          } catch (recoveryError) {
-            console.error(`${new Date().toISOString()} verification recovery failed: ${errorMessage(recoveryError)}`)
+      } catch (error) {
+        console.error(`${new Date().toISOString()} lane ${lane.index + 1} sync failed for ${job.shop_name}: ${errorMessage(error)}`)
+        if (!isPressureError(error)) {
+          publishLaneStatus(lane, {
+            state: 'error',
+            active_shop_id: '',
+            active_shop_name: '',
+            last_error_at: new Date().toISOString(),
+            last_error: errorMessage(error),
+          })
+        } else {
+          lane.pressureFailures += 1
+          const waitMilliseconds = pressureBackoffMilliseconds(lane.pressureFailures)
+          publishLaneStatus(lane, {
+            state: 'blocked',
+            active_shop_id: '',
+            active_shop_name: '',
+            pressure_failure_count: lane.pressureFailures,
+            retry_at: new Date(Date.now() + waitMilliseconds).toISOString(),
+            last_error_at: new Date().toISOString(),
+            last_error: errorMessage(error),
+          })
+          console.log(`${new Date().toISOString()} lane ${lane.index + 1} applying product sync pressure backoff for ${Math.round(waitMilliseconds / 1000)} seconds`)
+          await sleep(waitMilliseconds)
+          if (error?.kind === 'verification' && !stopping) {
+            try {
+              await initializeShopPage(lane.page, true)
+            } catch (recoveryError) {
+              console.error(`${new Date().toISOString()} lane ${lane.index + 1} verification recovery failed: ${errorMessage(recoveryError)}`)
+            }
           }
+          publishLaneStatus(lane, { state: 'idle', retry_at: '' })
         }
-        continue
       }
-
-      if (failures.length === 0) pressureFailures = 0
-      publishStatus({
-        state: failures.length > 0 ? 'error' : 'idle',
-        active_jobs: 0,
-        ...(failures.length > 0 ? {
-          last_error_at: new Date().toISOString(),
-          last_error: errorMessage(failures[0].result.reason),
-        } : {}),
-      })
       await sleep(activePollMilliseconds)
     } catch (error) {
-      console.error(`${new Date().toISOString()} sync polling failed: ${errorMessage(error)}`)
-      publishStatus({
+      console.error(`${new Date().toISOString()} lane ${lane.index + 1} sync polling failed: ${errorMessage(error)}`)
+      publishLaneStatus(lane, {
         state: 'error',
-        active_jobs: 0,
+        active_shop_id: '',
+        active_shop_name: '',
         last_error_at: new Date().toISOString(),
         last_error: errorMessage(error),
       })
       await sleep(idlePollMilliseconds)
     }
   }
-  if (activeBrowserContext === context) activeBrowserContext = undefined
+}
+
+async function runBrowser() {
+  const contexts = []
+  const lanes = []
+  let browser
+  try {
+    if (syncConcurrency === 1) {
+      fs.mkdirSync(chromeProfileDirectory, { recursive: true })
+      for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+        fs.rmSync(`${chromeProfileDirectory}/${name}`, { force: true })
+      }
+      const context = await chromium.launchPersistentContext(chromeProfileDirectory, {
+        ...browserLaunchOptions(),
+        ...browserContextOptions(laneProxies[0]),
+      })
+      browser = context.browser()
+      contexts.push(context)
+    } else {
+      browser = await chromium.launch(browserLaunchOptions())
+      for (const proxy of laneProxies) {
+        contexts.push(await browser.newContext(browserContextOptions(proxy)))
+      }
+    }
+    activeBrowser = browser
+    activeBrowserContexts = contexts
+    for (let index = 0; index < contexts.length; index += 1) {
+      lanes.push(await prepareLane(contexts[index], index, laneProxies[index]))
+      publishLaneStatus(lanes[index], { state: 'idle', proxy_server: laneProxies[index]?.server || '' })
+    }
+    publishStatus({
+      browser_engine: 'playwright',
+      sync_concurrency: syncConcurrency,
+      quote_concurrency_per_lane: 1,
+      request_rate_per_second_per_lane: shopRequestsPerSecond,
+      browser_started_at: new Date().toISOString(),
+    })
+    await Promise.all(lanes.map((lane) => runLane(lane)))
+  } finally {
+    if (activeBrowser === browser) activeBrowser = undefined
+    if (activeBrowserContexts === contexts) activeBrowserContexts = []
+    await Promise.all(contexts.map((context) => context.close().catch(() => {})))
+    await browser?.close().catch(() => {})
+  }
 }
 
 async function main() {
   if (!backendToken) throw new Error('PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN is required')
   publishStatus({ state: 'starting' })
-  console.log(`${new Date().toISOString()} product sync worker starting; proxy=${proxy ? 'enabled' : 'disabled'}`)
+  console.log(`${new Date().toISOString()} product sync worker starting; proxy_lanes=${configuredProxies.length}`)
   let browserPressureFailures = 0
   while (!stopping) {
     try {
@@ -386,7 +459,8 @@ async function shutdown(signal) {
   stopping = true
   publishStatus({ state: 'stopping', stop_signal: signal })
   try {
-    await activeBrowserContext?.close()
+    await Promise.all(activeBrowserContexts.map((context) => context.close().catch(() => {})))
+    await activeBrowser?.close().catch(() => {})
   } catch (error) {
     console.error(`${new Date().toISOString()} browser shutdown failed: ${errorMessage(error)}`)
   }
