@@ -58,6 +58,7 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"http_status": {}, "latency_ms": {}, "token_applied": {}, "retryable": {},
 	"event_id": {}, "requested_count": {}, "deleted_events": {}, "deleted_jobs": {},
 	"matched_count": {}, "snapshot_max_id": {}, "filter_hash": {}, "confirm": {},
+	"task_id": {}, "total_items": {}, "reused": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.
@@ -122,25 +123,27 @@ var auditSensitiveReads = map[string]string{
 
 // auditActionOverrides 变更类请求的动作名精确映射（未命中时自动推导）。
 var auditActionOverrides = map[string]string{
-	"POST /api/v1/auth/login":                                 service.AuditActionLogin,
-	"POST /api/v1/auth/login/2fa":                             service.AuditActionLogin2FA,
-	"POST /api/v1/auth/register":                              service.AuditActionRegister,
-	"POST /api/v1/auth/refresh":                               service.AuditActionTokenRefresh,
-	"POST /api/v1/user/totp/step-up":                          service.AuditActionStepUpVerify,
-	"POST /api/v1/admin/audit-logs/clear":                     service.AuditActionAuditLogClear,
-	"POST /api/v1/admin/accounts/data":                        "admin.accounts.import",
-	"POST /api/v1/admin/backups":                              "admin.backups.create",
-	"POST /api/v1/admin/backups/:id/restore":                  "admin.backups.restore",
-	"DELETE /api/v1/admin/backups/:id":                        "admin.backups.delete",
-	"PUT /api/v1/admin/backups/s3-config":                     "admin.backups.s3_config.update",
-	"POST /api/v1/admin/settings/admin-api-key/regenerate":    "admin.admin_api_key.regenerate",
-	"DELETE /api/v1/admin/settings/admin-api-key":             "admin.admin_api_key.delete",
-	"PUT /api/v1/admin/prompt-audit/config":                   "admin.prompt_audit.config.update",
-	"POST /api/v1/admin/prompt-audit/endpoints/probe":         "admin.prompt_audit.endpoint.probe",
-	"DELETE /api/v1/admin/prompt-audit/events/:id":            "admin.prompt_audit.event.delete",
-	"POST /api/v1/admin/prompt-audit/events/batch-delete":     "admin.prompt_audit.events.batch_delete",
-	"POST /api/v1/admin/prompt-audit/events/delete-preview":   "admin.prompt_audit.events.delete_preview",
-	"POST /api/v1/admin/prompt-audit/events/delete-by-filter": "admin.prompt_audit.events.filter_delete",
+	"POST /api/v1/auth/login":                                     service.AuditActionLogin,
+	"POST /api/v1/auth/login/2fa":                                 service.AuditActionLogin2FA,
+	"POST /api/v1/auth/register":                                  service.AuditActionRegister,
+	"POST /api/v1/auth/refresh":                                   service.AuditActionTokenRefresh,
+	"POST /api/v1/user/totp/step-up":                              service.AuditActionStepUpVerify,
+	"POST /api/v1/admin/audit-logs/clear":                         service.AuditActionAuditLogClear,
+	"POST /api/v1/admin/accounts/data":                            "admin.accounts.import",
+	"POST /api/v1/admin/backups":                                  "admin.backups.create",
+	"POST /api/v1/admin/backups/:id/restore":                      "admin.backups.restore",
+	"DELETE /api/v1/admin/backups/:id":                            "admin.backups.delete",
+	"PUT /api/v1/admin/backups/s3-config":                         "admin.backups.s3_config.update",
+	"POST /api/v1/admin/settings/admin-api-key/regenerate":        "admin.admin_api_key.regenerate",
+	"DELETE /api/v1/admin/settings/admin-api-key":                 "admin.admin_api_key.delete",
+	"PUT /api/v1/admin/prompt-audit/config":                       "admin.prompt_audit.config.update",
+	"POST /api/v1/admin/prompt-audit/endpoints/probe":             "admin.prompt_audit.endpoint.probe",
+	"DELETE /api/v1/admin/prompt-audit/events/:id":                "admin.prompt_audit.event.delete",
+	"POST /api/v1/admin/prompt-audit/events/batch-delete":         "admin.prompt_audit.events.batch_delete",
+	"POST /api/v1/admin/prompt-audit/events/delete-preview":       "admin.prompt_audit.events.delete_preview",
+	"POST /api/v1/admin/prompt-audit/events/delete-by-filter":     "admin.prompt_audit.events.filter_delete",
+	"POST /api/v1/admin/accounts/openai-5h-wake/tasks":            service.AuditActionOpenAI5hWakeStart,
+	"POST /api/v1/admin/accounts/openai-5h-wake/tasks/:id/cancel": service.AuditActionOpenAI5hWakeCancel,
 }
 
 // auditBodyOmittedRoutes 请求体几乎整体由凭证构成的路由（如整块粘贴 auth JSON 的导入接口）。

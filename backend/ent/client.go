@@ -34,6 +34,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/idempotencyrecord"
 	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
+	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketask"
+	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketaskitem"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
@@ -101,6 +103,10 @@ type Client struct {
 	IdempotencyRecord *IdempotencyRecordClient
 	// IdentityAdoptionDecision is the client for interacting with the IdentityAdoptionDecision builders.
 	IdentityAdoptionDecision *IdentityAdoptionDecisionClient
+	// OpenAI5hWakeTask is the client for interacting with the OpenAI5hWakeTask builders.
+	OpenAI5hWakeTask *OpenAI5hWakeTaskClient
+	// OpenAI5hWakeTaskItem is the client for interacting with the OpenAI5hWakeTaskItem builders.
+	OpenAI5hWakeTaskItem *OpenAI5hWakeTaskItemClient
 	// PaymentAuditLog is the client for interacting with the PaymentAuditLog builders.
 	PaymentAuditLog *PaymentAuditLogClient
 	// PaymentOrder is the client for interacting with the PaymentOrder builders.
@@ -171,6 +177,8 @@ func (c *Client) init() {
 	c.Group = NewGroupClient(c.config)
 	c.IdempotencyRecord = NewIdempotencyRecordClient(c.config)
 	c.IdentityAdoptionDecision = NewIdentityAdoptionDecisionClient(c.config)
+	c.OpenAI5hWakeTask = NewOpenAI5hWakeTaskClient(c.config)
+	c.OpenAI5hWakeTaskItem = NewOpenAI5hWakeTaskItemClient(c.config)
 	c.PaymentAuditLog = NewPaymentAuditLogClient(c.config)
 	c.PaymentOrder = NewPaymentOrderClient(c.config)
 	c.PaymentProviderInstance = NewPaymentProviderInstanceClient(c.config)
@@ -302,6 +310,8 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		Group:                         NewGroupClient(cfg),
 		IdempotencyRecord:             NewIdempotencyRecordClient(cfg),
 		IdentityAdoptionDecision:      NewIdentityAdoptionDecisionClient(cfg),
+		OpenAI5hWakeTask:              NewOpenAI5hWakeTaskClient(cfg),
+		OpenAI5hWakeTaskItem:          NewOpenAI5hWakeTaskItemClient(cfg),
 		PaymentAuditLog:               NewPaymentAuditLogClient(cfg),
 		PaymentOrder:                  NewPaymentOrderClient(cfg),
 		PaymentProviderInstance:       NewPaymentProviderInstanceClient(cfg),
@@ -360,6 +370,8 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		Group:                         NewGroupClient(cfg),
 		IdempotencyRecord:             NewIdempotencyRecordClient(cfg),
 		IdentityAdoptionDecision:      NewIdentityAdoptionDecisionClient(cfg),
+		OpenAI5hWakeTask:              NewOpenAI5hWakeTaskClient(cfg),
+		OpenAI5hWakeTaskItem:          NewOpenAI5hWakeTaskItemClient(cfg),
 		PaymentAuditLog:               NewPaymentAuditLogClient(cfg),
 		PaymentOrder:                  NewPaymentOrderClient(cfg),
 		PaymentProviderInstance:       NewPaymentProviderInstanceClient(cfg),
@@ -414,12 +426,13 @@ func (c *Client) Use(hooks ...Hook) {
 		c.BatchImageJob, c.ChannelMonitor, c.ChannelMonitorDailyRollup,
 		c.ChannelMonitorHistory, c.ChannelMonitorRequestTemplate,
 		c.CompositeModelRoute, c.ErrorPassthroughRule, c.Group, c.IdempotencyRecord,
-		c.IdentityAdoptionDecision, c.PaymentAuditLog, c.PaymentOrder,
-		c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage,
-		c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting, c.SubscriptionPlan,
-		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.User,
-		c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
-		c.UserPlatformQuota, c.UserSubscription,
+		c.IdentityAdoptionDecision, c.OpenAI5hWakeTask, c.OpenAI5hWakeTaskItem,
+		c.PaymentAuditLog, c.PaymentOrder, c.PaymentProviderInstance,
+		c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage, c.Proxy, c.RedeemCode,
+		c.SecuritySecret, c.Setting, c.SubscriptionPlan, c.TLSFingerprintProfile,
+		c.UsageCleanupTask, c.UsageLog, c.User, c.UserAllowedGroup,
+		c.UserAttributeDefinition, c.UserAttributeValue, c.UserPlatformQuota,
+		c.UserSubscription,
 	} {
 		n.Use(hooks...)
 	}
@@ -434,12 +447,13 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.BatchImageJob, c.ChannelMonitor, c.ChannelMonitorDailyRollup,
 		c.ChannelMonitorHistory, c.ChannelMonitorRequestTemplate,
 		c.CompositeModelRoute, c.ErrorPassthroughRule, c.Group, c.IdempotencyRecord,
-		c.IdentityAdoptionDecision, c.PaymentAuditLog, c.PaymentOrder,
-		c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage,
-		c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting, c.SubscriptionPlan,
-		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.User,
-		c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
-		c.UserPlatformQuota, c.UserSubscription,
+		c.IdentityAdoptionDecision, c.OpenAI5hWakeTask, c.OpenAI5hWakeTaskItem,
+		c.PaymentAuditLog, c.PaymentOrder, c.PaymentProviderInstance,
+		c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage, c.Proxy, c.RedeemCode,
+		c.SecuritySecret, c.Setting, c.SubscriptionPlan, c.TLSFingerprintProfile,
+		c.UsageCleanupTask, c.UsageLog, c.User, c.UserAllowedGroup,
+		c.UserAttributeDefinition, c.UserAttributeValue, c.UserPlatformQuota,
+		c.UserSubscription,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -486,6 +500,10 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.IdempotencyRecord.mutate(ctx, m)
 	case *IdentityAdoptionDecisionMutation:
 		return c.IdentityAdoptionDecision.mutate(ctx, m)
+	case *OpenAI5hWakeTaskMutation:
+		return c.OpenAI5hWakeTask.mutate(ctx, m)
+	case *OpenAI5hWakeTaskItemMutation:
+		return c.OpenAI5hWakeTaskItem.mutate(ctx, m)
 	case *PaymentAuditLogMutation:
 		return c.PaymentAuditLog.mutate(ctx, m)
 	case *PaymentOrderMutation:
@@ -3574,6 +3592,272 @@ func (c *IdentityAdoptionDecisionClient) mutate(ctx context.Context, m *Identity
 		return (&IdentityAdoptionDecisionDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown IdentityAdoptionDecision mutation op: %q", m.Op())
+	}
+}
+
+// OpenAI5hWakeTaskClient is a client for the OpenAI5hWakeTask schema.
+type OpenAI5hWakeTaskClient struct {
+	config
+}
+
+// NewOpenAI5hWakeTaskClient returns a client for the OpenAI5hWakeTask from the given config.
+func NewOpenAI5hWakeTaskClient(c config) *OpenAI5hWakeTaskClient {
+	return &OpenAI5hWakeTaskClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `openai5hwaketask.Hooks(f(g(h())))`.
+func (c *OpenAI5hWakeTaskClient) Use(hooks ...Hook) {
+	c.hooks.OpenAI5hWakeTask = append(c.hooks.OpenAI5hWakeTask, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `openai5hwaketask.Intercept(f(g(h())))`.
+func (c *OpenAI5hWakeTaskClient) Intercept(interceptors ...Interceptor) {
+	c.inters.OpenAI5hWakeTask = append(c.inters.OpenAI5hWakeTask, interceptors...)
+}
+
+// Create returns a builder for creating a OpenAI5hWakeTask entity.
+func (c *OpenAI5hWakeTaskClient) Create() *OpenAI5hWakeTaskCreate {
+	mutation := newOpenAI5hWakeTaskMutation(c.config, OpCreate)
+	return &OpenAI5hWakeTaskCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of OpenAI5hWakeTask entities.
+func (c *OpenAI5hWakeTaskClient) CreateBulk(builders ...*OpenAI5hWakeTaskCreate) *OpenAI5hWakeTaskCreateBulk {
+	return &OpenAI5hWakeTaskCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *OpenAI5hWakeTaskClient) MapCreateBulk(slice any, setFunc func(*OpenAI5hWakeTaskCreate, int)) *OpenAI5hWakeTaskCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &OpenAI5hWakeTaskCreateBulk{err: fmt.Errorf("calling to OpenAI5hWakeTaskClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*OpenAI5hWakeTaskCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &OpenAI5hWakeTaskCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for OpenAI5hWakeTask.
+func (c *OpenAI5hWakeTaskClient) Update() *OpenAI5hWakeTaskUpdate {
+	mutation := newOpenAI5hWakeTaskMutation(c.config, OpUpdate)
+	return &OpenAI5hWakeTaskUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *OpenAI5hWakeTaskClient) UpdateOne(_m *OpenAI5hWakeTask) *OpenAI5hWakeTaskUpdateOne {
+	mutation := newOpenAI5hWakeTaskMutation(c.config, OpUpdateOne, withOpenAI5hWakeTask(_m))
+	return &OpenAI5hWakeTaskUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *OpenAI5hWakeTaskClient) UpdateOneID(id int64) *OpenAI5hWakeTaskUpdateOne {
+	mutation := newOpenAI5hWakeTaskMutation(c.config, OpUpdateOne, withOpenAI5hWakeTaskID(id))
+	return &OpenAI5hWakeTaskUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for OpenAI5hWakeTask.
+func (c *OpenAI5hWakeTaskClient) Delete() *OpenAI5hWakeTaskDelete {
+	mutation := newOpenAI5hWakeTaskMutation(c.config, OpDelete)
+	return &OpenAI5hWakeTaskDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *OpenAI5hWakeTaskClient) DeleteOne(_m *OpenAI5hWakeTask) *OpenAI5hWakeTaskDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *OpenAI5hWakeTaskClient) DeleteOneID(id int64) *OpenAI5hWakeTaskDeleteOne {
+	builder := c.Delete().Where(openai5hwaketask.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &OpenAI5hWakeTaskDeleteOne{builder}
+}
+
+// Query returns a query builder for OpenAI5hWakeTask.
+func (c *OpenAI5hWakeTaskClient) Query() *OpenAI5hWakeTaskQuery {
+	return &OpenAI5hWakeTaskQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeOpenAI5hWakeTask},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a OpenAI5hWakeTask entity by its id.
+func (c *OpenAI5hWakeTaskClient) Get(ctx context.Context, id int64) (*OpenAI5hWakeTask, error) {
+	return c.Query().Where(openai5hwaketask.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *OpenAI5hWakeTaskClient) GetX(ctx context.Context, id int64) *OpenAI5hWakeTask {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *OpenAI5hWakeTaskClient) Hooks() []Hook {
+	return c.hooks.OpenAI5hWakeTask
+}
+
+// Interceptors returns the client interceptors.
+func (c *OpenAI5hWakeTaskClient) Interceptors() []Interceptor {
+	return c.inters.OpenAI5hWakeTask
+}
+
+func (c *OpenAI5hWakeTaskClient) mutate(ctx context.Context, m *OpenAI5hWakeTaskMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&OpenAI5hWakeTaskCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&OpenAI5hWakeTaskUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&OpenAI5hWakeTaskUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&OpenAI5hWakeTaskDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown OpenAI5hWakeTask mutation op: %q", m.Op())
+	}
+}
+
+// OpenAI5hWakeTaskItemClient is a client for the OpenAI5hWakeTaskItem schema.
+type OpenAI5hWakeTaskItemClient struct {
+	config
+}
+
+// NewOpenAI5hWakeTaskItemClient returns a client for the OpenAI5hWakeTaskItem from the given config.
+func NewOpenAI5hWakeTaskItemClient(c config) *OpenAI5hWakeTaskItemClient {
+	return &OpenAI5hWakeTaskItemClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `openai5hwaketaskitem.Hooks(f(g(h())))`.
+func (c *OpenAI5hWakeTaskItemClient) Use(hooks ...Hook) {
+	c.hooks.OpenAI5hWakeTaskItem = append(c.hooks.OpenAI5hWakeTaskItem, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `openai5hwaketaskitem.Intercept(f(g(h())))`.
+func (c *OpenAI5hWakeTaskItemClient) Intercept(interceptors ...Interceptor) {
+	c.inters.OpenAI5hWakeTaskItem = append(c.inters.OpenAI5hWakeTaskItem, interceptors...)
+}
+
+// Create returns a builder for creating a OpenAI5hWakeTaskItem entity.
+func (c *OpenAI5hWakeTaskItemClient) Create() *OpenAI5hWakeTaskItemCreate {
+	mutation := newOpenAI5hWakeTaskItemMutation(c.config, OpCreate)
+	return &OpenAI5hWakeTaskItemCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of OpenAI5hWakeTaskItem entities.
+func (c *OpenAI5hWakeTaskItemClient) CreateBulk(builders ...*OpenAI5hWakeTaskItemCreate) *OpenAI5hWakeTaskItemCreateBulk {
+	return &OpenAI5hWakeTaskItemCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *OpenAI5hWakeTaskItemClient) MapCreateBulk(slice any, setFunc func(*OpenAI5hWakeTaskItemCreate, int)) *OpenAI5hWakeTaskItemCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &OpenAI5hWakeTaskItemCreateBulk{err: fmt.Errorf("calling to OpenAI5hWakeTaskItemClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*OpenAI5hWakeTaskItemCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &OpenAI5hWakeTaskItemCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for OpenAI5hWakeTaskItem.
+func (c *OpenAI5hWakeTaskItemClient) Update() *OpenAI5hWakeTaskItemUpdate {
+	mutation := newOpenAI5hWakeTaskItemMutation(c.config, OpUpdate)
+	return &OpenAI5hWakeTaskItemUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *OpenAI5hWakeTaskItemClient) UpdateOne(_m *OpenAI5hWakeTaskItem) *OpenAI5hWakeTaskItemUpdateOne {
+	mutation := newOpenAI5hWakeTaskItemMutation(c.config, OpUpdateOne, withOpenAI5hWakeTaskItem(_m))
+	return &OpenAI5hWakeTaskItemUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *OpenAI5hWakeTaskItemClient) UpdateOneID(id int64) *OpenAI5hWakeTaskItemUpdateOne {
+	mutation := newOpenAI5hWakeTaskItemMutation(c.config, OpUpdateOne, withOpenAI5hWakeTaskItemID(id))
+	return &OpenAI5hWakeTaskItemUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for OpenAI5hWakeTaskItem.
+func (c *OpenAI5hWakeTaskItemClient) Delete() *OpenAI5hWakeTaskItemDelete {
+	mutation := newOpenAI5hWakeTaskItemMutation(c.config, OpDelete)
+	return &OpenAI5hWakeTaskItemDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *OpenAI5hWakeTaskItemClient) DeleteOne(_m *OpenAI5hWakeTaskItem) *OpenAI5hWakeTaskItemDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *OpenAI5hWakeTaskItemClient) DeleteOneID(id int64) *OpenAI5hWakeTaskItemDeleteOne {
+	builder := c.Delete().Where(openai5hwaketaskitem.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &OpenAI5hWakeTaskItemDeleteOne{builder}
+}
+
+// Query returns a query builder for OpenAI5hWakeTaskItem.
+func (c *OpenAI5hWakeTaskItemClient) Query() *OpenAI5hWakeTaskItemQuery {
+	return &OpenAI5hWakeTaskItemQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeOpenAI5hWakeTaskItem},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a OpenAI5hWakeTaskItem entity by its id.
+func (c *OpenAI5hWakeTaskItemClient) Get(ctx context.Context, id int64) (*OpenAI5hWakeTaskItem, error) {
+	return c.Query().Where(openai5hwaketaskitem.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *OpenAI5hWakeTaskItemClient) GetX(ctx context.Context, id int64) *OpenAI5hWakeTaskItem {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *OpenAI5hWakeTaskItemClient) Hooks() []Hook {
+	return c.hooks.OpenAI5hWakeTaskItem
+}
+
+// Interceptors returns the client interceptors.
+func (c *OpenAI5hWakeTaskItemClient) Interceptors() []Interceptor {
+	return c.inters.OpenAI5hWakeTaskItem
+}
+
+func (c *OpenAI5hWakeTaskItemClient) mutate(ctx context.Context, m *OpenAI5hWakeTaskItemMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&OpenAI5hWakeTaskItemCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&OpenAI5hWakeTaskItemUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&OpenAI5hWakeTaskItemUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&OpenAI5hWakeTaskItemDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown OpenAI5hWakeTaskItem mutation op: %q", m.Op())
 	}
 }
 
@@ -6829,24 +7113,24 @@ type (
 		AuthIdentityChannel, BatchImageEvent, BatchImageItem, BatchImageJob,
 		ChannelMonitor, ChannelMonitorDailyRollup, ChannelMonitorHistory,
 		ChannelMonitorRequestTemplate, CompositeModelRoute, ErrorPassthroughRule,
-		Group, IdempotencyRecord, IdentityAdoptionDecision, PaymentAuditLog,
-		PaymentOrder, PaymentProviderInstance, PendingAuthSession, PromoCode,
-		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
-		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
-		UserAttributeDefinition, UserAttributeValue, UserPlatformQuota,
-		UserSubscription []ent.Hook
+		Group, IdempotencyRecord, IdentityAdoptionDecision, OpenAI5hWakeTask,
+		OpenAI5hWakeTaskItem, PaymentAuditLog, PaymentOrder, PaymentProviderInstance,
+		PendingAuthSession, PromoCode, PromoCodeUsage, Proxy, RedeemCode,
+		SecuritySecret, Setting, SubscriptionPlan, TLSFingerprintProfile,
+		UsageCleanupTask, UsageLog, User, UserAllowedGroup, UserAttributeDefinition,
+		UserAttributeValue, UserPlatformQuota, UserSubscription []ent.Hook
 	}
 	inters struct {
 		APIKey, Account, AccountGroup, Announcement, AnnouncementRead, AuthIdentity,
 		AuthIdentityChannel, BatchImageEvent, BatchImageItem, BatchImageJob,
 		ChannelMonitor, ChannelMonitorDailyRollup, ChannelMonitorHistory,
 		ChannelMonitorRequestTemplate, CompositeModelRoute, ErrorPassthroughRule,
-		Group, IdempotencyRecord, IdentityAdoptionDecision, PaymentAuditLog,
-		PaymentOrder, PaymentProviderInstance, PendingAuthSession, PromoCode,
-		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
-		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
-		UserAttributeDefinition, UserAttributeValue, UserPlatformQuota,
-		UserSubscription []ent.Interceptor
+		Group, IdempotencyRecord, IdentityAdoptionDecision, OpenAI5hWakeTask,
+		OpenAI5hWakeTaskItem, PaymentAuditLog, PaymentOrder, PaymentProviderInstance,
+		PendingAuthSession, PromoCode, PromoCodeUsage, Proxy, RedeemCode,
+		SecuritySecret, Setting, SubscriptionPlan, TLSFingerprintProfile,
+		UsageCleanupTask, UsageLog, User, UserAllowedGroup, UserAttributeDefinition,
+		UserAttributeValue, UserPlatformQuota, UserSubscription []ent.Interceptor
 	}
 )
 

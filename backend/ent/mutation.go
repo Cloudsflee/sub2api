@@ -31,6 +31,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/idempotencyrecord"
 	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
+	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketask"
+	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketaskitem"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
@@ -83,6 +85,8 @@ const (
 	TypeGroup                         = "Group"
 	TypeIdempotencyRecord             = "IdempotencyRecord"
 	TypeIdentityAdoptionDecision      = "IdentityAdoptionDecision"
+	TypeOpenAI5hWakeTask              = "OpenAI5hWakeTask"
+	TypeOpenAI5hWakeTaskItem          = "OpenAI5hWakeTaskItem"
 	TypePaymentAuditLog               = "PaymentAuditLog"
 	TypePaymentOrder                  = "PaymentOrder"
 	TypePaymentProviderInstance       = "PaymentProviderInstance"
@@ -28231,6 +28235,3200 @@ func (m *IdentityAdoptionDecisionMutation) ResetEdge(name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown IdentityAdoptionDecision edge %s", name)
+}
+
+// OpenAI5hWakeTaskMutation represents an operation that mutates the OpenAI5hWakeTask nodes in the graph.
+type OpenAI5hWakeTaskMutation struct {
+	config
+	op                         Op
+	typ                        string
+	id                         *int64
+	status                     *string
+	eligible_account_count     *int
+	addeligible_account_count  *int
+	active_window_count        *int
+	addactive_window_count     *int
+	estimated_request_count    *int
+	addestimated_request_count *int
+	total_items                *int
+	addtotal_items             *int
+	processed_items            *int
+	addprocessed_items         *int
+	woken_count                *int
+	addwoken_count             *int
+	skipped_active_count       *int
+	addskipped_active_count    *int
+	failed_count               *int
+	addfailed_count            *int
+	cancelled_count            *int
+	addcancelled_count         *int
+	requested_by_user_id       *int64
+	addrequested_by_user_id    *int64
+	requested_by_email         *string
+	lease_owner                *string
+	lease_expires_at           *time.Time
+	heartbeat_at               *time.Time
+	earliest_reset_at          *time.Time
+	latest_reset_at            *time.Time
+	cancel_requested_at        *time.Time
+	started_at                 *time.Time
+	finished_at                *time.Time
+	created_at                 *time.Time
+	updated_at                 *time.Time
+	clearedFields              map[string]struct{}
+	done                       bool
+	oldValue                   func(context.Context) (*OpenAI5hWakeTask, error)
+	predicates                 []predicate.OpenAI5hWakeTask
+}
+
+var _ ent.Mutation = (*OpenAI5hWakeTaskMutation)(nil)
+
+// openai5hwaketaskOption allows management of the mutation configuration using functional options.
+type openai5hwaketaskOption func(*OpenAI5hWakeTaskMutation)
+
+// newOpenAI5hWakeTaskMutation creates new mutation for the OpenAI5hWakeTask entity.
+func newOpenAI5hWakeTaskMutation(c config, op Op, opts ...openai5hwaketaskOption) *OpenAI5hWakeTaskMutation {
+	m := &OpenAI5hWakeTaskMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeOpenAI5hWakeTask,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withOpenAI5hWakeTaskID sets the ID field of the mutation.
+func withOpenAI5hWakeTaskID(id int64) openai5hwaketaskOption {
+	return func(m *OpenAI5hWakeTaskMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *OpenAI5hWakeTask
+		)
+		m.oldValue = func(ctx context.Context) (*OpenAI5hWakeTask, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().OpenAI5hWakeTask.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withOpenAI5hWakeTask sets the old OpenAI5hWakeTask of the mutation.
+func withOpenAI5hWakeTask(node *OpenAI5hWakeTask) openai5hwaketaskOption {
+	return func(m *OpenAI5hWakeTaskMutation) {
+		m.oldValue = func(context.Context) (*OpenAI5hWakeTask, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m OpenAI5hWakeTaskMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m OpenAI5hWakeTaskMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *OpenAI5hWakeTaskMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *OpenAI5hWakeTaskMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().OpenAI5hWakeTask.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetStatus sets the "status" field.
+func (m *OpenAI5hWakeTaskMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *OpenAI5hWakeTaskMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetEligibleAccountCount sets the "eligible_account_count" field.
+func (m *OpenAI5hWakeTaskMutation) SetEligibleAccountCount(i int) {
+	m.eligible_account_count = &i
+	m.addeligible_account_count = nil
+}
+
+// EligibleAccountCount returns the value of the "eligible_account_count" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) EligibleAccountCount() (r int, exists bool) {
+	v := m.eligible_account_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEligibleAccountCount returns the old "eligible_account_count" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldEligibleAccountCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEligibleAccountCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEligibleAccountCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEligibleAccountCount: %w", err)
+	}
+	return oldValue.EligibleAccountCount, nil
+}
+
+// AddEligibleAccountCount adds i to the "eligible_account_count" field.
+func (m *OpenAI5hWakeTaskMutation) AddEligibleAccountCount(i int) {
+	if m.addeligible_account_count != nil {
+		*m.addeligible_account_count += i
+	} else {
+		m.addeligible_account_count = &i
+	}
+}
+
+// AddedEligibleAccountCount returns the value that was added to the "eligible_account_count" field in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedEligibleAccountCount() (r int, exists bool) {
+	v := m.addeligible_account_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetEligibleAccountCount resets all changes to the "eligible_account_count" field.
+func (m *OpenAI5hWakeTaskMutation) ResetEligibleAccountCount() {
+	m.eligible_account_count = nil
+	m.addeligible_account_count = nil
+}
+
+// SetActiveWindowCount sets the "active_window_count" field.
+func (m *OpenAI5hWakeTaskMutation) SetActiveWindowCount(i int) {
+	m.active_window_count = &i
+	m.addactive_window_count = nil
+}
+
+// ActiveWindowCount returns the value of the "active_window_count" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) ActiveWindowCount() (r int, exists bool) {
+	v := m.active_window_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldActiveWindowCount returns the old "active_window_count" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldActiveWindowCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldActiveWindowCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldActiveWindowCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldActiveWindowCount: %w", err)
+	}
+	return oldValue.ActiveWindowCount, nil
+}
+
+// AddActiveWindowCount adds i to the "active_window_count" field.
+func (m *OpenAI5hWakeTaskMutation) AddActiveWindowCount(i int) {
+	if m.addactive_window_count != nil {
+		*m.addactive_window_count += i
+	} else {
+		m.addactive_window_count = &i
+	}
+}
+
+// AddedActiveWindowCount returns the value that was added to the "active_window_count" field in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedActiveWindowCount() (r int, exists bool) {
+	v := m.addactive_window_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetActiveWindowCount resets all changes to the "active_window_count" field.
+func (m *OpenAI5hWakeTaskMutation) ResetActiveWindowCount() {
+	m.active_window_count = nil
+	m.addactive_window_count = nil
+}
+
+// SetEstimatedRequestCount sets the "estimated_request_count" field.
+func (m *OpenAI5hWakeTaskMutation) SetEstimatedRequestCount(i int) {
+	m.estimated_request_count = &i
+	m.addestimated_request_count = nil
+}
+
+// EstimatedRequestCount returns the value of the "estimated_request_count" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) EstimatedRequestCount() (r int, exists bool) {
+	v := m.estimated_request_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEstimatedRequestCount returns the old "estimated_request_count" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldEstimatedRequestCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEstimatedRequestCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEstimatedRequestCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEstimatedRequestCount: %w", err)
+	}
+	return oldValue.EstimatedRequestCount, nil
+}
+
+// AddEstimatedRequestCount adds i to the "estimated_request_count" field.
+func (m *OpenAI5hWakeTaskMutation) AddEstimatedRequestCount(i int) {
+	if m.addestimated_request_count != nil {
+		*m.addestimated_request_count += i
+	} else {
+		m.addestimated_request_count = &i
+	}
+}
+
+// AddedEstimatedRequestCount returns the value that was added to the "estimated_request_count" field in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedEstimatedRequestCount() (r int, exists bool) {
+	v := m.addestimated_request_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetEstimatedRequestCount resets all changes to the "estimated_request_count" field.
+func (m *OpenAI5hWakeTaskMutation) ResetEstimatedRequestCount() {
+	m.estimated_request_count = nil
+	m.addestimated_request_count = nil
+}
+
+// SetTotalItems sets the "total_items" field.
+func (m *OpenAI5hWakeTaskMutation) SetTotalItems(i int) {
+	m.total_items = &i
+	m.addtotal_items = nil
+}
+
+// TotalItems returns the value of the "total_items" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) TotalItems() (r int, exists bool) {
+	v := m.total_items
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTotalItems returns the old "total_items" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldTotalItems(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTotalItems is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTotalItems requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTotalItems: %w", err)
+	}
+	return oldValue.TotalItems, nil
+}
+
+// AddTotalItems adds i to the "total_items" field.
+func (m *OpenAI5hWakeTaskMutation) AddTotalItems(i int) {
+	if m.addtotal_items != nil {
+		*m.addtotal_items += i
+	} else {
+		m.addtotal_items = &i
+	}
+}
+
+// AddedTotalItems returns the value that was added to the "total_items" field in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedTotalItems() (r int, exists bool) {
+	v := m.addtotal_items
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTotalItems resets all changes to the "total_items" field.
+func (m *OpenAI5hWakeTaskMutation) ResetTotalItems() {
+	m.total_items = nil
+	m.addtotal_items = nil
+}
+
+// SetProcessedItems sets the "processed_items" field.
+func (m *OpenAI5hWakeTaskMutation) SetProcessedItems(i int) {
+	m.processed_items = &i
+	m.addprocessed_items = nil
+}
+
+// ProcessedItems returns the value of the "processed_items" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) ProcessedItems() (r int, exists bool) {
+	v := m.processed_items
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProcessedItems returns the old "processed_items" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldProcessedItems(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProcessedItems is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProcessedItems requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProcessedItems: %w", err)
+	}
+	return oldValue.ProcessedItems, nil
+}
+
+// AddProcessedItems adds i to the "processed_items" field.
+func (m *OpenAI5hWakeTaskMutation) AddProcessedItems(i int) {
+	if m.addprocessed_items != nil {
+		*m.addprocessed_items += i
+	} else {
+		m.addprocessed_items = &i
+	}
+}
+
+// AddedProcessedItems returns the value that was added to the "processed_items" field in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedProcessedItems() (r int, exists bool) {
+	v := m.addprocessed_items
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetProcessedItems resets all changes to the "processed_items" field.
+func (m *OpenAI5hWakeTaskMutation) ResetProcessedItems() {
+	m.processed_items = nil
+	m.addprocessed_items = nil
+}
+
+// SetWokenCount sets the "woken_count" field.
+func (m *OpenAI5hWakeTaskMutation) SetWokenCount(i int) {
+	m.woken_count = &i
+	m.addwoken_count = nil
+}
+
+// WokenCount returns the value of the "woken_count" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) WokenCount() (r int, exists bool) {
+	v := m.woken_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWokenCount returns the old "woken_count" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldWokenCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWokenCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWokenCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWokenCount: %w", err)
+	}
+	return oldValue.WokenCount, nil
+}
+
+// AddWokenCount adds i to the "woken_count" field.
+func (m *OpenAI5hWakeTaskMutation) AddWokenCount(i int) {
+	if m.addwoken_count != nil {
+		*m.addwoken_count += i
+	} else {
+		m.addwoken_count = &i
+	}
+}
+
+// AddedWokenCount returns the value that was added to the "woken_count" field in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedWokenCount() (r int, exists bool) {
+	v := m.addwoken_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetWokenCount resets all changes to the "woken_count" field.
+func (m *OpenAI5hWakeTaskMutation) ResetWokenCount() {
+	m.woken_count = nil
+	m.addwoken_count = nil
+}
+
+// SetSkippedActiveCount sets the "skipped_active_count" field.
+func (m *OpenAI5hWakeTaskMutation) SetSkippedActiveCount(i int) {
+	m.skipped_active_count = &i
+	m.addskipped_active_count = nil
+}
+
+// SkippedActiveCount returns the value of the "skipped_active_count" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) SkippedActiveCount() (r int, exists bool) {
+	v := m.skipped_active_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSkippedActiveCount returns the old "skipped_active_count" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldSkippedActiveCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSkippedActiveCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSkippedActiveCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSkippedActiveCount: %w", err)
+	}
+	return oldValue.SkippedActiveCount, nil
+}
+
+// AddSkippedActiveCount adds i to the "skipped_active_count" field.
+func (m *OpenAI5hWakeTaskMutation) AddSkippedActiveCount(i int) {
+	if m.addskipped_active_count != nil {
+		*m.addskipped_active_count += i
+	} else {
+		m.addskipped_active_count = &i
+	}
+}
+
+// AddedSkippedActiveCount returns the value that was added to the "skipped_active_count" field in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedSkippedActiveCount() (r int, exists bool) {
+	v := m.addskipped_active_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSkippedActiveCount resets all changes to the "skipped_active_count" field.
+func (m *OpenAI5hWakeTaskMutation) ResetSkippedActiveCount() {
+	m.skipped_active_count = nil
+	m.addskipped_active_count = nil
+}
+
+// SetFailedCount sets the "failed_count" field.
+func (m *OpenAI5hWakeTaskMutation) SetFailedCount(i int) {
+	m.failed_count = &i
+	m.addfailed_count = nil
+}
+
+// FailedCount returns the value of the "failed_count" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) FailedCount() (r int, exists bool) {
+	v := m.failed_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFailedCount returns the old "failed_count" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldFailedCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFailedCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFailedCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFailedCount: %w", err)
+	}
+	return oldValue.FailedCount, nil
+}
+
+// AddFailedCount adds i to the "failed_count" field.
+func (m *OpenAI5hWakeTaskMutation) AddFailedCount(i int) {
+	if m.addfailed_count != nil {
+		*m.addfailed_count += i
+	} else {
+		m.addfailed_count = &i
+	}
+}
+
+// AddedFailedCount returns the value that was added to the "failed_count" field in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedFailedCount() (r int, exists bool) {
+	v := m.addfailed_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetFailedCount resets all changes to the "failed_count" field.
+func (m *OpenAI5hWakeTaskMutation) ResetFailedCount() {
+	m.failed_count = nil
+	m.addfailed_count = nil
+}
+
+// SetCancelledCount sets the "cancelled_count" field.
+func (m *OpenAI5hWakeTaskMutation) SetCancelledCount(i int) {
+	m.cancelled_count = &i
+	m.addcancelled_count = nil
+}
+
+// CancelledCount returns the value of the "cancelled_count" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) CancelledCount() (r int, exists bool) {
+	v := m.cancelled_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCancelledCount returns the old "cancelled_count" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldCancelledCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCancelledCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCancelledCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCancelledCount: %w", err)
+	}
+	return oldValue.CancelledCount, nil
+}
+
+// AddCancelledCount adds i to the "cancelled_count" field.
+func (m *OpenAI5hWakeTaskMutation) AddCancelledCount(i int) {
+	if m.addcancelled_count != nil {
+		*m.addcancelled_count += i
+	} else {
+		m.addcancelled_count = &i
+	}
+}
+
+// AddedCancelledCount returns the value that was added to the "cancelled_count" field in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedCancelledCount() (r int, exists bool) {
+	v := m.addcancelled_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetCancelledCount resets all changes to the "cancelled_count" field.
+func (m *OpenAI5hWakeTaskMutation) ResetCancelledCount() {
+	m.cancelled_count = nil
+	m.addcancelled_count = nil
+}
+
+// SetRequestedByUserID sets the "requested_by_user_id" field.
+func (m *OpenAI5hWakeTaskMutation) SetRequestedByUserID(i int64) {
+	m.requested_by_user_id = &i
+	m.addrequested_by_user_id = nil
+}
+
+// RequestedByUserID returns the value of the "requested_by_user_id" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) RequestedByUserID() (r int64, exists bool) {
+	v := m.requested_by_user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestedByUserID returns the old "requested_by_user_id" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldRequestedByUserID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestedByUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestedByUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestedByUserID: %w", err)
+	}
+	return oldValue.RequestedByUserID, nil
+}
+
+// AddRequestedByUserID adds i to the "requested_by_user_id" field.
+func (m *OpenAI5hWakeTaskMutation) AddRequestedByUserID(i int64) {
+	if m.addrequested_by_user_id != nil {
+		*m.addrequested_by_user_id += i
+	} else {
+		m.addrequested_by_user_id = &i
+	}
+}
+
+// AddedRequestedByUserID returns the value that was added to the "requested_by_user_id" field in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedRequestedByUserID() (r int64, exists bool) {
+	v := m.addrequested_by_user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearRequestedByUserID clears the value of the "requested_by_user_id" field.
+func (m *OpenAI5hWakeTaskMutation) ClearRequestedByUserID() {
+	m.requested_by_user_id = nil
+	m.addrequested_by_user_id = nil
+	m.clearedFields[openai5hwaketask.FieldRequestedByUserID] = struct{}{}
+}
+
+// RequestedByUserIDCleared returns if the "requested_by_user_id" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) RequestedByUserIDCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketask.FieldRequestedByUserID]
+	return ok
+}
+
+// ResetRequestedByUserID resets all changes to the "requested_by_user_id" field.
+func (m *OpenAI5hWakeTaskMutation) ResetRequestedByUserID() {
+	m.requested_by_user_id = nil
+	m.addrequested_by_user_id = nil
+	delete(m.clearedFields, openai5hwaketask.FieldRequestedByUserID)
+}
+
+// SetRequestedByEmail sets the "requested_by_email" field.
+func (m *OpenAI5hWakeTaskMutation) SetRequestedByEmail(s string) {
+	m.requested_by_email = &s
+}
+
+// RequestedByEmail returns the value of the "requested_by_email" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) RequestedByEmail() (r string, exists bool) {
+	v := m.requested_by_email
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestedByEmail returns the old "requested_by_email" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldRequestedByEmail(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestedByEmail is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestedByEmail requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestedByEmail: %w", err)
+	}
+	return oldValue.RequestedByEmail, nil
+}
+
+// ClearRequestedByEmail clears the value of the "requested_by_email" field.
+func (m *OpenAI5hWakeTaskMutation) ClearRequestedByEmail() {
+	m.requested_by_email = nil
+	m.clearedFields[openai5hwaketask.FieldRequestedByEmail] = struct{}{}
+}
+
+// RequestedByEmailCleared returns if the "requested_by_email" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) RequestedByEmailCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketask.FieldRequestedByEmail]
+	return ok
+}
+
+// ResetRequestedByEmail resets all changes to the "requested_by_email" field.
+func (m *OpenAI5hWakeTaskMutation) ResetRequestedByEmail() {
+	m.requested_by_email = nil
+	delete(m.clearedFields, openai5hwaketask.FieldRequestedByEmail)
+}
+
+// SetLeaseOwner sets the "lease_owner" field.
+func (m *OpenAI5hWakeTaskMutation) SetLeaseOwner(s string) {
+	m.lease_owner = &s
+}
+
+// LeaseOwner returns the value of the "lease_owner" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) LeaseOwner() (r string, exists bool) {
+	v := m.lease_owner
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLeaseOwner returns the old "lease_owner" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldLeaseOwner(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLeaseOwner is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLeaseOwner requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLeaseOwner: %w", err)
+	}
+	return oldValue.LeaseOwner, nil
+}
+
+// ClearLeaseOwner clears the value of the "lease_owner" field.
+func (m *OpenAI5hWakeTaskMutation) ClearLeaseOwner() {
+	m.lease_owner = nil
+	m.clearedFields[openai5hwaketask.FieldLeaseOwner] = struct{}{}
+}
+
+// LeaseOwnerCleared returns if the "lease_owner" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) LeaseOwnerCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketask.FieldLeaseOwner]
+	return ok
+}
+
+// ResetLeaseOwner resets all changes to the "lease_owner" field.
+func (m *OpenAI5hWakeTaskMutation) ResetLeaseOwner() {
+	m.lease_owner = nil
+	delete(m.clearedFields, openai5hwaketask.FieldLeaseOwner)
+}
+
+// SetLeaseExpiresAt sets the "lease_expires_at" field.
+func (m *OpenAI5hWakeTaskMutation) SetLeaseExpiresAt(t time.Time) {
+	m.lease_expires_at = &t
+}
+
+// LeaseExpiresAt returns the value of the "lease_expires_at" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) LeaseExpiresAt() (r time.Time, exists bool) {
+	v := m.lease_expires_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLeaseExpiresAt returns the old "lease_expires_at" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldLeaseExpiresAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLeaseExpiresAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLeaseExpiresAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLeaseExpiresAt: %w", err)
+	}
+	return oldValue.LeaseExpiresAt, nil
+}
+
+// ClearLeaseExpiresAt clears the value of the "lease_expires_at" field.
+func (m *OpenAI5hWakeTaskMutation) ClearLeaseExpiresAt() {
+	m.lease_expires_at = nil
+	m.clearedFields[openai5hwaketask.FieldLeaseExpiresAt] = struct{}{}
+}
+
+// LeaseExpiresAtCleared returns if the "lease_expires_at" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) LeaseExpiresAtCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketask.FieldLeaseExpiresAt]
+	return ok
+}
+
+// ResetLeaseExpiresAt resets all changes to the "lease_expires_at" field.
+func (m *OpenAI5hWakeTaskMutation) ResetLeaseExpiresAt() {
+	m.lease_expires_at = nil
+	delete(m.clearedFields, openai5hwaketask.FieldLeaseExpiresAt)
+}
+
+// SetHeartbeatAt sets the "heartbeat_at" field.
+func (m *OpenAI5hWakeTaskMutation) SetHeartbeatAt(t time.Time) {
+	m.heartbeat_at = &t
+}
+
+// HeartbeatAt returns the value of the "heartbeat_at" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) HeartbeatAt() (r time.Time, exists bool) {
+	v := m.heartbeat_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldHeartbeatAt returns the old "heartbeat_at" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldHeartbeatAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldHeartbeatAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldHeartbeatAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldHeartbeatAt: %w", err)
+	}
+	return oldValue.HeartbeatAt, nil
+}
+
+// ClearHeartbeatAt clears the value of the "heartbeat_at" field.
+func (m *OpenAI5hWakeTaskMutation) ClearHeartbeatAt() {
+	m.heartbeat_at = nil
+	m.clearedFields[openai5hwaketask.FieldHeartbeatAt] = struct{}{}
+}
+
+// HeartbeatAtCleared returns if the "heartbeat_at" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) HeartbeatAtCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketask.FieldHeartbeatAt]
+	return ok
+}
+
+// ResetHeartbeatAt resets all changes to the "heartbeat_at" field.
+func (m *OpenAI5hWakeTaskMutation) ResetHeartbeatAt() {
+	m.heartbeat_at = nil
+	delete(m.clearedFields, openai5hwaketask.FieldHeartbeatAt)
+}
+
+// SetEarliestResetAt sets the "earliest_reset_at" field.
+func (m *OpenAI5hWakeTaskMutation) SetEarliestResetAt(t time.Time) {
+	m.earliest_reset_at = &t
+}
+
+// EarliestResetAt returns the value of the "earliest_reset_at" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) EarliestResetAt() (r time.Time, exists bool) {
+	v := m.earliest_reset_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEarliestResetAt returns the old "earliest_reset_at" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldEarliestResetAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEarliestResetAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEarliestResetAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEarliestResetAt: %w", err)
+	}
+	return oldValue.EarliestResetAt, nil
+}
+
+// ClearEarliestResetAt clears the value of the "earliest_reset_at" field.
+func (m *OpenAI5hWakeTaskMutation) ClearEarliestResetAt() {
+	m.earliest_reset_at = nil
+	m.clearedFields[openai5hwaketask.FieldEarliestResetAt] = struct{}{}
+}
+
+// EarliestResetAtCleared returns if the "earliest_reset_at" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) EarliestResetAtCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketask.FieldEarliestResetAt]
+	return ok
+}
+
+// ResetEarliestResetAt resets all changes to the "earliest_reset_at" field.
+func (m *OpenAI5hWakeTaskMutation) ResetEarliestResetAt() {
+	m.earliest_reset_at = nil
+	delete(m.clearedFields, openai5hwaketask.FieldEarliestResetAt)
+}
+
+// SetLatestResetAt sets the "latest_reset_at" field.
+func (m *OpenAI5hWakeTaskMutation) SetLatestResetAt(t time.Time) {
+	m.latest_reset_at = &t
+}
+
+// LatestResetAt returns the value of the "latest_reset_at" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) LatestResetAt() (r time.Time, exists bool) {
+	v := m.latest_reset_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLatestResetAt returns the old "latest_reset_at" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldLatestResetAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLatestResetAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLatestResetAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLatestResetAt: %w", err)
+	}
+	return oldValue.LatestResetAt, nil
+}
+
+// ClearLatestResetAt clears the value of the "latest_reset_at" field.
+func (m *OpenAI5hWakeTaskMutation) ClearLatestResetAt() {
+	m.latest_reset_at = nil
+	m.clearedFields[openai5hwaketask.FieldLatestResetAt] = struct{}{}
+}
+
+// LatestResetAtCleared returns if the "latest_reset_at" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) LatestResetAtCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketask.FieldLatestResetAt]
+	return ok
+}
+
+// ResetLatestResetAt resets all changes to the "latest_reset_at" field.
+func (m *OpenAI5hWakeTaskMutation) ResetLatestResetAt() {
+	m.latest_reset_at = nil
+	delete(m.clearedFields, openai5hwaketask.FieldLatestResetAt)
+}
+
+// SetCancelRequestedAt sets the "cancel_requested_at" field.
+func (m *OpenAI5hWakeTaskMutation) SetCancelRequestedAt(t time.Time) {
+	m.cancel_requested_at = &t
+}
+
+// CancelRequestedAt returns the value of the "cancel_requested_at" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) CancelRequestedAt() (r time.Time, exists bool) {
+	v := m.cancel_requested_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCancelRequestedAt returns the old "cancel_requested_at" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldCancelRequestedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCancelRequestedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCancelRequestedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCancelRequestedAt: %w", err)
+	}
+	return oldValue.CancelRequestedAt, nil
+}
+
+// ClearCancelRequestedAt clears the value of the "cancel_requested_at" field.
+func (m *OpenAI5hWakeTaskMutation) ClearCancelRequestedAt() {
+	m.cancel_requested_at = nil
+	m.clearedFields[openai5hwaketask.FieldCancelRequestedAt] = struct{}{}
+}
+
+// CancelRequestedAtCleared returns if the "cancel_requested_at" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) CancelRequestedAtCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketask.FieldCancelRequestedAt]
+	return ok
+}
+
+// ResetCancelRequestedAt resets all changes to the "cancel_requested_at" field.
+func (m *OpenAI5hWakeTaskMutation) ResetCancelRequestedAt() {
+	m.cancel_requested_at = nil
+	delete(m.clearedFields, openai5hwaketask.FieldCancelRequestedAt)
+}
+
+// SetStartedAt sets the "started_at" field.
+func (m *OpenAI5hWakeTaskMutation) SetStartedAt(t time.Time) {
+	m.started_at = &t
+}
+
+// StartedAt returns the value of the "started_at" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) StartedAt() (r time.Time, exists bool) {
+	v := m.started_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStartedAt returns the old "started_at" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldStartedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStartedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStartedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStartedAt: %w", err)
+	}
+	return oldValue.StartedAt, nil
+}
+
+// ClearStartedAt clears the value of the "started_at" field.
+func (m *OpenAI5hWakeTaskMutation) ClearStartedAt() {
+	m.started_at = nil
+	m.clearedFields[openai5hwaketask.FieldStartedAt] = struct{}{}
+}
+
+// StartedAtCleared returns if the "started_at" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) StartedAtCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketask.FieldStartedAt]
+	return ok
+}
+
+// ResetStartedAt resets all changes to the "started_at" field.
+func (m *OpenAI5hWakeTaskMutation) ResetStartedAt() {
+	m.started_at = nil
+	delete(m.clearedFields, openai5hwaketask.FieldStartedAt)
+}
+
+// SetFinishedAt sets the "finished_at" field.
+func (m *OpenAI5hWakeTaskMutation) SetFinishedAt(t time.Time) {
+	m.finished_at = &t
+}
+
+// FinishedAt returns the value of the "finished_at" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) FinishedAt() (r time.Time, exists bool) {
+	v := m.finished_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFinishedAt returns the old "finished_at" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldFinishedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFinishedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFinishedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFinishedAt: %w", err)
+	}
+	return oldValue.FinishedAt, nil
+}
+
+// ClearFinishedAt clears the value of the "finished_at" field.
+func (m *OpenAI5hWakeTaskMutation) ClearFinishedAt() {
+	m.finished_at = nil
+	m.clearedFields[openai5hwaketask.FieldFinishedAt] = struct{}{}
+}
+
+// FinishedAtCleared returns if the "finished_at" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) FinishedAtCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketask.FieldFinishedAt]
+	return ok
+}
+
+// ResetFinishedAt resets all changes to the "finished_at" field.
+func (m *OpenAI5hWakeTaskMutation) ResetFinishedAt() {
+	m.finished_at = nil
+	delete(m.clearedFields, openai5hwaketask.FieldFinishedAt)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *OpenAI5hWakeTaskMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *OpenAI5hWakeTaskMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *OpenAI5hWakeTaskMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *OpenAI5hWakeTaskMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the OpenAI5hWakeTaskMutation builder.
+func (m *OpenAI5hWakeTaskMutation) Where(ps ...predicate.OpenAI5hWakeTask) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the OpenAI5hWakeTaskMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *OpenAI5hWakeTaskMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.OpenAI5hWakeTask, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *OpenAI5hWakeTaskMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *OpenAI5hWakeTaskMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (OpenAI5hWakeTask).
+func (m *OpenAI5hWakeTaskMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *OpenAI5hWakeTaskMutation) Fields() []string {
+	fields := make([]string, 0, 22)
+	if m.status != nil {
+		fields = append(fields, openai5hwaketask.FieldStatus)
+	}
+	if m.eligible_account_count != nil {
+		fields = append(fields, openai5hwaketask.FieldEligibleAccountCount)
+	}
+	if m.active_window_count != nil {
+		fields = append(fields, openai5hwaketask.FieldActiveWindowCount)
+	}
+	if m.estimated_request_count != nil {
+		fields = append(fields, openai5hwaketask.FieldEstimatedRequestCount)
+	}
+	if m.total_items != nil {
+		fields = append(fields, openai5hwaketask.FieldTotalItems)
+	}
+	if m.processed_items != nil {
+		fields = append(fields, openai5hwaketask.FieldProcessedItems)
+	}
+	if m.woken_count != nil {
+		fields = append(fields, openai5hwaketask.FieldWokenCount)
+	}
+	if m.skipped_active_count != nil {
+		fields = append(fields, openai5hwaketask.FieldSkippedActiveCount)
+	}
+	if m.failed_count != nil {
+		fields = append(fields, openai5hwaketask.FieldFailedCount)
+	}
+	if m.cancelled_count != nil {
+		fields = append(fields, openai5hwaketask.FieldCancelledCount)
+	}
+	if m.requested_by_user_id != nil {
+		fields = append(fields, openai5hwaketask.FieldRequestedByUserID)
+	}
+	if m.requested_by_email != nil {
+		fields = append(fields, openai5hwaketask.FieldRequestedByEmail)
+	}
+	if m.lease_owner != nil {
+		fields = append(fields, openai5hwaketask.FieldLeaseOwner)
+	}
+	if m.lease_expires_at != nil {
+		fields = append(fields, openai5hwaketask.FieldLeaseExpiresAt)
+	}
+	if m.heartbeat_at != nil {
+		fields = append(fields, openai5hwaketask.FieldHeartbeatAt)
+	}
+	if m.earliest_reset_at != nil {
+		fields = append(fields, openai5hwaketask.FieldEarliestResetAt)
+	}
+	if m.latest_reset_at != nil {
+		fields = append(fields, openai5hwaketask.FieldLatestResetAt)
+	}
+	if m.cancel_requested_at != nil {
+		fields = append(fields, openai5hwaketask.FieldCancelRequestedAt)
+	}
+	if m.started_at != nil {
+		fields = append(fields, openai5hwaketask.FieldStartedAt)
+	}
+	if m.finished_at != nil {
+		fields = append(fields, openai5hwaketask.FieldFinishedAt)
+	}
+	if m.created_at != nil {
+		fields = append(fields, openai5hwaketask.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, openai5hwaketask.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *OpenAI5hWakeTaskMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case openai5hwaketask.FieldStatus:
+		return m.Status()
+	case openai5hwaketask.FieldEligibleAccountCount:
+		return m.EligibleAccountCount()
+	case openai5hwaketask.FieldActiveWindowCount:
+		return m.ActiveWindowCount()
+	case openai5hwaketask.FieldEstimatedRequestCount:
+		return m.EstimatedRequestCount()
+	case openai5hwaketask.FieldTotalItems:
+		return m.TotalItems()
+	case openai5hwaketask.FieldProcessedItems:
+		return m.ProcessedItems()
+	case openai5hwaketask.FieldWokenCount:
+		return m.WokenCount()
+	case openai5hwaketask.FieldSkippedActiveCount:
+		return m.SkippedActiveCount()
+	case openai5hwaketask.FieldFailedCount:
+		return m.FailedCount()
+	case openai5hwaketask.FieldCancelledCount:
+		return m.CancelledCount()
+	case openai5hwaketask.FieldRequestedByUserID:
+		return m.RequestedByUserID()
+	case openai5hwaketask.FieldRequestedByEmail:
+		return m.RequestedByEmail()
+	case openai5hwaketask.FieldLeaseOwner:
+		return m.LeaseOwner()
+	case openai5hwaketask.FieldLeaseExpiresAt:
+		return m.LeaseExpiresAt()
+	case openai5hwaketask.FieldHeartbeatAt:
+		return m.HeartbeatAt()
+	case openai5hwaketask.FieldEarliestResetAt:
+		return m.EarliestResetAt()
+	case openai5hwaketask.FieldLatestResetAt:
+		return m.LatestResetAt()
+	case openai5hwaketask.FieldCancelRequestedAt:
+		return m.CancelRequestedAt()
+	case openai5hwaketask.FieldStartedAt:
+		return m.StartedAt()
+	case openai5hwaketask.FieldFinishedAt:
+		return m.FinishedAt()
+	case openai5hwaketask.FieldCreatedAt:
+		return m.CreatedAt()
+	case openai5hwaketask.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *OpenAI5hWakeTaskMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case openai5hwaketask.FieldStatus:
+		return m.OldStatus(ctx)
+	case openai5hwaketask.FieldEligibleAccountCount:
+		return m.OldEligibleAccountCount(ctx)
+	case openai5hwaketask.FieldActiveWindowCount:
+		return m.OldActiveWindowCount(ctx)
+	case openai5hwaketask.FieldEstimatedRequestCount:
+		return m.OldEstimatedRequestCount(ctx)
+	case openai5hwaketask.FieldTotalItems:
+		return m.OldTotalItems(ctx)
+	case openai5hwaketask.FieldProcessedItems:
+		return m.OldProcessedItems(ctx)
+	case openai5hwaketask.FieldWokenCount:
+		return m.OldWokenCount(ctx)
+	case openai5hwaketask.FieldSkippedActiveCount:
+		return m.OldSkippedActiveCount(ctx)
+	case openai5hwaketask.FieldFailedCount:
+		return m.OldFailedCount(ctx)
+	case openai5hwaketask.FieldCancelledCount:
+		return m.OldCancelledCount(ctx)
+	case openai5hwaketask.FieldRequestedByUserID:
+		return m.OldRequestedByUserID(ctx)
+	case openai5hwaketask.FieldRequestedByEmail:
+		return m.OldRequestedByEmail(ctx)
+	case openai5hwaketask.FieldLeaseOwner:
+		return m.OldLeaseOwner(ctx)
+	case openai5hwaketask.FieldLeaseExpiresAt:
+		return m.OldLeaseExpiresAt(ctx)
+	case openai5hwaketask.FieldHeartbeatAt:
+		return m.OldHeartbeatAt(ctx)
+	case openai5hwaketask.FieldEarliestResetAt:
+		return m.OldEarliestResetAt(ctx)
+	case openai5hwaketask.FieldLatestResetAt:
+		return m.OldLatestResetAt(ctx)
+	case openai5hwaketask.FieldCancelRequestedAt:
+		return m.OldCancelRequestedAt(ctx)
+	case openai5hwaketask.FieldStartedAt:
+		return m.OldStartedAt(ctx)
+	case openai5hwaketask.FieldFinishedAt:
+		return m.OldFinishedAt(ctx)
+	case openai5hwaketask.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case openai5hwaketask.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown OpenAI5hWakeTask field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *OpenAI5hWakeTaskMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case openai5hwaketask.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case openai5hwaketask.FieldEligibleAccountCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEligibleAccountCount(v)
+		return nil
+	case openai5hwaketask.FieldActiveWindowCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetActiveWindowCount(v)
+		return nil
+	case openai5hwaketask.FieldEstimatedRequestCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEstimatedRequestCount(v)
+		return nil
+	case openai5hwaketask.FieldTotalItems:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTotalItems(v)
+		return nil
+	case openai5hwaketask.FieldProcessedItems:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProcessedItems(v)
+		return nil
+	case openai5hwaketask.FieldWokenCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWokenCount(v)
+		return nil
+	case openai5hwaketask.FieldSkippedActiveCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSkippedActiveCount(v)
+		return nil
+	case openai5hwaketask.FieldFailedCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFailedCount(v)
+		return nil
+	case openai5hwaketask.FieldCancelledCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCancelledCount(v)
+		return nil
+	case openai5hwaketask.FieldRequestedByUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestedByUserID(v)
+		return nil
+	case openai5hwaketask.FieldRequestedByEmail:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestedByEmail(v)
+		return nil
+	case openai5hwaketask.FieldLeaseOwner:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLeaseOwner(v)
+		return nil
+	case openai5hwaketask.FieldLeaseExpiresAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLeaseExpiresAt(v)
+		return nil
+	case openai5hwaketask.FieldHeartbeatAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetHeartbeatAt(v)
+		return nil
+	case openai5hwaketask.FieldEarliestResetAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEarliestResetAt(v)
+		return nil
+	case openai5hwaketask.FieldLatestResetAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLatestResetAt(v)
+		return nil
+	case openai5hwaketask.FieldCancelRequestedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCancelRequestedAt(v)
+		return nil
+	case openai5hwaketask.FieldStartedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStartedAt(v)
+		return nil
+	case openai5hwaketask.FieldFinishedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFinishedAt(v)
+		return nil
+	case openai5hwaketask.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case openai5hwaketask.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown OpenAI5hWakeTask field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedFields() []string {
+	var fields []string
+	if m.addeligible_account_count != nil {
+		fields = append(fields, openai5hwaketask.FieldEligibleAccountCount)
+	}
+	if m.addactive_window_count != nil {
+		fields = append(fields, openai5hwaketask.FieldActiveWindowCount)
+	}
+	if m.addestimated_request_count != nil {
+		fields = append(fields, openai5hwaketask.FieldEstimatedRequestCount)
+	}
+	if m.addtotal_items != nil {
+		fields = append(fields, openai5hwaketask.FieldTotalItems)
+	}
+	if m.addprocessed_items != nil {
+		fields = append(fields, openai5hwaketask.FieldProcessedItems)
+	}
+	if m.addwoken_count != nil {
+		fields = append(fields, openai5hwaketask.FieldWokenCount)
+	}
+	if m.addskipped_active_count != nil {
+		fields = append(fields, openai5hwaketask.FieldSkippedActiveCount)
+	}
+	if m.addfailed_count != nil {
+		fields = append(fields, openai5hwaketask.FieldFailedCount)
+	}
+	if m.addcancelled_count != nil {
+		fields = append(fields, openai5hwaketask.FieldCancelledCount)
+	}
+	if m.addrequested_by_user_id != nil {
+		fields = append(fields, openai5hwaketask.FieldRequestedByUserID)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *OpenAI5hWakeTaskMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case openai5hwaketask.FieldEligibleAccountCount:
+		return m.AddedEligibleAccountCount()
+	case openai5hwaketask.FieldActiveWindowCount:
+		return m.AddedActiveWindowCount()
+	case openai5hwaketask.FieldEstimatedRequestCount:
+		return m.AddedEstimatedRequestCount()
+	case openai5hwaketask.FieldTotalItems:
+		return m.AddedTotalItems()
+	case openai5hwaketask.FieldProcessedItems:
+		return m.AddedProcessedItems()
+	case openai5hwaketask.FieldWokenCount:
+		return m.AddedWokenCount()
+	case openai5hwaketask.FieldSkippedActiveCount:
+		return m.AddedSkippedActiveCount()
+	case openai5hwaketask.FieldFailedCount:
+		return m.AddedFailedCount()
+	case openai5hwaketask.FieldCancelledCount:
+		return m.AddedCancelledCount()
+	case openai5hwaketask.FieldRequestedByUserID:
+		return m.AddedRequestedByUserID()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *OpenAI5hWakeTaskMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case openai5hwaketask.FieldEligibleAccountCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddEligibleAccountCount(v)
+		return nil
+	case openai5hwaketask.FieldActiveWindowCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddActiveWindowCount(v)
+		return nil
+	case openai5hwaketask.FieldEstimatedRequestCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddEstimatedRequestCount(v)
+		return nil
+	case openai5hwaketask.FieldTotalItems:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTotalItems(v)
+		return nil
+	case openai5hwaketask.FieldProcessedItems:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddProcessedItems(v)
+		return nil
+	case openai5hwaketask.FieldWokenCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddWokenCount(v)
+		return nil
+	case openai5hwaketask.FieldSkippedActiveCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSkippedActiveCount(v)
+		return nil
+	case openai5hwaketask.FieldFailedCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddFailedCount(v)
+		return nil
+	case openai5hwaketask.FieldCancelledCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddCancelledCount(v)
+		return nil
+	case openai5hwaketask.FieldRequestedByUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRequestedByUserID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown OpenAI5hWakeTask numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *OpenAI5hWakeTaskMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(openai5hwaketask.FieldRequestedByUserID) {
+		fields = append(fields, openai5hwaketask.FieldRequestedByUserID)
+	}
+	if m.FieldCleared(openai5hwaketask.FieldRequestedByEmail) {
+		fields = append(fields, openai5hwaketask.FieldRequestedByEmail)
+	}
+	if m.FieldCleared(openai5hwaketask.FieldLeaseOwner) {
+		fields = append(fields, openai5hwaketask.FieldLeaseOwner)
+	}
+	if m.FieldCleared(openai5hwaketask.FieldLeaseExpiresAt) {
+		fields = append(fields, openai5hwaketask.FieldLeaseExpiresAt)
+	}
+	if m.FieldCleared(openai5hwaketask.FieldHeartbeatAt) {
+		fields = append(fields, openai5hwaketask.FieldHeartbeatAt)
+	}
+	if m.FieldCleared(openai5hwaketask.FieldEarliestResetAt) {
+		fields = append(fields, openai5hwaketask.FieldEarliestResetAt)
+	}
+	if m.FieldCleared(openai5hwaketask.FieldLatestResetAt) {
+		fields = append(fields, openai5hwaketask.FieldLatestResetAt)
+	}
+	if m.FieldCleared(openai5hwaketask.FieldCancelRequestedAt) {
+		fields = append(fields, openai5hwaketask.FieldCancelRequestedAt)
+	}
+	if m.FieldCleared(openai5hwaketask.FieldStartedAt) {
+		fields = append(fields, openai5hwaketask.FieldStartedAt)
+	}
+	if m.FieldCleared(openai5hwaketask.FieldFinishedAt) {
+		fields = append(fields, openai5hwaketask.FieldFinishedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *OpenAI5hWakeTaskMutation) ClearField(name string) error {
+	switch name {
+	case openai5hwaketask.FieldRequestedByUserID:
+		m.ClearRequestedByUserID()
+		return nil
+	case openai5hwaketask.FieldRequestedByEmail:
+		m.ClearRequestedByEmail()
+		return nil
+	case openai5hwaketask.FieldLeaseOwner:
+		m.ClearLeaseOwner()
+		return nil
+	case openai5hwaketask.FieldLeaseExpiresAt:
+		m.ClearLeaseExpiresAt()
+		return nil
+	case openai5hwaketask.FieldHeartbeatAt:
+		m.ClearHeartbeatAt()
+		return nil
+	case openai5hwaketask.FieldEarliestResetAt:
+		m.ClearEarliestResetAt()
+		return nil
+	case openai5hwaketask.FieldLatestResetAt:
+		m.ClearLatestResetAt()
+		return nil
+	case openai5hwaketask.FieldCancelRequestedAt:
+		m.ClearCancelRequestedAt()
+		return nil
+	case openai5hwaketask.FieldStartedAt:
+		m.ClearStartedAt()
+		return nil
+	case openai5hwaketask.FieldFinishedAt:
+		m.ClearFinishedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown OpenAI5hWakeTask nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *OpenAI5hWakeTaskMutation) ResetField(name string) error {
+	switch name {
+	case openai5hwaketask.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case openai5hwaketask.FieldEligibleAccountCount:
+		m.ResetEligibleAccountCount()
+		return nil
+	case openai5hwaketask.FieldActiveWindowCount:
+		m.ResetActiveWindowCount()
+		return nil
+	case openai5hwaketask.FieldEstimatedRequestCount:
+		m.ResetEstimatedRequestCount()
+		return nil
+	case openai5hwaketask.FieldTotalItems:
+		m.ResetTotalItems()
+		return nil
+	case openai5hwaketask.FieldProcessedItems:
+		m.ResetProcessedItems()
+		return nil
+	case openai5hwaketask.FieldWokenCount:
+		m.ResetWokenCount()
+		return nil
+	case openai5hwaketask.FieldSkippedActiveCount:
+		m.ResetSkippedActiveCount()
+		return nil
+	case openai5hwaketask.FieldFailedCount:
+		m.ResetFailedCount()
+		return nil
+	case openai5hwaketask.FieldCancelledCount:
+		m.ResetCancelledCount()
+		return nil
+	case openai5hwaketask.FieldRequestedByUserID:
+		m.ResetRequestedByUserID()
+		return nil
+	case openai5hwaketask.FieldRequestedByEmail:
+		m.ResetRequestedByEmail()
+		return nil
+	case openai5hwaketask.FieldLeaseOwner:
+		m.ResetLeaseOwner()
+		return nil
+	case openai5hwaketask.FieldLeaseExpiresAt:
+		m.ResetLeaseExpiresAt()
+		return nil
+	case openai5hwaketask.FieldHeartbeatAt:
+		m.ResetHeartbeatAt()
+		return nil
+	case openai5hwaketask.FieldEarliestResetAt:
+		m.ResetEarliestResetAt()
+		return nil
+	case openai5hwaketask.FieldLatestResetAt:
+		m.ResetLatestResetAt()
+		return nil
+	case openai5hwaketask.FieldCancelRequestedAt:
+		m.ResetCancelRequestedAt()
+		return nil
+	case openai5hwaketask.FieldStartedAt:
+		m.ResetStartedAt()
+		return nil
+	case openai5hwaketask.FieldFinishedAt:
+		m.ResetFinishedAt()
+		return nil
+	case openai5hwaketask.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case openai5hwaketask.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown OpenAI5hWakeTask field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *OpenAI5hWakeTaskMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *OpenAI5hWakeTaskMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *OpenAI5hWakeTaskMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown OpenAI5hWakeTask unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *OpenAI5hWakeTaskMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown OpenAI5hWakeTask edge %s", name)
+}
+
+// OpenAI5hWakeTaskItemMutation represents an operation that mutates the OpenAI5hWakeTaskItem nodes in the graph.
+type OpenAI5hWakeTaskItemMutation struct {
+	config
+	op                          Op
+	typ                         string
+	id                          *int64
+	task_id                     *int64
+	addtask_id                  *int64
+	identity_hash               *string
+	member_account_ids          *[]int64
+	appendmember_account_ids    []int64
+	attempted_account_ids       *[]int64
+	appendattempted_account_ids []int64
+	successful_account_id       *int64
+	addsuccessful_account_id    *int64
+	status                      *string
+	attempt_count               *int
+	addattempt_count            *int
+	error_code                  *string
+	reset_at                    *time.Time
+	started_at                  *time.Time
+	finished_at                 *time.Time
+	created_at                  *time.Time
+	updated_at                  *time.Time
+	clearedFields               map[string]struct{}
+	done                        bool
+	oldValue                    func(context.Context) (*OpenAI5hWakeTaskItem, error)
+	predicates                  []predicate.OpenAI5hWakeTaskItem
+}
+
+var _ ent.Mutation = (*OpenAI5hWakeTaskItemMutation)(nil)
+
+// openai5hwaketaskitemOption allows management of the mutation configuration using functional options.
+type openai5hwaketaskitemOption func(*OpenAI5hWakeTaskItemMutation)
+
+// newOpenAI5hWakeTaskItemMutation creates new mutation for the OpenAI5hWakeTaskItem entity.
+func newOpenAI5hWakeTaskItemMutation(c config, op Op, opts ...openai5hwaketaskitemOption) *OpenAI5hWakeTaskItemMutation {
+	m := &OpenAI5hWakeTaskItemMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeOpenAI5hWakeTaskItem,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withOpenAI5hWakeTaskItemID sets the ID field of the mutation.
+func withOpenAI5hWakeTaskItemID(id int64) openai5hwaketaskitemOption {
+	return func(m *OpenAI5hWakeTaskItemMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *OpenAI5hWakeTaskItem
+		)
+		m.oldValue = func(ctx context.Context) (*OpenAI5hWakeTaskItem, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().OpenAI5hWakeTaskItem.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withOpenAI5hWakeTaskItem sets the old OpenAI5hWakeTaskItem of the mutation.
+func withOpenAI5hWakeTaskItem(node *OpenAI5hWakeTaskItem) openai5hwaketaskitemOption {
+	return func(m *OpenAI5hWakeTaskItemMutation) {
+		m.oldValue = func(context.Context) (*OpenAI5hWakeTaskItem, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m OpenAI5hWakeTaskItemMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m OpenAI5hWakeTaskItemMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *OpenAI5hWakeTaskItemMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().OpenAI5hWakeTaskItem.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetTaskID sets the "task_id" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetTaskID(i int64) {
+	m.task_id = &i
+	m.addtask_id = nil
+}
+
+// TaskID returns the value of the "task_id" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) TaskID() (r int64, exists bool) {
+	v := m.task_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTaskID returns the old "task_id" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldTaskID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTaskID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTaskID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTaskID: %w", err)
+	}
+	return oldValue.TaskID, nil
+}
+
+// AddTaskID adds i to the "task_id" field.
+func (m *OpenAI5hWakeTaskItemMutation) AddTaskID(i int64) {
+	if m.addtask_id != nil {
+		*m.addtask_id += i
+	} else {
+		m.addtask_id = &i
+	}
+}
+
+// AddedTaskID returns the value that was added to the "task_id" field in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) AddedTaskID() (r int64, exists bool) {
+	v := m.addtask_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTaskID resets all changes to the "task_id" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetTaskID() {
+	m.task_id = nil
+	m.addtask_id = nil
+}
+
+// SetIdentityHash sets the "identity_hash" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetIdentityHash(s string) {
+	m.identity_hash = &s
+}
+
+// IdentityHash returns the value of the "identity_hash" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) IdentityHash() (r string, exists bool) {
+	v := m.identity_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIdentityHash returns the old "identity_hash" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldIdentityHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIdentityHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIdentityHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIdentityHash: %w", err)
+	}
+	return oldValue.IdentityHash, nil
+}
+
+// ResetIdentityHash resets all changes to the "identity_hash" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetIdentityHash() {
+	m.identity_hash = nil
+}
+
+// SetMemberAccountIds sets the "member_account_ids" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetMemberAccountIds(i []int64) {
+	m.member_account_ids = &i
+	m.appendmember_account_ids = nil
+}
+
+// MemberAccountIds returns the value of the "member_account_ids" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) MemberAccountIds() (r []int64, exists bool) {
+	v := m.member_account_ids
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMemberAccountIds returns the old "member_account_ids" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldMemberAccountIds(ctx context.Context) (v []int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMemberAccountIds is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMemberAccountIds requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMemberAccountIds: %w", err)
+	}
+	return oldValue.MemberAccountIds, nil
+}
+
+// AppendMemberAccountIds adds i to the "member_account_ids" field.
+func (m *OpenAI5hWakeTaskItemMutation) AppendMemberAccountIds(i []int64) {
+	m.appendmember_account_ids = append(m.appendmember_account_ids, i...)
+}
+
+// AppendedMemberAccountIds returns the list of values that were appended to the "member_account_ids" field in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) AppendedMemberAccountIds() ([]int64, bool) {
+	if len(m.appendmember_account_ids) == 0 {
+		return nil, false
+	}
+	return m.appendmember_account_ids, true
+}
+
+// ResetMemberAccountIds resets all changes to the "member_account_ids" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetMemberAccountIds() {
+	m.member_account_ids = nil
+	m.appendmember_account_ids = nil
+}
+
+// SetAttemptedAccountIds sets the "attempted_account_ids" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetAttemptedAccountIds(i []int64) {
+	m.attempted_account_ids = &i
+	m.appendattempted_account_ids = nil
+}
+
+// AttemptedAccountIds returns the value of the "attempted_account_ids" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) AttemptedAccountIds() (r []int64, exists bool) {
+	v := m.attempted_account_ids
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAttemptedAccountIds returns the old "attempted_account_ids" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldAttemptedAccountIds(ctx context.Context) (v []int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAttemptedAccountIds is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAttemptedAccountIds requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAttemptedAccountIds: %w", err)
+	}
+	return oldValue.AttemptedAccountIds, nil
+}
+
+// AppendAttemptedAccountIds adds i to the "attempted_account_ids" field.
+func (m *OpenAI5hWakeTaskItemMutation) AppendAttemptedAccountIds(i []int64) {
+	m.appendattempted_account_ids = append(m.appendattempted_account_ids, i...)
+}
+
+// AppendedAttemptedAccountIds returns the list of values that were appended to the "attempted_account_ids" field in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) AppendedAttemptedAccountIds() ([]int64, bool) {
+	if len(m.appendattempted_account_ids) == 0 {
+		return nil, false
+	}
+	return m.appendattempted_account_ids, true
+}
+
+// ResetAttemptedAccountIds resets all changes to the "attempted_account_ids" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetAttemptedAccountIds() {
+	m.attempted_account_ids = nil
+	m.appendattempted_account_ids = nil
+}
+
+// SetSuccessfulAccountID sets the "successful_account_id" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetSuccessfulAccountID(i int64) {
+	m.successful_account_id = &i
+	m.addsuccessful_account_id = nil
+}
+
+// SuccessfulAccountID returns the value of the "successful_account_id" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) SuccessfulAccountID() (r int64, exists bool) {
+	v := m.successful_account_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSuccessfulAccountID returns the old "successful_account_id" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldSuccessfulAccountID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSuccessfulAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSuccessfulAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSuccessfulAccountID: %w", err)
+	}
+	return oldValue.SuccessfulAccountID, nil
+}
+
+// AddSuccessfulAccountID adds i to the "successful_account_id" field.
+func (m *OpenAI5hWakeTaskItemMutation) AddSuccessfulAccountID(i int64) {
+	if m.addsuccessful_account_id != nil {
+		*m.addsuccessful_account_id += i
+	} else {
+		m.addsuccessful_account_id = &i
+	}
+}
+
+// AddedSuccessfulAccountID returns the value that was added to the "successful_account_id" field in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) AddedSuccessfulAccountID() (r int64, exists bool) {
+	v := m.addsuccessful_account_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearSuccessfulAccountID clears the value of the "successful_account_id" field.
+func (m *OpenAI5hWakeTaskItemMutation) ClearSuccessfulAccountID() {
+	m.successful_account_id = nil
+	m.addsuccessful_account_id = nil
+	m.clearedFields[openai5hwaketaskitem.FieldSuccessfulAccountID] = struct{}{}
+}
+
+// SuccessfulAccountIDCleared returns if the "successful_account_id" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) SuccessfulAccountIDCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketaskitem.FieldSuccessfulAccountID]
+	return ok
+}
+
+// ResetSuccessfulAccountID resets all changes to the "successful_account_id" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetSuccessfulAccountID() {
+	m.successful_account_id = nil
+	m.addsuccessful_account_id = nil
+	delete(m.clearedFields, openai5hwaketaskitem.FieldSuccessfulAccountID)
+}
+
+// SetStatus sets the "status" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetAttemptCount sets the "attempt_count" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetAttemptCount(i int) {
+	m.attempt_count = &i
+	m.addattempt_count = nil
+}
+
+// AttemptCount returns the value of the "attempt_count" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) AttemptCount() (r int, exists bool) {
+	v := m.attempt_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAttemptCount returns the old "attempt_count" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldAttemptCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAttemptCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAttemptCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAttemptCount: %w", err)
+	}
+	return oldValue.AttemptCount, nil
+}
+
+// AddAttemptCount adds i to the "attempt_count" field.
+func (m *OpenAI5hWakeTaskItemMutation) AddAttemptCount(i int) {
+	if m.addattempt_count != nil {
+		*m.addattempt_count += i
+	} else {
+		m.addattempt_count = &i
+	}
+}
+
+// AddedAttemptCount returns the value that was added to the "attempt_count" field in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) AddedAttemptCount() (r int, exists bool) {
+	v := m.addattempt_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAttemptCount resets all changes to the "attempt_count" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetAttemptCount() {
+	m.attempt_count = nil
+	m.addattempt_count = nil
+}
+
+// SetErrorCode sets the "error_code" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetErrorCode(s string) {
+	m.error_code = &s
+}
+
+// ErrorCode returns the value of the "error_code" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) ErrorCode() (r string, exists bool) {
+	v := m.error_code
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldErrorCode returns the old "error_code" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldErrorCode(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldErrorCode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldErrorCode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldErrorCode: %w", err)
+	}
+	return oldValue.ErrorCode, nil
+}
+
+// ClearErrorCode clears the value of the "error_code" field.
+func (m *OpenAI5hWakeTaskItemMutation) ClearErrorCode() {
+	m.error_code = nil
+	m.clearedFields[openai5hwaketaskitem.FieldErrorCode] = struct{}{}
+}
+
+// ErrorCodeCleared returns if the "error_code" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) ErrorCodeCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketaskitem.FieldErrorCode]
+	return ok
+}
+
+// ResetErrorCode resets all changes to the "error_code" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetErrorCode() {
+	m.error_code = nil
+	delete(m.clearedFields, openai5hwaketaskitem.FieldErrorCode)
+}
+
+// SetResetAt sets the "reset_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetResetAt(t time.Time) {
+	m.reset_at = &t
+}
+
+// ResetAt returns the value of the "reset_at" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) ResetAt() (r time.Time, exists bool) {
+	v := m.reset_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldResetAt returns the old "reset_at" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldResetAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldResetAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldResetAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldResetAt: %w", err)
+	}
+	return oldValue.ResetAt, nil
+}
+
+// ClearResetAt clears the value of the "reset_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) ClearResetAt() {
+	m.reset_at = nil
+	m.clearedFields[openai5hwaketaskitem.FieldResetAt] = struct{}{}
+}
+
+// ResetAtCleared returns if the "reset_at" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) ResetAtCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketaskitem.FieldResetAt]
+	return ok
+}
+
+// ResetResetAt resets all changes to the "reset_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetResetAt() {
+	m.reset_at = nil
+	delete(m.clearedFields, openai5hwaketaskitem.FieldResetAt)
+}
+
+// SetStartedAt sets the "started_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetStartedAt(t time.Time) {
+	m.started_at = &t
+}
+
+// StartedAt returns the value of the "started_at" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) StartedAt() (r time.Time, exists bool) {
+	v := m.started_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStartedAt returns the old "started_at" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldStartedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStartedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStartedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStartedAt: %w", err)
+	}
+	return oldValue.StartedAt, nil
+}
+
+// ClearStartedAt clears the value of the "started_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) ClearStartedAt() {
+	m.started_at = nil
+	m.clearedFields[openai5hwaketaskitem.FieldStartedAt] = struct{}{}
+}
+
+// StartedAtCleared returns if the "started_at" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) StartedAtCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketaskitem.FieldStartedAt]
+	return ok
+}
+
+// ResetStartedAt resets all changes to the "started_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetStartedAt() {
+	m.started_at = nil
+	delete(m.clearedFields, openai5hwaketaskitem.FieldStartedAt)
+}
+
+// SetFinishedAt sets the "finished_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetFinishedAt(t time.Time) {
+	m.finished_at = &t
+}
+
+// FinishedAt returns the value of the "finished_at" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) FinishedAt() (r time.Time, exists bool) {
+	v := m.finished_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFinishedAt returns the old "finished_at" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldFinishedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFinishedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFinishedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFinishedAt: %w", err)
+	}
+	return oldValue.FinishedAt, nil
+}
+
+// ClearFinishedAt clears the value of the "finished_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) ClearFinishedAt() {
+	m.finished_at = nil
+	m.clearedFields[openai5hwaketaskitem.FieldFinishedAt] = struct{}{}
+}
+
+// FinishedAtCleared returns if the "finished_at" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) FinishedAtCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketaskitem.FieldFinishedAt]
+	return ok
+}
+
+// ResetFinishedAt resets all changes to the "finished_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetFinishedAt() {
+	m.finished_at = nil
+	delete(m.clearedFields, openai5hwaketaskitem.FieldFinishedAt)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *OpenAI5hWakeTaskItemMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the OpenAI5hWakeTaskItem entity.
+// If the OpenAI5hWakeTaskItem object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskItemMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *OpenAI5hWakeTaskItemMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the OpenAI5hWakeTaskItemMutation builder.
+func (m *OpenAI5hWakeTaskItemMutation) Where(ps ...predicate.OpenAI5hWakeTaskItem) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the OpenAI5hWakeTaskItemMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *OpenAI5hWakeTaskItemMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.OpenAI5hWakeTaskItem, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *OpenAI5hWakeTaskItemMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *OpenAI5hWakeTaskItemMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (OpenAI5hWakeTaskItem).
+func (m *OpenAI5hWakeTaskItemMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *OpenAI5hWakeTaskItemMutation) Fields() []string {
+	fields := make([]string, 0, 13)
+	if m.task_id != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldTaskID)
+	}
+	if m.identity_hash != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldIdentityHash)
+	}
+	if m.member_account_ids != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldMemberAccountIds)
+	}
+	if m.attempted_account_ids != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldAttemptedAccountIds)
+	}
+	if m.successful_account_id != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldSuccessfulAccountID)
+	}
+	if m.status != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldStatus)
+	}
+	if m.attempt_count != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldAttemptCount)
+	}
+	if m.error_code != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldErrorCode)
+	}
+	if m.reset_at != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldResetAt)
+	}
+	if m.started_at != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldStartedAt)
+	}
+	if m.finished_at != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldFinishedAt)
+	}
+	if m.created_at != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *OpenAI5hWakeTaskItemMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case openai5hwaketaskitem.FieldTaskID:
+		return m.TaskID()
+	case openai5hwaketaskitem.FieldIdentityHash:
+		return m.IdentityHash()
+	case openai5hwaketaskitem.FieldMemberAccountIds:
+		return m.MemberAccountIds()
+	case openai5hwaketaskitem.FieldAttemptedAccountIds:
+		return m.AttemptedAccountIds()
+	case openai5hwaketaskitem.FieldSuccessfulAccountID:
+		return m.SuccessfulAccountID()
+	case openai5hwaketaskitem.FieldStatus:
+		return m.Status()
+	case openai5hwaketaskitem.FieldAttemptCount:
+		return m.AttemptCount()
+	case openai5hwaketaskitem.FieldErrorCode:
+		return m.ErrorCode()
+	case openai5hwaketaskitem.FieldResetAt:
+		return m.ResetAt()
+	case openai5hwaketaskitem.FieldStartedAt:
+		return m.StartedAt()
+	case openai5hwaketaskitem.FieldFinishedAt:
+		return m.FinishedAt()
+	case openai5hwaketaskitem.FieldCreatedAt:
+		return m.CreatedAt()
+	case openai5hwaketaskitem.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *OpenAI5hWakeTaskItemMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case openai5hwaketaskitem.FieldTaskID:
+		return m.OldTaskID(ctx)
+	case openai5hwaketaskitem.FieldIdentityHash:
+		return m.OldIdentityHash(ctx)
+	case openai5hwaketaskitem.FieldMemberAccountIds:
+		return m.OldMemberAccountIds(ctx)
+	case openai5hwaketaskitem.FieldAttemptedAccountIds:
+		return m.OldAttemptedAccountIds(ctx)
+	case openai5hwaketaskitem.FieldSuccessfulAccountID:
+		return m.OldSuccessfulAccountID(ctx)
+	case openai5hwaketaskitem.FieldStatus:
+		return m.OldStatus(ctx)
+	case openai5hwaketaskitem.FieldAttemptCount:
+		return m.OldAttemptCount(ctx)
+	case openai5hwaketaskitem.FieldErrorCode:
+		return m.OldErrorCode(ctx)
+	case openai5hwaketaskitem.FieldResetAt:
+		return m.OldResetAt(ctx)
+	case openai5hwaketaskitem.FieldStartedAt:
+		return m.OldStartedAt(ctx)
+	case openai5hwaketaskitem.FieldFinishedAt:
+		return m.OldFinishedAt(ctx)
+	case openai5hwaketaskitem.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case openai5hwaketaskitem.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown OpenAI5hWakeTaskItem field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *OpenAI5hWakeTaskItemMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case openai5hwaketaskitem.FieldTaskID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTaskID(v)
+		return nil
+	case openai5hwaketaskitem.FieldIdentityHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIdentityHash(v)
+		return nil
+	case openai5hwaketaskitem.FieldMemberAccountIds:
+		v, ok := value.([]int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMemberAccountIds(v)
+		return nil
+	case openai5hwaketaskitem.FieldAttemptedAccountIds:
+		v, ok := value.([]int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAttemptedAccountIds(v)
+		return nil
+	case openai5hwaketaskitem.FieldSuccessfulAccountID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSuccessfulAccountID(v)
+		return nil
+	case openai5hwaketaskitem.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case openai5hwaketaskitem.FieldAttemptCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAttemptCount(v)
+		return nil
+	case openai5hwaketaskitem.FieldErrorCode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetErrorCode(v)
+		return nil
+	case openai5hwaketaskitem.FieldResetAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetResetAt(v)
+		return nil
+	case openai5hwaketaskitem.FieldStartedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStartedAt(v)
+		return nil
+	case openai5hwaketaskitem.FieldFinishedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFinishedAt(v)
+		return nil
+	case openai5hwaketaskitem.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case openai5hwaketaskitem.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown OpenAI5hWakeTaskItem field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) AddedFields() []string {
+	var fields []string
+	if m.addtask_id != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldTaskID)
+	}
+	if m.addsuccessful_account_id != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldSuccessfulAccountID)
+	}
+	if m.addattempt_count != nil {
+		fields = append(fields, openai5hwaketaskitem.FieldAttemptCount)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *OpenAI5hWakeTaskItemMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case openai5hwaketaskitem.FieldTaskID:
+		return m.AddedTaskID()
+	case openai5hwaketaskitem.FieldSuccessfulAccountID:
+		return m.AddedSuccessfulAccountID()
+	case openai5hwaketaskitem.FieldAttemptCount:
+		return m.AddedAttemptCount()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *OpenAI5hWakeTaskItemMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case openai5hwaketaskitem.FieldTaskID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTaskID(v)
+		return nil
+	case openai5hwaketaskitem.FieldSuccessfulAccountID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSuccessfulAccountID(v)
+		return nil
+	case openai5hwaketaskitem.FieldAttemptCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAttemptCount(v)
+		return nil
+	}
+	return fmt.Errorf("unknown OpenAI5hWakeTaskItem numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *OpenAI5hWakeTaskItemMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(openai5hwaketaskitem.FieldSuccessfulAccountID) {
+		fields = append(fields, openai5hwaketaskitem.FieldSuccessfulAccountID)
+	}
+	if m.FieldCleared(openai5hwaketaskitem.FieldErrorCode) {
+		fields = append(fields, openai5hwaketaskitem.FieldErrorCode)
+	}
+	if m.FieldCleared(openai5hwaketaskitem.FieldResetAt) {
+		fields = append(fields, openai5hwaketaskitem.FieldResetAt)
+	}
+	if m.FieldCleared(openai5hwaketaskitem.FieldStartedAt) {
+		fields = append(fields, openai5hwaketaskitem.FieldStartedAt)
+	}
+	if m.FieldCleared(openai5hwaketaskitem.FieldFinishedAt) {
+		fields = append(fields, openai5hwaketaskitem.FieldFinishedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *OpenAI5hWakeTaskItemMutation) ClearField(name string) error {
+	switch name {
+	case openai5hwaketaskitem.FieldSuccessfulAccountID:
+		m.ClearSuccessfulAccountID()
+		return nil
+	case openai5hwaketaskitem.FieldErrorCode:
+		m.ClearErrorCode()
+		return nil
+	case openai5hwaketaskitem.FieldResetAt:
+		m.ClearResetAt()
+		return nil
+	case openai5hwaketaskitem.FieldStartedAt:
+		m.ClearStartedAt()
+		return nil
+	case openai5hwaketaskitem.FieldFinishedAt:
+		m.ClearFinishedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown OpenAI5hWakeTaskItem nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *OpenAI5hWakeTaskItemMutation) ResetField(name string) error {
+	switch name {
+	case openai5hwaketaskitem.FieldTaskID:
+		m.ResetTaskID()
+		return nil
+	case openai5hwaketaskitem.FieldIdentityHash:
+		m.ResetIdentityHash()
+		return nil
+	case openai5hwaketaskitem.FieldMemberAccountIds:
+		m.ResetMemberAccountIds()
+		return nil
+	case openai5hwaketaskitem.FieldAttemptedAccountIds:
+		m.ResetAttemptedAccountIds()
+		return nil
+	case openai5hwaketaskitem.FieldSuccessfulAccountID:
+		m.ResetSuccessfulAccountID()
+		return nil
+	case openai5hwaketaskitem.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case openai5hwaketaskitem.FieldAttemptCount:
+		m.ResetAttemptCount()
+		return nil
+	case openai5hwaketaskitem.FieldErrorCode:
+		m.ResetErrorCode()
+		return nil
+	case openai5hwaketaskitem.FieldResetAt:
+		m.ResetResetAt()
+		return nil
+	case openai5hwaketaskitem.FieldStartedAt:
+		m.ResetStartedAt()
+		return nil
+	case openai5hwaketaskitem.FieldFinishedAt:
+		m.ResetFinishedAt()
+		return nil
+	case openai5hwaketaskitem.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case openai5hwaketaskitem.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown OpenAI5hWakeTaskItem field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *OpenAI5hWakeTaskItemMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *OpenAI5hWakeTaskItemMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown OpenAI5hWakeTaskItem unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *OpenAI5hWakeTaskItemMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown OpenAI5hWakeTaskItem edge %s", name)
 }
 
 // PaymentAuditLogMutation represents an operation that mutates the PaymentAuditLog nodes in the graph.

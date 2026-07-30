@@ -62,6 +62,25 @@
                 </div>
               </div>
 
+              <button
+                v-if="isOpenAI5hWakeTaskActive"
+                type="button"
+                class="btn btn-secondary px-2 text-blue-700 dark:text-blue-300 md:px-3"
+                :title="t('admin.accounts.openAI5hWake.title')"
+                data-testid="openai-5h-wake-running-entry"
+                @click="showOpenAI5hWake = true"
+              >
+                <Icon name="clock" size="sm" class="md:mr-1.5" />
+                <span class="hidden whitespace-nowrap md:inline">
+                  {{
+                    t('admin.accounts.openAI5hWake.runningEntry', {
+                      processed: latestOpenAI5hWakeTask?.processed_items ?? 0,
+                      total: latestOpenAI5hWakeTask?.total_items ?? 0
+                    })
+                  }}
+                </span>
+              </button>
+
               <!-- More Tools Dropdown -->
               <div class="relative" ref="accountToolsDropdownRef">
                 <button
@@ -132,6 +151,12 @@
                           <Icon name="lock" size="sm" />
                         </span>
                         <span class="flex-1 text-left">{{ t('admin.tlsFingerprintProfiles.title') }}</span>
+                      </button>
+                      <button class="account-tools-menu-item" data-testid="openai-5h-wake-menu-item" @click="openOpenAI5hWake">
+                        <span class="account-tools-menu-icon bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
+                          <Icon name="clock" size="sm" />
+                        </span>
+                        <span class="flex-1 text-left">{{ t('admin.accounts.openAI5hWake.action') }}</span>
                       </button>
 
                       <div class="my-2 border-t border-gray-100 dark:border-dark-700"></div>
@@ -462,6 +487,13 @@
     </ConfirmDialog>
     <ErrorPassthroughRulesModal :show="showErrorPassthrough" @close="showErrorPassthrough = false" />
     <TLSFingerprintProfilesModal :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
+    <OpenAI5hWakeDialog
+      :show="showOpenAI5hWake"
+      :initial-task="latestOpenAI5hWakeTask"
+      @close="showOpenAI5hWake = false"
+      @task-updated="handleOpenAI5hWakeTaskUpdated"
+      @completed="handleOpenAI5hWakeTaskCompleted"
+    />
     <TotpStepUpDialog :controller="accountExportStepUp" />
   </AppLayout>
 </template>
@@ -505,6 +537,7 @@ import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
+import OpenAI5hWakeDialog from '@/components/account/OpenAI5hWakeDialog.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
@@ -512,6 +545,7 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { sanitizeUrl } from '@/utils/url'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
+import type { OpenAI5hWakeTask } from '@/api/admin/accounts'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -576,6 +610,18 @@ const showTest = ref(false)
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
+const showOpenAI5hWake = ref(false)
+const latestOpenAI5hWakeTask = ref<OpenAI5hWakeTask | null>(null)
+const openAI5hWakeTerminalStatuses = new Set<OpenAI5hWakeTask['status']>([
+  'succeeded',
+  'partial_succeeded',
+  'failed',
+  'cancelled'
+])
+const isOpenAI5hWakeTaskActive = computed(() => {
+  const status = latestOpenAI5hWakeTask.value?.status
+  return status === 'pending' || status === 'running'
+})
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
@@ -1067,7 +1113,8 @@ const isAnyModalOpen = computed(() => {
     showStats.value ||
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
-    showTLSFingerprintProfiles.value
+    showTLSFingerprintProfiles.value ||
+    showOpenAI5hWake.value
   )
 })
 
@@ -1237,6 +1284,70 @@ const openTLSFingerprintProfiles = () => {
   closeAccountToolsDropdown()
   showTLSFingerprintProfiles.value = true
 }
+
+const openOpenAI5hWake = () => {
+  closeAccountToolsDropdown()
+  showOpenAI5hWake.value = true
+}
+
+const handledOpenAI5hWakeTasks = new Set<number>()
+let latestOpenAI5hWakeRefreshing = false
+
+const refreshAccountsAfterOpenAI5hWake = async (task: OpenAI5hWakeTask) => {
+  if (handledOpenAI5hWakeTasks.has(task.id)) return
+  handledOpenAI5hWakeTasks.add(task.id)
+  try {
+    await reload()
+    usageManualRefreshToken.value += 1
+  } catch (error) {
+    console.error('Failed to refresh accounts after OpenAI 5h wake task:', error)
+  }
+  const params = {
+    woken: task.woken_count,
+    skipped: task.skipped_active_count,
+    failed: task.failed_count
+  }
+  if (task.failed_count > 0 || task.status === 'failed' || task.status === 'cancelled') {
+    appStore.showWarning(t('admin.accounts.openAI5hWake.completedWithFailures', params))
+  } else {
+    appStore.showSuccess(t('admin.accounts.openAI5hWake.completed', params))
+  }
+}
+
+const handleOpenAI5hWakeTaskUpdated = (task: OpenAI5hWakeTask) => {
+  latestOpenAI5hWakeTask.value = task
+}
+
+const handleOpenAI5hWakeTaskCompleted = (task: OpenAI5hWakeTask) => {
+  latestOpenAI5hWakeTask.value = task
+  void refreshAccountsAfterOpenAI5hWake(task)
+}
+
+const refreshLatestOpenAI5hWakeTask = async (handleTerminalTransition: boolean) => {
+  if (latestOpenAI5hWakeRefreshing) return
+  const getLatestTask = adminAPI.accounts.getLatestOpenAI5hWakeTask
+  if (typeof getLatestTask !== 'function') return
+  latestOpenAI5hWakeRefreshing = true
+  const previous = latestOpenAI5hWakeTask.value
+  try {
+    const next = await getLatestTask()
+    latestOpenAI5hWakeTask.value = next
+    const previousWasActive = previous?.status === 'pending' || previous?.status === 'running'
+    if (handleTerminalTransition && previousWasActive && next && openAI5hWakeTerminalStatuses.has(next.status)) {
+      await refreshAccountsAfterOpenAI5hWake(next)
+    }
+  } catch (error) {
+    console.error('Failed to load latest OpenAI 5h wake task:', error)
+  } finally {
+    latestOpenAI5hWakeRefreshing = false
+  }
+}
+
+useIntervalFn(() => {
+  if (typeof document !== 'undefined' && document.hidden) return
+  if (showOpenAI5hWake.value) return
+  void refreshLatestOpenAI5hWakeTask(true)
+}, 5000)
 
 const syncPendingListChanges = async () => {
   hasPendingListSync.value = false
@@ -2094,6 +2205,7 @@ const handleClickOutside = (event: MouseEvent) => {
 onMounted(async () => {
   load()
   loadUpstreamBillingProbeGlobalState()
+  void refreshLatestOpenAI5hWakeTask(false)
   try {
     const [p, g] = await Promise.all([adminAPI.proxies.getAll(), adminAPI.groups.getAll()])
     proxies.value = p

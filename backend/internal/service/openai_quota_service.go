@@ -142,6 +142,16 @@ func NewOpenAIQuotaService(
 // OAuth account. Returns infraerrors so the handler layer can map them to
 // stable error codes / HTTP statuses.
 func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*OpenAIQuotaUsage, error) {
+	return s.queryUsage(ctx, accountID, true)
+}
+
+// QueryUsageLightweight fetches only /wham/usage. Wake probes use this method
+// because reset-credit inventory is unrelated to starting a 5h window.
+func (s *OpenAIQuotaService) QueryUsageLightweight(ctx context.Context, accountID int64) (*OpenAIQuotaUsage, error) {
+	return s.queryUsage(ctx, accountID, false)
+}
+
+func (s *OpenAIQuotaService) queryUsage(ctx context.Context, accountID int64, includeResetCredits bool) (*OpenAIQuotaUsage, error) {
 	accessToken, chatGPTAccountID, proxyURL, fedRAMP, err := s.prepareUpstreamCall(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -179,6 +189,10 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 				continue
 			}
 			status := resp.StatusCode
+			if !includeResetCredits {
+				slog.Warn("openai_quota_lightweight_query_failed", "account_id", accountID, "status", status)
+				return nil, infraerrors.Newf(mapUpstreamStatus(status), "OPENAI_QUOTA_UPSTREAM_ERROR", "upstream returned %d", status)
+			}
 			body := truncate(s.redactQuotaErrorBody(ctx, accountID, resp.String()), 240)
 			slog.Warn("openai_quota_query_failed", "account_id", accountID, "status", status, "body", body)
 			return nil, infraerrors.Newf(mapUpstreamStatus(status), "OPENAI_QUOTA_UPSTREAM_ERROR", "upstream returned %d: %s", status, body)
@@ -187,6 +201,9 @@ func (s *OpenAIQuotaService) QueryUsage(ctx context.Context, accountID int64) (*
 	}
 
 	payload.FetchedAt = time.Now().Unix()
+	if !includeResetCredits {
+		return &payload, nil
+	}
 	details := s.queryResetCreditDetails(callCtx, client, accessToken, chatGPTAccountID, fedRAMP, accountID)
 	if details != nil {
 		hasDetailCount := details.AvailableCount != nil
@@ -592,6 +609,49 @@ func buildCodexSparkWindowExtraUpdates(usage *OpenAIQuotaUsage, now time.Time) m
 	}
 	updates["codex_usage_updated_at"] = now.Format(time.RFC3339)
 	return updates
+}
+
+// buildCodexGlobalWindowExtraUpdates maps the global /wham/usage rate limit to
+// the same canonical codex_5h_* / codex_7d_* keys used by response headers.
+func buildCodexGlobalWindowExtraUpdates(usage *OpenAIQuotaUsage, now time.Time) map[string]any {
+	if usage == nil || usage.RateLimit == nil {
+		return nil
+	}
+	return buildCodexRateLimitWindowExtraUpdates(usage.RateLimit, now)
+}
+
+func buildCodexRateLimitWindowExtraUpdates(rateLimit *OpenAIRateLimit, now time.Time) map[string]any {
+	if rateLimit == nil {
+		return nil
+	}
+	snapshot := &OpenAICodexUsageSnapshot{}
+	applyWindow := func(window *OpenAIRateLimitWindow, primary bool) {
+		if window == nil {
+			return
+		}
+		used := window.UsedPercent
+		resetAfter := int(window.ResetAfterSeconds)
+		if window.ResetAt > now.Unix() {
+			resetAfter = int(window.ResetAt - now.Unix())
+		}
+		windowMinutes := int(window.LimitWindowSeconds / 60)
+		if primary {
+			snapshot.PrimaryUsedPercent = &used
+			snapshot.PrimaryResetAfterSeconds = &resetAfter
+			snapshot.PrimaryWindowMinutes = &windowMinutes
+			return
+		}
+		snapshot.SecondaryUsedPercent = &used
+		snapshot.SecondaryResetAfterSeconds = &resetAfter
+		snapshot.SecondaryWindowMinutes = &windowMinutes
+	}
+	applyWindow(rateLimit.PrimaryWindow, true)
+	applyWindow(rateLimit.SecondaryWindow, false)
+	if snapshot.PrimaryWindowMinutes == nil && snapshot.SecondaryWindowMinutes == nil {
+		return nil
+	}
+	snapshot.UpdatedAt = now.UTC().Format(time.RFC3339)
+	return buildCodexUsageExtraUpdates(snapshot, now)
 }
 
 // mapUpstreamStatus collapses upstream HTTP statuses into a stable set we

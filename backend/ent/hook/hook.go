@@ -237,6 +237,30 @@ func (f IdentityAdoptionDecisionFunc) Mutate(ctx context.Context, m ent.Mutation
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.IdentityAdoptionDecisionMutation", m)
 }
 
+// The OpenAI5hWakeTaskFunc type is an adapter to allow the use of ordinary
+// function as OpenAI5hWakeTask mutator.
+type OpenAI5hWakeTaskFunc func(context.Context, *ent.OpenAI5hWakeTaskMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f OpenAI5hWakeTaskFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.OpenAI5hWakeTaskMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.OpenAI5hWakeTaskMutation", m)
+}
+
+// The OpenAI5hWakeTaskItemFunc type is an adapter to allow the use of ordinary
+// function as OpenAI5hWakeTaskItem mutator.
+type OpenAI5hWakeTaskItemFunc func(context.Context, *ent.OpenAI5hWakeTaskItemMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f OpenAI5hWakeTaskItemFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.OpenAI5hWakeTaskItemMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.OpenAI5hWakeTaskItemMutation", m)
+}
+
 // The PaymentAuditLogFunc type is an adapter to allow the use of ordinary
 // function as PaymentAuditLog mutator.
 type PaymentAuditLogFunc func(context.Context, *ent.PaymentAuditLogMutation) (ent.Value, error)

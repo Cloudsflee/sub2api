@@ -27,6 +27,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/idempotencyrecord"
 	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
+	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketask"
+	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketaskitem"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
@@ -619,6 +621,60 @@ func (f TraverseIdentityAdoptionDecision) Traverse(ctx context.Context, q ent.Qu
 	return fmt.Errorf("unexpected query type %T. expect *ent.IdentityAdoptionDecisionQuery", q)
 }
 
+// The OpenAI5hWakeTaskFunc type is an adapter to allow the use of ordinary function as a Querier.
+type OpenAI5hWakeTaskFunc func(context.Context, *ent.OpenAI5hWakeTaskQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f OpenAI5hWakeTaskFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.OpenAI5hWakeTaskQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.OpenAI5hWakeTaskQuery", q)
+}
+
+// The TraverseOpenAI5hWakeTask type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseOpenAI5hWakeTask func(context.Context, *ent.OpenAI5hWakeTaskQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseOpenAI5hWakeTask) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseOpenAI5hWakeTask) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.OpenAI5hWakeTaskQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.OpenAI5hWakeTaskQuery", q)
+}
+
+// The OpenAI5hWakeTaskItemFunc type is an adapter to allow the use of ordinary function as a Querier.
+type OpenAI5hWakeTaskItemFunc func(context.Context, *ent.OpenAI5hWakeTaskItemQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f OpenAI5hWakeTaskItemFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.OpenAI5hWakeTaskItemQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.OpenAI5hWakeTaskItemQuery", q)
+}
+
+// The TraverseOpenAI5hWakeTaskItem type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseOpenAI5hWakeTaskItem func(context.Context, *ent.OpenAI5hWakeTaskItemQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseOpenAI5hWakeTaskItem) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseOpenAI5hWakeTaskItem) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.OpenAI5hWakeTaskItemQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.OpenAI5hWakeTaskItemQuery", q)
+}
+
 // The PaymentAuditLogFunc type is an adapter to allow the use of ordinary function as a Querier.
 type PaymentAuditLogFunc func(context.Context, *ent.PaymentAuditLogQuery) (ent.Value, error)
 
@@ -1200,6 +1256,10 @@ func NewQuery(q ent.Query) (Query, error) {
 		return &query[*ent.IdempotencyRecordQuery, predicate.IdempotencyRecord, idempotencyrecord.OrderOption]{typ: ent.TypeIdempotencyRecord, tq: q}, nil
 	case *ent.IdentityAdoptionDecisionQuery:
 		return &query[*ent.IdentityAdoptionDecisionQuery, predicate.IdentityAdoptionDecision, identityadoptiondecision.OrderOption]{typ: ent.TypeIdentityAdoptionDecision, tq: q}, nil
+	case *ent.OpenAI5hWakeTaskQuery:
+		return &query[*ent.OpenAI5hWakeTaskQuery, predicate.OpenAI5hWakeTask, openai5hwaketask.OrderOption]{typ: ent.TypeOpenAI5hWakeTask, tq: q}, nil
+	case *ent.OpenAI5hWakeTaskItemQuery:
+		return &query[*ent.OpenAI5hWakeTaskItemQuery, predicate.OpenAI5hWakeTaskItem, openai5hwaketaskitem.OrderOption]{typ: ent.TypeOpenAI5hWakeTaskItem, tq: q}, nil
 	case *ent.PaymentAuditLogQuery:
 		return &query[*ent.PaymentAuditLogQuery, predicate.PaymentAuditLog, paymentauditlog.OrderOption]{typ: ent.TypePaymentAuditLog, tq: q}, nil
 	case *ent.PaymentOrderQuery:
