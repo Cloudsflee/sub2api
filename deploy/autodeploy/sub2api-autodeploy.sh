@@ -388,7 +388,7 @@ check_migration_compatibility() {
     normalized=$(git -C "$REPO_DIR" show "$target:$path" \
       | sed -E 's/--.*$//' | tr '\n' ' ')
     if grep -Eiq \
-      '(^|[^[:alnum:]_])(DROP|RENAME)([^[:alnum:]_]|$)|ALTER[[:space:]]+COLUMN[^;]*(TYPE|SET[[:space:]]+DATA[[:space:]]+TYPE)|NOT[[:space:]]+NULL' \
+      '(^|[^[:alnum:]_])(DROP|RENAME)([^[:alnum:]_]|$)|ALTER[[:space:]]+COLUMN[^;]*(TYPE|SET[[:space:]]+DATA[[:space:]]+TYPE)|ALTER[[:space:]]+TABLE[^;]*NOT[[:space:]]+NULL' \
       <<<"$normalized"; then
       log "migration gate rejected destructive SQL in new migration: $path"
       failed=1

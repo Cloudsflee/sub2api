@@ -24,14 +24,27 @@ REPO_DIR="$REPO"
 STATE_DIR="$STATE_DIR"
 STATE_FILE="$STATE_DIR/state.env"
 
+cat >"$REPO/backend/migrations/002_create_jobs.sql" <<'SQL'
+CREATE TABLE jobs (
+  id bigint PRIMARY KEY,
+  status text NOT NULL,
+  finished_at timestamptz NULL
+);
+CREATE INDEX jobs_finished_idx ON jobs (finished_at) WHERE finished_at IS NOT NULL;
+SQL
+git -C "$REPO" add .
+git -C "$REPO" commit -m create-table-not-null >/dev/null
+CREATE_TABLE=$(git -C "$REPO" rev-parse HEAD)
+check_migration_compatibility "$BASELINE" "$CREATE_TABLE"
+
 printf 'ALTER TABLE users ADD COLUMN display_name text;\n' \
-  >"$REPO/backend/migrations/002_add_display_name.sql"
+  >"$REPO/backend/migrations/003_add_display_name.sql"
 git -C "$REPO" add .
 git -C "$REPO" commit -m additive >/dev/null
 ADDITIVE=$(git -C "$REPO" rev-parse HEAD)
-check_migration_compatibility "$BASELINE" "$ADDITIVE"
+check_migration_compatibility "$CREATE_TABLE" "$ADDITIVE"
 
-printf 'DROP TABLE users;\n' >"$REPO/backend/migrations/003_drop_users.sql"
+printf 'DROP TABLE users;\n' >"$REPO/backend/migrations/004_drop_users.sql"
 git -C "$REPO" add .
 git -C "$REPO" commit -m destructive-drop >/dev/null
 DROP_COMMIT=$(git -C "$REPO" rev-parse HEAD)
@@ -41,7 +54,7 @@ if check_migration_compatibility "$ADDITIVE" "$DROP_COMMIT"; then
 fi
 
 printf 'ALTER TABLE users ALTER COLUMN display_name TYPE varchar(32);\n' \
-  >"$REPO/backend/migrations/004_change_type.sql"
+  >"$REPO/backend/migrations/005_change_type.sql"
 git -C "$REPO" add .
 git -C "$REPO" commit -m destructive-type >/dev/null
 TYPE_COMMIT=$(git -C "$REPO" rev-parse HEAD)
@@ -51,7 +64,7 @@ if check_migration_compatibility "$DROP_COMMIT" "$TYPE_COMMIT"; then
 fi
 
 printf 'ALTER TABLE users ALTER COLUMN display_name SET NOT NULL;\n' \
-  >"$REPO/backend/migrations/005_set_not_null.sql"
+  >"$REPO/backend/migrations/006_set_not_null.sql"
 git -C "$REPO" add .
 git -C "$REPO" commit -m destructive-null >/dev/null
 NULL_COMMIT=$(git -C "$REPO" rev-parse HEAD)
@@ -61,7 +74,7 @@ if check_migration_compatibility "$TYPE_COMMIT" "$NULL_COMMIT"; then
 fi
 
 printf 'ALTER TABLE users ADD COLUMN required_name text NOT NULL;\n' \
-  >"$REPO/backend/migrations/006_add_not_null.sql"
+  >"$REPO/backend/migrations/007_add_not_null.sql"
 git -C "$REPO" add .
 git -C "$REPO" commit -m destructive-add-not-null >/dev/null
 ADD_NULL_COMMIT=$(git -C "$REPO" rev-parse HEAD)
