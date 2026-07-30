@@ -11,14 +11,16 @@ const {
   updateGroup,
   getModelsListCandidates,
   getUsageSummary,
-  getCapacitySummary
+  getCapacitySummary,
+  getLiveCapability
 } = vi.hoisted(() => ({
   listGroups: vi.fn(),
   createGroup: vi.fn(),
   updateGroup: vi.fn(),
   getModelsListCandidates: vi.fn(),
   getUsageSummary: vi.fn(),
-  getCapacitySummary: vi.fn()
+  getCapacitySummary: vi.fn(),
+  getLiveCapability: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -32,7 +34,8 @@ vi.mock('@/api/admin', () => ({
       updateSortOrder: vi.fn(),
       getModelsListCandidates,
       getUsageSummary,
-      getCapacitySummary
+      getCapacitySummary,
+      getLiveCapability
     },
     accounts: {
       list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
@@ -192,7 +195,8 @@ describe('GroupsView public account status setting', () => {
       updateGroup,
       getModelsListCandidates,
       getUsageSummary,
-      getCapacitySummary
+      getCapacitySummary,
+      getLiveCapability
     ]) {
       mock.mockReset()
     }
@@ -208,6 +212,7 @@ describe('GroupsView public account status setting', () => {
     getModelsListCandidates.mockResolvedValue([])
     getUsageSummary.mockResolvedValue([])
     getCapacitySummary.mockResolvedValue([])
+    getLiveCapability.mockResolvedValue({ supported: false })
   })
 
   afterEach(() => {

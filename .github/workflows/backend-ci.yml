@@ -26,6 +26,7 @@ jobs:
           python3 -m py_compile deploy/autodeploy/configure-compose.py
           python3 -m py_compile deploy/autodeploy/configure-blue-green.py
           /bin/bash deploy/tests/apple-container-test.sh
+          /bin/sh deploy/test-caddyfile-cache.sh
 
   managed-update:
     runs-on: ubuntu-latest

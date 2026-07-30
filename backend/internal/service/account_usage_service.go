@@ -345,6 +345,13 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64, for
 		return nil, fmt.Errorf("get account failed: %w", err)
 	}
 
+	// Dedicated UI load-test accounts must remain fully interactive without ever
+	// contacting Anthropic with synthetic credentials. Reuse the same persisted
+	// passive snapshot that the account table loads on mount.
+	if account.IsSyntheticUITest() && account.IsAnthropicOAuthOrSetupToken() {
+		return s.GetPassiveUsage(ctx, accountID)
+	}
+
 	if account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth {
 		usage, err := s.getOpenAIUsage(ctx, account, forceProbe)
 		if err == nil {
@@ -508,6 +515,9 @@ func (s *AccountUsageService) GetPassiveUsage(ctx context.Context, accountID int
 
 	// 添加窗口统计
 	s.addWindowStats(ctx, account, info)
+	if account.IsSyntheticUITest() {
+		applySyntheticWindowStats(info, account.Extra)
+	}
 
 	return info, nil
 }
@@ -608,6 +618,23 @@ func (s *AccountUsageService) GetReadOnlyUsage(ctx context.Context, account *Acc
 		return &usage, nil
 	default:
 		return nil, nil
+	}
+}
+
+func applySyntheticWindowStats(info *UsageInfo, extra map[string]any) {
+	if info == nil || info.FiveHour == nil || len(extra) == 0 {
+		return
+	}
+	raw, ok := extra["synthetic_window_stats"].(map[string]any)
+	if !ok {
+		return
+	}
+	info.FiveHour.WindowStats = &WindowStats{
+		Requests:     int64(parseExtraInt(raw["requests"])),
+		Tokens:       int64(parseExtraInt(raw["tokens"])),
+		Cost:         parseExtraFloat64(raw["cost"]),
+		StandardCost: parseExtraFloat64(raw["standard_cost"]),
+		UserCost:     parseExtraFloat64(raw["user_cost"]),
 	}
 }
 
