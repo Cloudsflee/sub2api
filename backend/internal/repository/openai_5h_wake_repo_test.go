@@ -32,7 +32,7 @@ func openAI5hWakeTaskRow(id int64, status string, now time.Time) *sqlmock.Rows {
 func TestOpenAI5hWakeCreateOrGetActiveReturnsConcurrentTask(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := NewOpenAI5hWakeTaskRepository(db)
 	now := time.Now().UTC()
 
@@ -53,7 +53,7 @@ func TestOpenAI5hWakeCreateOrGetActiveReturnsConcurrentTask(t *testing.T) {
 func TestOpenAI5hWakeClaimTaskIncludesExpiredLeaseTakeover(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := NewOpenAI5hWakeTaskRepository(db)
 	now := time.Now().UTC().Truncate(time.Second)
 	leaseUntil := now.Add(60 * time.Second)
@@ -72,7 +72,7 @@ func TestOpenAI5hWakeClaimTaskIncludesExpiredLeaseTakeover(t *testing.T) {
 func TestOpenAI5hWakeCompleteItemIsAtomicAndIdempotent(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := NewOpenAI5hWakeTaskRepository(db)
 	resetAt := time.Now().UTC().Add(5 * time.Hour)
 	successfulID := int64(7)
@@ -103,7 +103,7 @@ func TestOpenAI5hWakeCompleteItemIsAtomicAndIdempotent(t *testing.T) {
 func TestOpenAI5hWakeClaimItemRequiresCurrentUnexpiredLease(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := NewOpenAI5hWakeTaskRepository(db)
 	now := time.Now().UTC()
 	itemColumns := []string{
@@ -128,7 +128,7 @@ func TestOpenAI5hWakeClaimItemRequiresCurrentUnexpiredLease(t *testing.T) {
 func TestOpenAI5hWakeDeletesOnlyOldTerminalTasks(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := NewOpenAI5hWakeTaskRepository(db)
 	cutoff := time.Now().UTC().Add(-30 * 24 * time.Hour)
 
@@ -158,7 +158,7 @@ func TestOpenAI5hWakeMigrationEnforcesDurabilityConstraints(t *testing.T) {
 func TestOpenAI5hWakeGetTaskMapsMissingRow(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := NewOpenAI5hWakeTaskRepository(db)
 
 	mock.ExpectQuery(`FROM openai_5h_wake_tasks WHERE id = \$1`).WithArgs(int64(404)).WillReturnError(sql.ErrNoRows)

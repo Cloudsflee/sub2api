@@ -98,42 +98,52 @@ func invokeOpenAI5hWakeHandler(t *testing.T, method, path string, params gin.Par
 	return recorder.Code, payload
 }
 
+func requireOpenAI5hWakeMap(t *testing.T, value any) map[string]any {
+	t.Helper()
+	result, ok := value.(map[string]any)
+	require.True(t, ok)
+	return result
+}
+
 func TestOpenAI5hWakeHandlerContracts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, repo := newOpenAI5hWakeHandler(t)
 
 	status, payload := invokeOpenAI5hWakeHandler(t, http.MethodGet, "/preview", nil, handler.PreviewOpenAI5hWake)
 	require.Equal(t, http.StatusOK, status)
-	preview := payload["data"].(map[string]any)
+	preview := requireOpenAI5hWakeMap(t, payload["data"])
 	require.Equal(t, float64(1), preview["eligible_accounts"])
 	require.Equal(t, float64(1), preview["unique_quota_pools"])
 
 	status, payload = invokeOpenAI5hWakeHandler(t, http.MethodPost, "/tasks", nil, handler.CreateOpenAI5hWakeTask)
 	require.Equal(t, http.StatusAccepted, status)
-	created := payload["data"].(map[string]any)
+	created := requireOpenAI5hWakeMap(t, payload["data"])
 	require.Equal(t, false, created["reused"])
-	require.Equal(t, float64(31), created["task"].(map[string]any)["id"])
+	require.Equal(t, float64(31), requireOpenAI5hWakeMap(t, created["task"])["id"])
 	require.Len(t, repo.createParams.Items, 1)
 	require.Len(t, repo.createParams.Items[0].IdentityHash, 64)
 
 	status, payload = invokeOpenAI5hWakeHandler(t, http.MethodGet, "/tasks/latest", nil, handler.GetLatestOpenAI5hWakeTask)
 	require.Equal(t, http.StatusOK, status)
-	require.Equal(t, float64(31), payload["data"].(map[string]any)["task"].(map[string]any)["id"])
+	latest := requireOpenAI5hWakeMap(t, payload["data"])
+	require.Equal(t, float64(31), requireOpenAI5hWakeMap(t, latest["task"])["id"])
 
 	params := gin.Params{{Key: "id", Value: "31"}}
 	status, payload = invokeOpenAI5hWakeHandler(t, http.MethodGet, "/tasks/31", params, handler.GetOpenAI5hWakeTask)
 	require.Equal(t, http.StatusOK, status)
-	require.Equal(t, "pending", payload["data"].(map[string]any)["status"])
+	require.Equal(t, "pending", requireOpenAI5hWakeMap(t, payload["data"])["status"])
 
 	status, payload = invokeOpenAI5hWakeHandler(t, http.MethodGet, "/tasks/31/items?page=1&page_size=10", params, handler.ListOpenAI5hWakeTaskItems)
 	require.Equal(t, http.StatusOK, status)
-	items := payload["data"].(map[string]any)
+	items := requireOpenAI5hWakeMap(t, payload["data"])
 	require.Equal(t, float64(1), items["total"])
-	require.Len(t, items["items"].([]any), 1)
+	itemList, ok := items["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, itemList, 1)
 
 	status, payload = invokeOpenAI5hWakeHandler(t, http.MethodPost, "/tasks/31/cancel", params, handler.CancelOpenAI5hWakeTask)
 	require.Equal(t, http.StatusOK, status)
-	require.NotEmpty(t, payload["data"].(map[string]any)["cancel_requested_at"])
+	require.NotEmpty(t, requireOpenAI5hWakeMap(t, payload["data"])["cancel_requested_at"])
 }
 
 func TestOpenAI5hWakeHandlerRejectsInvalidTaskID(t *testing.T) {
