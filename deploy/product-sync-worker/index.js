@@ -2,10 +2,12 @@ const { chromium } = require('playwright-core')
 const fs = require('node:fs')
 const { collectAuthoritativeSnapshot } = require('./catalog-sync')
 const {
+  JobLeaseLostError,
   Semaphore,
   TokenBucket,
   browserResourceCounts,
-  closeContextThenCreate,
+  createJobHeartbeat,
+  initializeProxyPool,
   isPressureError,
   isVerificationPageState,
   parsePositiveMilliseconds,
@@ -17,6 +19,7 @@ const {
   proxyPoolsForConcurrency,
   shopRequestError,
   takeRequestTokens,
+  throwIfAborted,
   withPressureRecovery,
 } = require('./worker-utils')
 
@@ -65,9 +68,14 @@ let stopping = false
 
 function publishStatus(values) {
   const resources = browserResourceCounts(activeBrowserContexts)
+  const lanes = laneStatuses.map((status, index) => ({
+    ...status,
+    context_ready: Boolean(activeBrowserContexts[index]),
+  }))
   workerStatus = {
     ...workerStatus,
     ...values,
+    lanes,
     browser_context_count: resources.contextCount,
     browser_page_count: resources.pageCount,
     updated_at: new Date().toISOString(),
@@ -89,21 +97,40 @@ function publishLaneStatus(lane, values) {
     updated_at: new Date().toISOString(),
   }
   const states = laneStatuses.map((status) => status.state)
+  const readyStates = new Set(['idle', 'syncing', 'blocked'])
+  const readyLaneCount = laneStatuses.filter((status, index) => (
+    Boolean(activeBrowserContexts[index]) && readyStates.has(status.state)
+  )).length
+  const degradedLaneCount = laneStatuses.filter((status, index) => (
+    !activeBrowserContexts[index] && ['blocked', 'error', 'restarting'].includes(status.state)
+  )).length
   const state = stopping ? 'stopping'
     : states.includes('syncing') ? 'syncing'
-      : states.includes('blocked') ? 'blocked'
-        : states.includes('error') ? 'error'
-          : states.every((value) => value === 'starting') ? 'starting'
-            : 'idle'
+      : readyLaneCount > 0 && degradedLaneCount > 0 ? 'degraded'
+        : states.includes('blocked') ? 'blocked'
+          : states.includes('idle') ? 'idle'
+            : states.every((value) => value === 'error') ? 'error'
+              : 'starting'
   publishStatus({
     state,
     active_jobs: states.filter((value) => value === 'syncing').length,
+    ready_lane_count: readyLaneCount,
+    degraded_lane_count: degradedLaneCount,
     lanes: laneStatuses,
   })
 }
 
 function errorMessage(error) {
   return String(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 500)
+}
+
+class BackendHTTPError extends Error {
+  constructor(path, status) {
+    super(`backend ${path} returned HTTP ${status}`)
+    this.name = 'BackendHTTPError'
+    this.path = path
+    this.status = status
+  }
 }
 
 async function backend(path, options = {}) {
@@ -116,20 +143,21 @@ async function backend(path, options = {}) {
     },
     signal: options.signal || AbortSignal.timeout(backendRequestTimeoutMilliseconds),
   })
-  if (!response.ok) throw new Error(`backend ${path} returned HTTP ${response.status}`)
+  if (!response.ok) throw new BackendHTTPError(path, response.status)
   const payload = await response.json()
   if (payload.code !== 0) throw new Error(payload.message || `backend ${path} failed`)
   return payload.data
 }
 
-function ensureJobDeadline(deadlineAt) {
+function ensureJobDeadline(deadlineAt, signal) {
+  throwIfAborted(signal)
   if (Date.now() >= deadlineAt) throw new Error('product sync job exceeded the 30 minute limit')
 }
 
-async function postShopAPI(lane, shopToken, path, body, deadlineAt) {
-  ensureJobDeadline(deadlineAt)
-  await takeRequestTokens(lane.requestLimiter, globalRequestLimiter)
-  ensureJobDeadline(deadlineAt)
+async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
+  ensureJobDeadline(deadlineAt, signal)
+  await takeRequestTokens(lane.requestLimiter, globalRequestLimiter, signal)
+  ensureJobDeadline(deadlineAt, signal)
   let result
   try {
     result = await lane.page.evaluate(async ({ requestPath, requestBody, requestTimeoutMilliseconds, visitorID }) => {
@@ -173,17 +201,20 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt) {
       visitorID: `sub2api${shopToken.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}`,
     })
   } catch (error) {
+    throwIfAborted(signal)
     throw shopRequestError(path, error)
   }
+  throwIfAborted(signal)
   return parseShopHTTPResponse(result)
 }
 
-async function postShopAPIWithPressureRecovery(lane, shopToken, path, body, deadlineAt) {
+async function postShopAPIWithPressureRecovery(lane, shopToken, path, body, deadlineAt, signal) {
   return withPressureRecovery(
-    () => postShopAPI(lane, shopToken, path, body, deadlineAt),
+    () => postShopAPI(lane, shopToken, path, body, deadlineAt, signal),
     {
       state: lane.pressureState,
       deadlineAt,
+      signal,
       onBackoff: async ({ error, failureCount, waitMilliseconds }) => {
         publishLaneStatus(lane, {
           state: 'blocked',
@@ -235,26 +266,32 @@ async function initializeShopPage(page, recovery = false) {
   }
 }
 
-function startJobHeartbeat(job) {
-  let stopped = false
-  let pending = Promise.resolve()
-  const send = () => {
-    if (stopped) return
-    pending = pending
-      .then(() => backend('/api/v1/public/account-import/products/sync-heartbeat', {
+function startJobHeartbeat(lane, job, controller) {
+  return createJobHeartbeat({
+    intervalMilliseconds: heartbeatMilliseconds,
+    send: async () => {
+      await backend('/api/v1/public/account-import/products/sync-heartbeat', {
         method: 'POST',
         body: JSON.stringify({ shop_id: job.shop_id, attempt_id: job.attempt_id }),
-      }))
-      .catch((error) => {
-        console.error(`${new Date().toISOString()} heartbeat failed for ${job.shop_name}: ${errorMessage(error)}`)
       })
-  }
-  const timer = setInterval(send, heartbeatMilliseconds)
-  return async () => {
-    stopped = true
-    clearInterval(timer)
-    await pending
-  }
+      publishLaneStatus(lane, { last_heartbeat_at: new Date().toISOString() })
+    },
+    onLeaseLost: async () => {
+      const error = new JobLeaseLostError('product sync job lease expired', { restartLane: true })
+      controller.abort(error)
+      console.warn(`${new Date().toISOString()} lease lost for ${job.shop_name}; cancelling lane ${lane.index + 1}`)
+      publishLaneStatus(lane, {
+        state: 'restarting',
+        lease_lost_at: new Date().toISOString(),
+        last_error: '',
+        retry_at: '',
+      })
+      await closeLaneContext(lane)
+    },
+    onError: (error) => {
+      console.error(`${new Date().toISOString()} heartbeat failed for ${job.shop_name}: ${errorMessage(error)}`)
+    },
+  })
 }
 
 async function reportJobFailure(job, error) {
@@ -274,15 +311,23 @@ async function reportJobFailure(job, error) {
 
 async function syncJob(lane, job) {
   const deadlineAt = Date.now() + maxJobMilliseconds
-  const stopHeartbeat = startJobHeartbeat(job)
+  const controller = new AbortController()
+  const heartbeat = startJobHeartbeat(lane, job, controller)
   try {
     const snapshot = await collectAuthoritativeSnapshot({
       shopToken: job.token,
       quoteSemaphore: lane.quoteSemaphore,
-      post: (path, body) => postShopAPIWithPressureRecovery(lane, job.token, path, body, deadlineAt),
+      post: (path, body) => postShopAPIWithPressureRecovery(
+        lane,
+        job.token,
+        path,
+        body,
+        deadlineAt,
+        controller.signal
+      ),
     })
-    await stopHeartbeat()
-    ensureJobDeadline(deadlineAt)
+    await heartbeat.stop()
+    ensureJobDeadline(deadlineAt, controller.signal)
     const result = await backend('/api/v1/public/account-import/products/sync', {
       method: 'POST',
       body: JSON.stringify({
@@ -298,9 +343,14 @@ async function syncJob(lane, job) {
       last_error: '',
     })
   } catch (error) {
-    await stopHeartbeat()
-    await reportJobFailure(job, error)
-    throw error
+    await heartbeat.stop()
+    const finalError = controller.signal.aborted
+      ? controller.signal.reason
+      : error?.status === 409
+        ? new JobLeaseLostError('product sync job lease expired before publication')
+        : error
+    if (finalError?.kind !== 'lease_lost') await reportJobFailure(job, finalError)
+    throw finalError
   }
 }
 
@@ -356,12 +406,11 @@ async function prepareLaneContext(context, recovery = false) {
   return page
 }
 
-async function prepareLane(context, index, proxyPool) {
-  const page = await prepareLaneContext(context)
+function createLane(index, proxyPool) {
   return {
     index,
-    context,
-    page,
+    context: null,
+    page: null,
     proxyPool,
     proxyIndex: 0,
     proxy: proxyPool[0],
@@ -371,52 +420,100 @@ async function prepareLane(context, index, proxyPool) {
   }
 }
 
-async function recoverLaneAfterPressure(lane) {
-  if (lane.proxyPool.length < 2) {
-    await initializeShopPage(lane.page, true)
-    return
-  }
+async function prepareLane(context, index, proxyPool) {
+  const lane = createLane(index, proxyPool)
+  lane.context = context
+  lane.page = await prepareLaneContext(context)
+  activeBrowserContexts[index] = context
+  return lane
+}
 
-  const previousContext = lane.context
-  const previousProxy = lane.proxy
-  const nextProxyIndex = (lane.proxyIndex + 1) % lane.proxyPool.length
-  const nextProxy = lane.proxyPool[nextProxyIndex]
+async function closeLaneContext(lane) {
+  const context = lane.context
   lane.context = null
   lane.page = null
-  lane.proxyIndex = nextProxyIndex
-  lane.proxy = nextProxy
-  activeBrowserContexts[lane.index] = null
+  if (activeBrowserContexts[lane.index] === context) activeBrowserContexts[lane.index] = null
+  await context?.close().catch(() => {})
+  publishStatus({})
+}
 
-  let replacementContext
+async function replaceLaneContext(lane, proxyIndex, recovery = false) {
+  await closeLaneContext(lane)
+  if (stopping) throw new Error('product sync worker is stopping')
+  if (!activeBrowser?.isConnected()) throw new Error('product sync browser is not connected')
+
+  const proxy = lane.proxyPool[proxyIndex]
+  let context
   try {
-    replacementContext = await closeContextThenCreate(previousContext, async () => {
-      if (stopping) throw new Error('product sync worker is stopping')
-      if (!activeBrowser?.isConnected()) throw new Error('product sync browser is not connected')
-      return activeBrowser.newContext(browserContextOptions(nextProxy))
-    })
-    const replacementPage = await prepareLaneContext(replacementContext, true)
+    context = await activeBrowser.newContext(browserContextOptions(proxy))
+    const page = await prepareLaneContext(context, recovery)
     if (stopping) throw new Error('product sync worker is stopping')
-    lane.context = replacementContext
-    lane.page = replacementPage
-    activeBrowserContexts[lane.index] = replacementContext
+    if (!activeBrowser?.isConnected()) throw new Error('product sync browser is not connected')
+    lane.context = context
+    lane.page = page
+    lane.proxyIndex = proxyIndex
+    lane.proxy = proxy
+    activeBrowserContexts[lane.index] = context
+    publishStatus({})
   } catch (error) {
-    await replacementContext?.close().catch(() => {})
-    if (activeBrowserContexts[lane.index] === replacementContext) activeBrowserContexts[lane.index] = null
+    await context?.close().catch(() => {})
+    if (activeBrowserContexts[lane.index] === context) activeBrowserContexts[lane.index] = null
+    throw error
+  }
+}
+
+async function initializeLane(lane, recovery = false) {
+  const result = await initializeProxyPool(
+    lane.proxyPool,
+    lane.proxyIndex,
+    async (_proxy, proxyIndex) => {
+      await replaceLaneContext(lane, proxyIndex, recovery)
+    },
+    {
+      attemptsPerProxy: 2,
+      retryMilliseconds: 2_000,
+      onFailure: async ({ error, proxy, proxyIndex, attempt }) => {
+        console.error(`${new Date().toISOString()} lane ${lane.index + 1} initialization failed on ${proxy?.server || 'direct'} (attempt ${attempt}): ${errorMessage(error)}`)
+        publishLaneStatus(lane, {
+          state: 'starting',
+          proxy_server: proxy?.server || '',
+          proxy_pool_position: proxyIndex + 1,
+          initialization_attempt: attempt,
+          last_error_at: new Date().toISOString(),
+          last_error: errorMessage(error),
+        })
+        if (stopping || !activeBrowser?.isConnected()) throw error
+      },
+    }
+  )
+  return result.proxyIndex
+}
+
+async function recoverLaneAfterPressure(lane) {
+  try {
+    if (lane.proxyPool.length < 2) {
+      await initializeShopPage(lane.page, true)
+      return
+    }
+
+    const previousProxy = lane.proxy
+    const nextProxyIndex = (lane.proxyIndex + 1) % lane.proxyPool.length
+    const nextProxy = lane.proxyPool[nextProxyIndex]
+    await replaceLaneContext(lane, nextProxyIndex, true)
+    console.log(`${new Date().toISOString()} lane ${lane.index + 1} rotated product sync proxy after pressure backoff: ${previousProxy?.server || 'direct'} -> ${nextProxy?.server || 'direct'}`)
+    publishLaneStatus(lane, {
+      proxy_server: nextProxy?.server || '',
+      proxy_pool_position: nextProxyIndex + 1,
+      proxy_rotated_at: new Date().toISOString(),
+    })
+  } catch (error) {
     const restartError = error instanceof Error ? error : new Error(String(error))
-    restartError.restartBrowser = true
+    restartError.restartLane = true
     throw restartError
   }
-
-  console.log(`${new Date().toISOString()} lane ${lane.index + 1} rotated product sync proxy after pressure backoff: ${previousProxy?.server || 'direct'} -> ${nextProxy?.server || 'direct'}`)
-  publishLaneStatus(lane, {
-    proxy_server: nextProxy?.server || '',
-    proxy_pool_position: nextProxyIndex + 1,
-    proxy_rotated_at: new Date().toISOString(),
-  })
 }
 
 async function runLane(lane) {
-  if (lane.index > 0) await sleep(lane.index * 1_100)
   while (activeBrowser?.isConnected() && !stopping) {
     try {
       const data = await backend('/api/v1/public/account-import/products/sync-job?limit=1')
@@ -443,9 +540,18 @@ async function runLane(lane) {
           retry_at: '',
         })
       } catch (error) {
-        console.error(`${new Date().toISOString()} lane ${lane.index + 1} sync failed for ${job.shop_name}: ${errorMessage(error)}`)
-        if (error?.restartBrowser) throw error
-        if (!isPressureError(error)) {
+        if (error?.restartLane || error?.restartBrowser) throw error
+        if (error?.kind === 'lease_lost') {
+          console.warn(`${new Date().toISOString()} discarded expired sync result for ${job.shop_name}`)
+          publishLaneStatus(lane, {
+            state: 'idle',
+            active_shop_id: '',
+            active_shop_name: '',
+            last_error: '',
+            retry_at: '',
+          })
+        } else if (!isPressureError(error)) {
+          console.error(`${new Date().toISOString()} lane ${lane.index + 1} sync failed for ${job.shop_name}: ${errorMessage(error)}`)
           publishLaneStatus(lane, {
             state: 'error',
             active_shop_id: '',
@@ -454,6 +560,7 @@ async function runLane(lane) {
             last_error: errorMessage(error),
           })
         } else {
+          console.error(`${new Date().toISOString()} lane ${lane.index + 1} sync failed for ${job.shop_name}: ${errorMessage(error)}`)
           lane.pressureState.failureCount += 1
           const waitMilliseconds = pressureBackoffMilliseconds(lane.pressureState.failureCount)
           publishLaneStatus(lane, {
@@ -472,7 +579,7 @@ async function runLane(lane) {
               await recoverLaneAfterPressure(lane)
             } catch (recoveryError) {
               console.error(`${new Date().toISOString()} lane ${lane.index + 1} pressure recovery failed: ${errorMessage(recoveryError)}`)
-              if (recoveryError?.restartBrowser) throw recoveryError
+              if (recoveryError?.restartLane || recoveryError?.restartBrowser) throw recoveryError
             }
           }
           publishLaneStatus(lane, { state: 'idle', retry_at: '' })
@@ -480,7 +587,7 @@ async function runLane(lane) {
       }
       await sleep(activePollMilliseconds)
     } catch (error) {
-      if (error?.restartBrowser) throw error
+      if (error?.restartLane || error?.restartBrowser) throw error
       console.error(`${new Date().toISOString()} lane ${lane.index + 1} sync polling failed: ${errorMessage(error)}`)
       publishLaneStatus(lane, {
         state: 'error',
@@ -494,8 +601,54 @@ async function runLane(lane) {
   }
 }
 
+async function runLaneLifecycle(lane, browser) {
+  if (lane.index > 0) await sleep(lane.index * 1_100)
+  let initializationFailures = 0
+  try {
+    while (activeBrowser === browser && browser.isConnected() && !stopping) {
+      try {
+        await initializeLane(lane, initializationFailures > 0)
+        initializationFailures = 0
+        lane.pressureState.failureCount = 0
+        publishLaneStatus(lane, {
+          state: 'idle',
+          proxy_server: lane.proxy?.server || '',
+          proxy_pool_position: lane.proxyIndex + 1,
+          proxy_pool_size: lane.proxyPool.length,
+          active_shop_id: '',
+          active_shop_name: '',
+          last_error: '',
+          retry_at: '',
+        })
+        await runLane(lane)
+      } catch (error) {
+        if (stopping || activeBrowser !== browser || !browser.isConnected()) break
+        await closeLaneContext(lane)
+        initializationFailures += 1
+        const waitMilliseconds = error?.kind === 'lease_lost'
+          ? 1_000
+          : isPressureError(error)
+            ? pressureBackoffMilliseconds(initializationFailures)
+            : Math.min(60_000, 5_000 * (2 ** Math.min(initializationFailures - 1, 4)))
+        console.error(`${new Date().toISOString()} lane ${lane.index + 1} restarting independently in ${Math.round(waitMilliseconds / 1000)} seconds: ${errorMessage(error)}`)
+        publishLaneStatus(lane, {
+          state: isPressureError(error) ? 'blocked' : 'restarting',
+          active_shop_id: '',
+          active_shop_name: '',
+          retry_at: new Date(Date.now() + waitMilliseconds).toISOString(),
+          last_error_at: new Date().toISOString(),
+          last_error: error?.kind === 'lease_lost' ? '' : errorMessage(error),
+        })
+        await sleep(waitMilliseconds)
+      }
+    }
+  } finally {
+    await closeLaneContext(lane)
+  }
+}
+
 async function runBrowser() {
-  const contexts = []
+  let contexts = []
   const lanes = []
   let browser
   try {
@@ -511,22 +664,30 @@ async function runBrowser() {
       })
       browser = context.browser()
       contexts.push(context)
+      activeBrowser = browser
+      activeBrowserContexts = contexts
+      lanes.push(await prepareLane(context, 0, laneProxyPools[0]))
+      publishLaneStatus(lanes[0], {
+        state: 'idle',
+        proxy_server: laneProxies[0]?.server || '',
+        proxy_pool_position: 1,
+        proxy_pool_size: 1,
+      })
     } else {
       browser = await chromium.launch(browserLaunchOptions())
-      for (const proxy of laneProxies) {
-        contexts.push(await browser.newContext(browserContextOptions(proxy)))
+      contexts = Array.from({ length: syncConcurrency }, () => null)
+      activeBrowser = browser
+      activeBrowserContexts = contexts
+      for (let index = 0; index < syncConcurrency; index += 1) {
+        const lane = createLane(index, laneProxyPools[index])
+        lanes.push(lane)
+        publishLaneStatus(lane, {
+          state: 'starting',
+          proxy_server: laneProxies[index]?.server || '',
+          proxy_pool_position: 1,
+          proxy_pool_size: laneProxyPools[index].length,
+        })
       }
-    }
-    activeBrowser = browser
-    activeBrowserContexts = contexts
-    for (let index = 0; index < contexts.length; index += 1) {
-      lanes.push(await prepareLane(contexts[index], index, laneProxyPools[index]))
-      publishLaneStatus(lanes[index], {
-        state: 'idle',
-        proxy_server: laneProxies[index]?.server || '',
-        proxy_pool_position: 1,
-        proxy_pool_size: laneProxyPools[index].length,
-      })
     }
     publishStatus({
       browser_engine: 'playwright',
@@ -536,7 +697,9 @@ async function runBrowser() {
       request_rate_per_second_global: globalRequestRate,
       browser_started_at: new Date().toISOString(),
     })
-    await Promise.all(lanes.map((lane) => runLane(lane)))
+    if (syncConcurrency === 1 && !usesRotatableContexts) await runLane(lanes[0])
+    else await Promise.all(lanes.map((lane) => runLaneLifecycle(lane, browser)))
+    if (!stopping) throw new Error('product sync browser disconnected')
   } finally {
     if (activeBrowser === browser) activeBrowser = undefined
     if (activeBrowserContexts === contexts) activeBrowserContexts = []

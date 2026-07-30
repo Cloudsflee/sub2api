@@ -5,7 +5,7 @@ RUN apk add --no-cache chromium nss freetype harfbuzz ttf-freefont ca-certificat
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
-COPY index.js catalog-sync.js worker-utils.js ./
+COPY index.js catalog-sync.js worker-utils.js healthcheck.js ./
 
 RUN mkdir -p /data && chown -R node:node /app /data
 USER node

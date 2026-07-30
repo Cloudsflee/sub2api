@@ -6,11 +6,14 @@ const test = require('node:test')
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'shop-api.json'), 'utf8'))
 const workloadFixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'sync-workload.json'), 'utf8'))
 const {
+  JobLeaseLostError,
   ShopSyncError,
   TokenBucket,
   browserResourceCounts,
   catalogProductState,
   closeContextThenCreate,
+  createJobHeartbeat,
+  initializeProxyPool,
   isPressureError,
   isVerificationPageState,
   parsePositiveMilliseconds,
@@ -29,6 +32,7 @@ const {
   simulatedTokenBucketDuration,
   takeRequestTokens,
   withPressureRecovery,
+  workerStatusIsHealthy,
 } = require('./worker-utils')
 
 test('catalogProductState validates status, stock, and minimum quantity from real list shapes', () => {
@@ -124,6 +128,58 @@ test('shopRequestError classifies browser transport failures as pressure errors'
   const applicationError = shopRequestError('/shopApi/Shop/goodsList', new Error('execution context was destroyed'))
   assert.equal(applicationError.kind, 'unknown')
   assert.equal(isPressureError(applicationError), false)
+})
+
+test('shopRequestError restarts only the lane when its browser context closes', () => {
+  const wrapped = shopRequestError(
+    '/shopApi/Shop/info',
+    new Error('page.evaluate: Target page, context or browser has been closed')
+  )
+  assert.equal(wrapped.kind, 'network')
+  assert.equal(wrapped.restartLane, true)
+  assert.equal(isPressureError(wrapped), false)
+})
+
+test('job heartbeat converts HTTP 409 into one terminal lease-loss callback', async () => {
+  let sends = 0
+  let leaseLosses = 0
+  const heartbeat = createJobHeartbeat({
+    intervalMilliseconds: 60_000,
+    send: async () => {
+      sends += 1
+      const error = new Error('conflict')
+      error.status = 409
+      throw error
+    },
+    onLeaseLost: async () => { leaseLosses += 1 },
+  })
+
+  await heartbeat.runNow()
+  await heartbeat.runNow()
+  await heartbeat.stop()
+  assert.equal(sends, 1)
+  assert.equal(leaseLosses, 1)
+  assert.equal(heartbeat.leaseLost, true)
+})
+
+test('job heartbeat logs a transient failure and keeps renewing', async () => {
+  let sends = 0
+  const failures = []
+  const heartbeat = createJobHeartbeat({
+    intervalMilliseconds: 60_000,
+    send: async () => {
+      sends += 1
+      if (sends === 1) throw new Error('temporary backend failure')
+    },
+    onError: (error) => failures.push(error.message),
+  })
+
+  await heartbeat.runNow()
+  await heartbeat.runNow()
+  await heartbeat.stop()
+  assert.equal(sends, 2)
+  assert.deepEqual(failures, ['temporary backend failure'])
+  assert.equal(heartbeat.leaseLost, false)
 })
 
 test('TokenBucket enforces one request per second without a burst', async () => {
@@ -254,6 +310,21 @@ test('pressure recovery does not retry unknown validation failures', async () =>
   assert.equal(attempts, 1)
 })
 
+test('pressure recovery cancels its active backoff when the job lease is lost', async () => {
+  const controller = new AbortController()
+  await assert.rejects(() => withPressureRecovery(
+    async () => { throw new ShopSyncError('verification', 'HTTP 403') },
+    {
+      deadlineAt: 30 * 60_000,
+      now: () => 0,
+      random: () => 0.5,
+      signal: controller.signal,
+      onBackoff: async () => controller.abort(new JobLeaseLostError()),
+      sleep: async () => new Promise(() => {}),
+    }
+  ), (error) => error instanceof JobLeaseLostError)
+})
+
 test('parseProxyConfiguration removes credentials from the Chromium proxy argument', () => {
   assert.deepEqual(parseProxyConfiguration('http://user:p%40ss@proxy.example:8080'), {
     server: 'http://proxy.example:8080',
@@ -340,6 +411,28 @@ test('proxyPoolsForConcurrency assigns three lane-local fallbacks to six primary
   )
 })
 
+test('lane initialization retries its primary before using the positional fallback', async () => {
+  const primary = { server: 'http://primary:17891' }
+  const fallback = { server: 'http://fallback:17897' }
+  const attempts = []
+  const result = await initializeProxyPool([primary, fallback], 0, async (proxy, proxyIndex, attempt) => {
+    attempts.push([proxy.server, proxyIndex, attempt])
+    if (proxy === primary) throw new Error('primary unavailable')
+    return 'ready'
+  }, {
+    retryMilliseconds: 1,
+    sleep: async () => {},
+  })
+
+  assert.equal(result.value, 'ready')
+  assert.equal(result.proxyIndex, 1)
+  assert.deepEqual(attempts, [
+    ['http://primary:17891', 0, 1],
+    ['http://primary:17891', 0, 2],
+    ['http://fallback:17897', 1, 1],
+  ])
+})
+
 test('lane context rotation closes the old context before creating its replacement', async () => {
   const events = []
   const replacement = { id: 'replacement' }
@@ -362,6 +455,25 @@ test('browserResourceCounts reports six live contexts and one page per lane', ()
     pages: () => [{ isClosed: () => false }, { isClosed: () => true }],
   }))
   assert.deepEqual(browserResourceCounts(contexts), { contextCount: 6, pageCount: 6 })
+})
+
+test('worker health requires a fresh status and at least one ready browser lane', () => {
+  const now = Date.parse('2026-07-30T10:00:00Z')
+  const healthy = {
+    state: 'degraded',
+    updated_at: '2026-07-30T09:59:30Z',
+    browser_context_count: 5,
+    browser_page_count: 5,
+    lanes: [
+      { state: 'syncing', context_ready: true },
+      { state: 'restarting', context_ready: false },
+    ],
+  }
+  assert.equal(workerStatusIsHealthy(healthy, now), true)
+  assert.equal(workerStatusIsHealthy({ ...healthy, state: 'error' }, now), false)
+  assert.equal(workerStatusIsHealthy({ ...healthy, browser_context_count: 0 }, now), false)
+  assert.equal(workerStatusIsHealthy({ ...healthy, updated_at: '2026-07-30T09:57:00Z' }, now), false)
+  assert.equal(workerStatusIsHealthy({ ...healthy, lanes: [{ state: 'restarting', context_ready: false }] }, now), false)
 })
 
 test('isVerificationPageState detects the Alibaba ESA challenge', () => {

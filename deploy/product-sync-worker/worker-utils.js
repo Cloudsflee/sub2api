@@ -9,6 +9,97 @@ class ShopSyncError extends Error {
   }
 }
 
+class JobLeaseLostError extends Error {
+  constructor(message = 'product sync job lease expired', options = {}) {
+    super(message)
+    this.name = 'JobLeaseLostError'
+    this.kind = 'lease_lost'
+    this.restartLane = Boolean(options.restartLane)
+  }
+}
+
+function abortReason(signal) {
+  return signal?.reason instanceof Error
+    ? signal.reason
+    : new Error(String(signal?.reason || 'operation aborted'))
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortReason(signal)
+}
+
+function waitForPromiseOrAbort(promise, signal) {
+  if (!signal) return Promise.resolve(promise)
+  if (signal.aborted) return Promise.reject(abortReason(signal))
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal))
+    signal.addEventListener('abort', onAbort, { once: true })
+    Promise.resolve(promise).then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      }
+    )
+  })
+}
+
+function createJobHeartbeat(options = {}) {
+  const send = options.send
+  if (typeof send !== 'function') throw new Error('heartbeat sender is required')
+  const intervalMilliseconds = parsePositiveMilliseconds(
+    options.intervalMilliseconds,
+    30_000,
+    'heartbeat interval'
+  )
+  const isLeaseLost = options.isLeaseLost || ((error) => error?.status === 409)
+  const onLeaseLost = options.onLeaseLost || (() => {})
+  const onError = options.onError || (() => {})
+  let stopped = false
+  let leaseLost = false
+  let pending = Promise.resolve()
+  let timer
+
+  const runNow = () => {
+    if (stopped) return pending
+    pending = pending
+      .then(() => {
+        if (!stopped) return send()
+      })
+      .catch(async (error) => {
+        if (!isLeaseLost(error)) {
+          onError(error)
+          return
+        }
+        stopped = true
+        leaseLost = true
+        clearInterval(timer)
+        try {
+          await onLeaseLost(error)
+        } catch (callbackError) {
+          onError(callbackError)
+        }
+      })
+    return pending
+  }
+
+  timer = setInterval(runNow, intervalMilliseconds)
+  timer.unref?.()
+  return {
+    runNow,
+    get leaseLost() { return leaseLost },
+    async stop() {
+      stopped = true
+      clearInterval(timer)
+      await pending
+    },
+  }
+}
+
 function parsePositiveMilliseconds(value, fallback, name) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -281,15 +372,20 @@ function shopRequestError(path, error) {
   if (error instanceof ShopSyncError) return error
   const message = String(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 500)
   const name = String(error?.name || '').toLowerCase()
+  const browserSessionClosed = /target (?:page, )?context or browser has been closed|page, context or browser has been closed|browser has been closed|context has been closed|page has been closed/i.test(message)
   const isNetworkFailure = name === 'aborterror'
+    || browserSessionClosed
     || /aborterror|signal is aborted|failed to fetch|fetch failed|networkerror|network request failed|load failed|net::err_/i.test(message)
-  return new ShopSyncError(
+  const wrapped = new ShopSyncError(
     isNetworkFailure ? 'network' : 'unknown',
     `shop API ${path} failed: ${message}`
   )
+  if (browserSessionClosed) wrapped.restartLane = true
+  return wrapped
 }
 
 function isPressureError(error) {
+  if (error?.restartLane || error?.kind === 'lease_lost') return false
   return error?.kind === 'rate_limit' || error?.kind === 'verification' || error?.kind === 'network'
 }
 
@@ -307,8 +403,10 @@ async function withPressureRecovery(task, options = {}) {
   const sleep = options.sleep || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
   const random = options.random || Math.random
   const deadlineAt = Number.isFinite(options.deadlineAt) ? options.deadlineAt : Number.POSITIVE_INFINITY
+  const signal = options.signal
 
   while (true) {
+    throwIfAborted(signal)
     try {
       return await task()
     } catch (error) {
@@ -319,7 +417,8 @@ async function withPressureRecovery(task, options = {}) {
         throw new ShopSyncError('unknown', 'product sync job cannot recover from upstream pressure before its deadline')
       }
       await options.onBackoff?.({ error, failureCount: state.failureCount, waitMilliseconds })
-      await sleep(waitMilliseconds)
+      await waitForPromiseOrAbort(sleep(waitMilliseconds), signal)
+      throwIfAborted(signal)
       await options.recover?.({ error, failureCount: state.failureCount, waitMilliseconds })
     }
   }
@@ -337,14 +436,15 @@ class TokenBucket {
     this.pending = Promise.resolve()
   }
 
-  take() {
-    const request = this.pending.then(() => this.takeNext())
+  take(signal) {
+    const request = this.pending.then(() => this.takeNext(signal))
     this.pending = request.catch(() => {})
     return request
   }
 
-  async takeNext() {
+  async takeNext(signal) {
     while (true) {
+      throwIfAborted(signal)
       const now = this.now()
       this.tokens = Math.min(this.capacity, this.tokens + Math.max(0, now - this.updatedAt) * this.ratePerMillisecond)
       this.updatedAt = now
@@ -352,16 +452,54 @@ class TokenBucket {
         this.tokens -= 1
         return now
       }
-      await this.sleep(Math.max(1, Math.ceil((1 - this.tokens) / this.ratePerMillisecond)))
+      await waitForPromiseOrAbort(
+        this.sleep(Math.max(1, Math.ceil((1 - this.tokens) / this.ratePerMillisecond))),
+        signal
+      )
     }
   }
 }
 
-async function takeRequestTokens(laneLimiter, globalLimiter) {
+async function takeRequestTokens(laneLimiter, globalLimiter, signal) {
   if (!laneLimiter || typeof laneLimiter.take !== 'function') throw new Error('lane request limiter is required')
   if (!globalLimiter || typeof globalLimiter.take !== 'function') throw new Error('global request limiter is required')
-  await laneLimiter.take()
-  await globalLimiter.take()
+  await laneLimiter.take(signal)
+  await globalLimiter.take(signal)
+}
+
+async function initializeProxyPool(proxyPool, startIndex, initialize, options = {}) {
+  if (!Array.isArray(proxyPool) || proxyPool.length === 0) throw new Error('lane proxy pool is required')
+  if (typeof initialize !== 'function') throw new Error('lane initializer is required')
+  const attemptsPerProxy = Number.isInteger(options.attemptsPerProxy) && options.attemptsPerProxy > 0
+    ? options.attemptsPerProxy
+    : 2
+  const sleep = options.sleep || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
+  const retryMilliseconds = Number.isFinite(options.retryMilliseconds)
+    ? Math.max(0, options.retryMilliseconds)
+    : 2_000
+  const normalizedStartIndex = Number.isInteger(startIndex)
+    ? ((startIndex % proxyPool.length) + proxyPool.length) % proxyPool.length
+    : 0
+  let lastError
+
+  for (let offset = 0; offset < proxyPool.length; offset += 1) {
+    const proxyIndex = (normalizedStartIndex + offset) % proxyPool.length
+    for (let attempt = 1; attempt <= attemptsPerProxy; attempt += 1) {
+      try {
+        return {
+          value: await initialize(proxyPool[proxyIndex], proxyIndex, attempt),
+          proxyIndex,
+          attempt,
+        }
+      } catch (error) {
+        lastError = error
+        await options.onFailure?.({ error, proxy: proxyPool[proxyIndex], proxyIndex, attempt })
+        const isLastAttempt = offset === proxyPool.length - 1 && attempt === attemptsPerProxy
+        if (!isLastAttempt && retryMilliseconds > 0) await sleep(retryMilliseconds)
+      }
+    }
+  }
+  throw lastError || new Error('lane initialization failed')
 }
 
 async function closeContextThenCreate(previousContext, createContext) {
@@ -384,6 +522,21 @@ function browserResourceCounts(contexts) {
     }
   }
   return { contextCount: activeContexts.length, pageCount }
+}
+
+function workerStatusIsHealthy(status, now = Date.now(), maxStaleMilliseconds = 120_000) {
+  if (!status || typeof status !== 'object') return false
+  if (['error', 'stopped', 'stopping'].includes(status.state)) return false
+  const updatedAt = Date.parse(status.updated_at)
+  if (!Number.isFinite(updatedAt) || updatedAt > now + 60_000 || now - updatedAt > maxStaleMilliseconds) return false
+  if (!Number.isInteger(status.browser_context_count) || status.browser_context_count < 1) return false
+  if (!Number.isInteger(status.browser_page_count) || status.browser_page_count < 1) return false
+  if (!Array.isArray(status.lanes) || !status.lanes.some((lane) => (
+    lane?.context_ready === true && ['idle', 'syncing', 'blocked'].includes(lane.state)
+  ))) {
+    return false
+  }
+  return true
 }
 
 class Semaphore {
@@ -445,12 +598,15 @@ function simulatedTokenBucketDuration(requestCount, ratePerSecond = 1, capacity 
 }
 
 module.exports = {
+  JobLeaseLostError,
   Semaphore,
   ShopSyncError,
   TokenBucket,
   browserResourceCounts,
   catalogProductState,
   closeContextThenCreate,
+  createJobHeartbeat,
+  initializeProxyPool,
   isPressureError,
   isVerificationPageState,
   mapWithConcurrency,
@@ -470,6 +626,9 @@ module.exports = {
   shopUnavailableMessage,
   simulatedTokenBucketDuration,
   takeRequestTokens,
+  throwIfAborted,
   unavailableMessage,
+  waitForPromiseOrAbort,
   withPressureRecovery,
+  workerStatusIsHealthy,
 }

@@ -53,19 +53,27 @@ rate`. Blocked lanes never transfer their unused allowance to active lanes, and
 quotes remain sequential within each lane. Each shop publishes immediately
 after every source product is classified as sellable or explicitly unavailable.
 
-Jobs send a heartbeat every 30 seconds. Missing heartbeats release a lease
-after 90 seconds, while a single attempt can run for at most 30 minutes. HTTP
+Jobs send a heartbeat every 30 seconds and refresh the worker status timestamp.
+Missing heartbeats release a lease after 90 seconds, while a single attempt can
+run for at most 30 minutes. A heartbeat HTTP 409 immediately cancels the stale
+attempt, closes only that lane context to interrupt an in-flight browser call,
+and rebuilds the lane. Stale attempts are never submitted as failures. HTTP
 429/502/520, verification challenges, proxy failures, and browser transport
 failures back off independently per lane for 1, 5, then 15 minutes with jitter.
 After a completed pressure backoff, a lane with a fallback closes its old
 context before opening one context and one page on the alternate endpoint, then
 continues the same in-memory shop snapshot. The other lanes are not restarted or
 sped up, and the worker never has more active contexts than configured lanes.
+Multi-lane startup and context replacement are supervised per lane. Each proxy
+gets two short initialization attempts before that lane tries its positional
+fallback; exhausting one lane pool leaves the other browser contexts running.
 Completed batches and idle workers poll again after ten seconds.
 
 The local Compose profile applies a 1 CPU, configurable memory, and 256 PID
-limit, plus `10 MiB x 3` JSON log rotation. The Compose template defaults to
-`1g`; six-lane production uses a `1.75g` memory limit:
+limit, plus `10 MiB x 3` JSON log rotation. Its health check requires a fresh
+status file and at least one ready browser context/page; stopped, globally
+errored, stale, and zero-context workers are unhealthy. The Compose template
+defaults to `1g`; six-lane production uses a `1.75g` memory limit:
 
 ```sh
 docker compose -f deploy/docker-compose.local.yml --profile public-account-import up -d

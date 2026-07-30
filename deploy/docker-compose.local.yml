@@ -229,7 +229,7 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD", "node", "-e", "const s=JSON.parse(require('fs').readFileSync('/data/status.json'));if(['stopped','stopping'].includes(s.state))process.exit(1)"]
+      test: ["CMD", "node", "/app/healthcheck.js"]
       interval: 30s
       timeout: 5s
       retries: 3
