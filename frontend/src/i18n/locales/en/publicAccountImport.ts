@@ -3,6 +3,7 @@ export default {
     title: 'Account Import',
     subtitle: 'Upload Codex account JSON files. Accounts join the selected groups and ALL automatically. Scheduling priority: OTHER = 1, FREE = 3, PLUS = 4, all other groups = 2; default concurrency = 3.',
     adminLogin: 'Admin sign in',
+    backToAdmin: 'Back to admin',
     filesLabel: 'Account files',
     fileLimit: 'Multiple JSON files supported',
     dropFiles: 'Drop JSON files here',

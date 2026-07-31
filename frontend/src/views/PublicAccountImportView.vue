@@ -11,7 +11,16 @@
           <span class="truncate text-base font-semibold">{{ siteName }}</span>
         </div>
         <RouterLink
-          to="/login"
+          v-if="isAdmin"
+          to="/admin/dashboard"
+          class="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-primary-600 dark:text-dark-300 dark:hover:text-primary-400"
+        >
+          <Icon name="arrowLeft" size="sm" />
+          {{ t('publicAccountImport.backToAdmin') }}
+        </RouterLink>
+        <RouterLink
+          v-else
+          :to="{ path: '/login', query: { redirect: '/account-import' } }"
           class="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-primary-600 dark:text-dark-300 dark:hover:text-primary-400"
         >
           <Icon name="login" size="sm" />

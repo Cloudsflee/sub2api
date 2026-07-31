@@ -118,6 +118,12 @@ function catalog(statuses: PublicAccountImportProductSyncStatus[]): PublicAccoun
 }
 
 const RouterLinkStub = defineComponent({
+  props: {
+    to: {
+      type: [String, Object],
+      required: true,
+    },
+  },
   template: '<a><slot /></a>',
 })
 
@@ -164,6 +170,27 @@ describe('PublicAccountImportView per-shop product refresh', () => {
   afterEach(() => {
     vi.useRealTimers()
 		vi.restoreAllMocks()
+  })
+
+  it('returns anonymous administrator sign-in to the account import page', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const link = wrapper.findComponent(RouterLinkStub)
+    expect(link.props('to')).toEqual({ path: '/login', query: { redirect: '/account-import' } })
+    expect(link.text()).toBe('publicAccountImport.adminLogin')
+    wrapper.unmount()
+  })
+
+  it('links authenticated administrators back to the admin dashboard', async () => {
+    authState.isAdmin = true
+    const wrapper = mountView()
+    await flushPromises()
+
+    const link = wrapper.findComponent(RouterLinkStub)
+    expect(link.props('to')).toBe('/admin/dashboard')
+    expect(link.text()).toBe('publicAccountImport.backToAdmin')
+    wrapper.unmount()
   })
 
   it('shows separate refresh buttons only for supported shops and applies server states', async () => {

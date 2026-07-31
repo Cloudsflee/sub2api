@@ -53,3 +53,9 @@ describe('AppSidebar header styles', () => {
     expect(sidebarBrandBlockMatch?.[0]).not.toContain('overflow: hidden;')
   })
 })
+
+describe('AppSidebar shop management navigation', () => {
+  it('gives administrators a discoverable entry to the public shop manager', () => {
+    expect(componentSource).toContain("{ path: '/account-import', label: t('nav.shopManagement'), icon: ShopIcon }")
+  })
+})

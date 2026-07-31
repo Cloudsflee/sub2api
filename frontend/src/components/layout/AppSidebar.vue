@@ -457,6 +457,21 @@ const GlobeIcon = {
     )
 }
 
+const ShopIcon = {
+  render: () =>
+    h(
+      'svg',
+      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          d: 'M3 9.75l1.5-5.25h15L21 9.75m-18 0a3 3 0 006 0m-6 0V21h18V9.75m-12 0a3 3 0 006 0m0 0a3 3 0 006 0M9 21v-6h6v6'
+        })
+      ]
+    )
+}
+
 const ServerIcon = {
   render: () =>
     h(
@@ -769,6 +784,7 @@ const adminNavItems = computed((): NavItem[] => {
     },
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
+    { path: '/account-import', label: t('nav.shopManagement'), icon: ShopIcon },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
     {
