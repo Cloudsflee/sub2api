@@ -15,7 +15,7 @@ const {
   createJobHeartbeat,
   initializeProxyPool,
   isPressureError,
-  isVerificationPageState,
+  parseBoolean,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
   parseProxyConfigurations,
@@ -26,11 +26,13 @@ const {
   proxyLanesForConcurrency,
   proxyPoolsForConcurrency,
   quoteResult,
+  redactURLCredentials,
   selectPaymentChannel,
   shopRequestError,
   shopUnavailableMessage,
   simulatedTokenBucketDuration,
   takeRequestTokens,
+  waitWithStatusRefresh,
   withPressureRecovery,
   workerStatusIsHealthy,
 } = require('./worker-utils')
@@ -89,10 +91,10 @@ test('shopUnavailableMessage accepts only explicit permanent shop failures', () 
   assert.equal(shopUnavailableMessage('系统繁忙，请稍后重试'), false)
 })
 
-test('parseShopHTTPResponse classifies verification pages and HTTP 429/502/520 as pressure errors', () => {
+test('parseShopHTTPResponse separates verification pages from HTTP 429/502/520 pressure errors', () => {
   assert.throws(
     () => parseShopHTTPResponse(fixture.verificationHTTP),
-    (error) => error instanceof ShopSyncError && error.kind === 'verification' && isPressureError(error)
+    (error) => error instanceof ShopSyncError && error.kind === 'verification' && !isPressureError(error)
   )
   assert.throws(
     () => parseShopHTTPResponse(fixture.rateLimitHTTP),
@@ -109,6 +111,18 @@ test('parseShopHTTPResponse classifies verification pages and HTTP 429/502/520 a
     contentType: 'application/json; charset=utf-8',
     payload: fixture.quote,
   }), fixture.quote)
+
+  assert.throws(() => parseShopHTTPResponse({
+    status: 200,
+    contentType: 'text/html',
+    payload: null,
+    responseError: 'denied by http_custom',
+    text: '<div id="captcha-element">Please slide to verify</div>',
+  }), (error) => (
+    error.kind === 'verification'
+    && error.challengeResponse.responseError === 'denied by http_custom'
+    && error.challengeResponse.text.includes('captcha-element')
+  ))
 })
 
 test('shopRequestError classifies browser transport failures as pressure errors', () => {
@@ -266,7 +280,7 @@ test('pressure recovery retries the active operation without discarding complete
   let attempts = 0
   const result = await withPressureRecovery(async () => {
     attempts += 1
-    if (attempts === 1) throw new ShopSyncError('verification', 'HTTP 520')
+    if (attempts === 1) throw new ShopSyncError('network', 'HTTP 520')
     if (attempts === 2) throw new ShopSyncError('rate_limit', 'HTTP 429')
     return 'verified quote'
   }, {
@@ -290,7 +304,7 @@ test('pressure recovery retries the active operation without discarding complete
 test('pressure recovery stops before a backoff would exceed the shop deadline', async () => {
   let slept = false
   await assert.rejects(() => withPressureRecovery(
-    async () => { throw new ShopSyncError('verification', 'HTTP 520') },
+    async () => { throw new ShopSyncError('network', 'HTTP 520') },
     {
       deadlineAt: 60_000,
       now: () => 0,
@@ -313,7 +327,7 @@ test('pressure recovery does not retry unknown validation failures', async () =>
 test('pressure recovery cancels its active backoff when the job lease is lost', async () => {
   const controller = new AbortController()
   await assert.rejects(() => withPressureRecovery(
-    async () => { throw new ShopSyncError('verification', 'HTTP 403') },
+    async () => { throw new ShopSyncError('network', 'HTTP 502') },
     {
       deadlineAt: 30 * 60_000,
       now: () => 0,
@@ -433,6 +447,26 @@ test('lane initialization retries its primary before using the positional fallba
   ])
 })
 
+test('lane initialization moves directly to fallback after a completed challenge attempt', async () => {
+  const primary = { server: 'http://primary:17891' }
+  const fallback = { server: 'http://fallback:17897' }
+  const attempts = []
+  const result = await initializeProxyPool([primary, fallback], 0, async (proxy, _proxyIndex, attempt) => {
+    attempts.push([proxy.server, attempt])
+    if (proxy === primary) throw new ShopSyncError('verification', 'two slider drags failed')
+    return 'ready'
+  }, {
+    retryMilliseconds: 1,
+    sleep: async () => {},
+    shouldRetryProxy: ({ error }) => error.kind !== 'verification',
+  })
+  assert.equal(result.proxyIndex, 1)
+  assert.deepEqual(attempts, [
+    ['http://primary:17891', 1],
+    ['http://fallback:17897', 1],
+  ])
+})
+
 test('lane context rotation closes the old context before creating its replacement', async () => {
   const events = []
   const replacement = { id: 'replacement' }
@@ -476,16 +510,53 @@ test('worker health requires a fresh status and at least one ready browser lane'
   assert.equal(workerStatusIsHealthy({ ...healthy, lanes: [{ state: 'restarting', context_ready: false }] }, now), false)
 })
 
-test('isVerificationPageState detects the Alibaba ESA challenge', () => {
-  assert.equal(isVerificationPageState({
-    title: 'Verification',
-    text: 'Please slide to verify',
-    hasCaptcha: true,
-  }), true)
-  assert.equal(isVerificationPageState({ title: 'Shop', text: 'Products', hasCaptcha: false }), false)
+test('worker health accepts active challenge recovery and intentional challenge backoff without contexts', () => {
+  const now = Date.parse('2026-07-30T10:00:00Z')
+  const base = {
+    state: 'starting',
+    challenge_auto_solve_enabled: true,
+    updated_at: '2026-07-30T09:59:30Z',
+    browser_context_count: 0,
+    browser_page_count: 0,
+  }
+  assert.equal(workerStatusIsHealthy({
+    ...base,
+    lanes: [{ state: 'starting', context_ready: false, challenge_state: 'solving' }],
+  }, now), true)
+  assert.equal(workerStatusIsHealthy({
+    ...base,
+    state: 'blocked',
+    lanes: Array.from({ length: 6 }, () => ({
+      state: 'blocked',
+      context_ready: false,
+      challenge_state: 'unsupported',
+      retry_at: '2026-07-30T16:00:00Z',
+    })),
+  }, now), true)
+  assert.equal(workerStatusIsHealthy({
+    ...base,
+    challenge_auto_solve_enabled: false,
+    lanes: [{ state: 'starting', context_ready: false, challenge_state: 'solving' }],
+  }, now), false)
+})
+
+test('long lane backoff refreshes status periodically', async () => {
+  const waits = []
+  const remaining = []
+  await waitWithStatusRefresh(95_000, {
+    intervalMilliseconds: 30_000,
+    sleep: async (milliseconds) => waits.push(milliseconds),
+    onRefresh: ({ remainingMilliseconds }) => remaining.push(remainingMilliseconds),
+  })
+  assert.deepEqual(waits, [30_000, 30_000, 30_000, 5_000])
+  assert.deepEqual(remaining, [65_000, 35_000, 5_000, 0])
 })
 
 test('timing and bounded concurrency configuration are validated', () => {
+  assert.equal(parseBoolean(undefined, false, 'FLAG'), false)
+  assert.equal(parseBoolean('true', false, 'FLAG'), true)
+  assert.equal(parseBoolean('OFF', true, 'FLAG'), false)
+  assert.throws(() => parseBoolean('sometimes', false, 'FLAG'), /true or false/)
   assert.equal(parsePositiveMilliseconds(undefined, 20_000, 'TIMEOUT'), 20_000)
   assert.equal(parsePositiveMilliseconds('1500.9', 20_000, 'TIMEOUT'), 1500)
   assert.throws(() => parsePositiveMilliseconds('0', 20_000, 'TIMEOUT'), /positive number/)
@@ -504,4 +575,11 @@ test('timing and bounded concurrency configuration are validated', () => {
   assert.equal(parseRequestRatePerLane('1'), 1)
   assert.throws(() => parseRequestRatePerLane('0.09'), /between 0.1 and 1/)
   assert.throws(() => parseRequestRatePerLane('1.01'), /between 0.1 and 1/)
+})
+
+test('diagnostic messages redact proxy URL credentials', () => {
+  const message = redactURLCredentials('connect http://user:p%40ss@proxy.internal:17891 failed')
+  assert.equal(message, 'connect http://***@proxy.internal:17891 failed')
+  assert.equal(message.includes('user'), false)
+  assert.equal(message.includes('p%40ss'), false)
 })

@@ -2,6 +2,15 @@ const { chromium } = require('playwright-core')
 const fs = require('node:fs')
 const { collectAuthoritativeSnapshot } = require('./catalog-sync')
 const {
+  ChallengeManager,
+  challengeBackoffMilliseconds,
+  collectChallengeSnapshot,
+  isChallengeError,
+  recoverChallengeAcrossProxyPool,
+  retryFailedChallengeOperation,
+  shouldBlockResource,
+} = require('./challenge-manager')
+const {
   JobLeaseLostError,
   Semaphore,
   TokenBucket,
@@ -9,7 +18,7 @@ const {
   createJobHeartbeat,
   initializeProxyPool,
   isPressureError,
-  isVerificationPageState,
+  parseBoolean,
   parsePositiveMilliseconds,
   parseProxyConfigurations,
   parseRequestRatePerLane,
@@ -17,9 +26,11 @@ const {
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
   proxyPoolsForConcurrency,
+  redactURLCredentials,
   shopRequestError,
   takeRequestTokens,
   throwIfAborted,
+  waitWithStatusRefresh,
   withPressureRecovery,
 } = require('./worker-utils')
 
@@ -32,11 +43,17 @@ const maxJobMilliseconds = 30 * 60_000
 const shopRequestTimeoutMilliseconds = parsePositiveMilliseconds(process.env.SHOP_REQUEST_TIMEOUT_MILLISECONDS, 20_000, 'SHOP_REQUEST_TIMEOUT_MILLISECONDS')
 const browserProtocolTimeoutMilliseconds = parsePositiveMilliseconds(process.env.BROWSER_PROTOCOL_TIMEOUT_MILLISECONDS, 45_000, 'BROWSER_PROTOCOL_TIMEOUT_MILLISECONDS')
 const backendRequestTimeoutMilliseconds = parsePositiveMilliseconds(process.env.BACKEND_REQUEST_TIMEOUT_MILLISECONDS, 10_000, 'BACKEND_REQUEST_TIMEOUT_MILLISECONDS')
+const challengeTimeoutMilliseconds = parsePositiveMilliseconds(process.env.PRODUCT_SYNC_CHALLENGE_TIMEOUT_MILLISECONDS, 90_000, 'PRODUCT_SYNC_CHALLENGE_TIMEOUT_MILLISECONDS')
 const syncConcurrency = parseSyncConcurrency(process.env.PRODUCT_SYNC_CONCURRENCY)
 const requestRatePerLane = parseRequestRatePerLane(process.env.PRODUCT_SYNC_REQUEST_RATE_PER_LANE)
+const challengeAutoSolveEnabled = parseBoolean(
+  process.env.PRODUCT_SYNC_CHALLENGE_AUTO_SOLVE,
+  false,
+  'PRODUCT_SYNC_CHALLENGE_AUTO_SOLVE'
+)
 const chromePath = process.env.CHROME_PATH || '/usr/bin/chromium-browser'
-const chromeProfileDirectory = process.env.CHROME_PROFILE_DIRECTORY || '/data/chrome-profile'
 const statusFile = process.env.STATUS_FILE || '/data/status.json'
+const challengeSessionDirectory = process.env.PRODUCT_SYNC_CHALLENGE_SESSION_DIR || '/data/challenge-sessions'
 const configuredProxies = parseProxyConfigurations(
   process.env.PRODUCT_SYNC_PROXY_URLS,
   process.env.PRODUCT_SYNC_PROXY_URL
@@ -52,6 +69,14 @@ const configuredProxyCount = configuredProxies.length + configuredFallbackProxie
 const globalRequestRate = Number((syncConcurrency * requestRatePerLane).toFixed(10))
 const globalRequestLimiter = new TokenBucket(globalRequestRate, 1)
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+const workerStopController = new AbortController()
+const challengeManager = new ChallengeManager({
+  enabled: challengeAutoSolveEnabled,
+  sessionDirectory: challengeSessionDirectory,
+  timeoutMilliseconds: challengeTimeoutMilliseconds,
+  navigationTimeoutMilliseconds: Math.min(20_000, browserProtocolTimeoutMilliseconds),
+  stopSignal: workerStopController.signal,
+})
 let workerStatus = {
   state: 'starting',
   proxy_enabled: configuredProxyCount > 0,
@@ -59,9 +84,19 @@ let workerStatus = {
   sync_concurrency: syncConcurrency,
   request_rate_per_second_per_lane: requestRatePerLane,
   request_rate_per_second_global: globalRequestRate,
+  challenge_auto_solve_enabled: challengeAutoSolveEnabled,
   started_at: new Date().toISOString(),
 }
-const laneStatuses = Array.from({ length: syncConcurrency }, (_, index) => ({ index, state: 'starting' }))
+const laneStatuses = Array.from({ length: syncConcurrency }, (_, index) => ({
+  index,
+  state: 'starting',
+  challenge_provider: '',
+  challenge_state: challengeAutoSolveEnabled ? 'idle' : 'disabled',
+  challenge_attempt: 0,
+  challenge_started_at: '',
+  challenge_solved_at: '',
+  session_restored: false,
+}))
 let activeBrowser
 let activeBrowserContexts = []
 let stopping = false
@@ -121,7 +156,7 @@ function publishLaneStatus(lane, values) {
 }
 
 function errorMessage(error) {
-  return String(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 500)
+  return redactURLCredentials(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 500)
 }
 
 class BackendHTTPError extends Error {
@@ -189,6 +224,8 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
           status: response.status,
           contentType,
           payload,
+          text: text.slice(0, 2_000),
+          responseError: response.headers.get('x-tengine-error') || '',
           retryAfter: response.headers.get('retry-after') || '',
         }
       } finally {
@@ -208,9 +245,61 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
   return parseShopHTTPResponse(result)
 }
 
+function publishChallengeState(lane, event) {
+  const values = { challenge_state: event.state }
+  if (event.provider !== undefined) values.challenge_provider = event.provider
+  if (event.attempt !== undefined) values.challenge_attempt = event.attempt
+  if (event.startedAt !== undefined) values.challenge_started_at = event.startedAt
+  if (event.solvedAt !== undefined) values.challenge_solved_at = event.solvedAt
+  publishLaneStatus(lane, values)
+}
+
+async function solveChallengeForContext(lane, context, page, proxy, signal) {
+  const result = await challengeManager.solve({
+    context,
+    page,
+    proxy,
+    signal,
+    onState: (event) => publishChallengeState(lane, event),
+    setResourcesAllowed: (allowed) => { lane.challengeResourcesAllowed = allowed },
+  })
+  lane.challengeState.failureCount = 0
+  return result
+}
+
+async function recoverLaneChallenge(lane, signal) {
+  const previousProxyIndex = lane.proxyIndex
+  const recoveredProxyIndex = await recoverChallengeAcrossProxyPool({
+    poolSize: lane.proxyPool.length,
+    currentIndex: previousProxyIndex,
+    solveCurrent: () => solveChallengeForContext(lane, lane.context, lane.page, lane.proxy, signal),
+    switchTo: (proxyIndex) => replaceLaneContext(lane, proxyIndex, true, signal),
+  })
+  if (recoveredProxyIndex !== previousProxyIndex) {
+    console.log(`${new Date().toISOString()} lane ${lane.index + 1} switched to its fallback after verification recovery failed on the current exit`)
+    publishLaneStatus(lane, {
+      proxy_server: lane.proxy?.server || '',
+      proxy_pool_position: recoveredProxyIndex + 1,
+      proxy_rotated_at: new Date().toISOString(),
+    })
+  }
+}
+
+async function postShopAPIWithChallengeRecovery(lane, shopToken, path, body, deadlineAt, signal) {
+  return retryFailedChallengeOperation(
+    () => postShopAPI(lane, shopToken, path, body, deadlineAt, signal),
+    async () => {
+      ensureJobDeadline(deadlineAt, signal)
+      await recoverLaneChallenge(lane, signal)
+      ensureJobDeadline(deadlineAt, signal)
+    },
+    { exhaustedMessage: `shop API ${path} repeatedly returned HTML after verification recovery` }
+  )
+}
+
 async function postShopAPIWithPressureRecovery(lane, shopToken, path, body, deadlineAt, signal) {
   return withPressureRecovery(
-    () => postShopAPI(lane, shopToken, path, body, deadlineAt, signal),
+    () => postShopAPIWithChallengeRecovery(lane, shopToken, path, body, deadlineAt, signal),
     {
       state: lane.pressureState,
       deadlineAt,
@@ -237,31 +326,26 @@ async function postShopAPIWithPressureRecovery(lane, shopToken, path, body, dead
   )
 }
 
-async function rejectVerificationPage(page) {
-  const state = await page.evaluate(() => ({
-    title: document.title,
-    text: (document.body?.innerText || '').slice(0, 300),
-    hasCaptcha: Boolean(document.querySelector('#captcha-element, #aliyunCaptcha-sliding-slider')),
-  }))
-  if (isVerificationPageState(state)) {
-    const error = new Error('shop API verification required: Alibaba Cloud ESA challenge')
-    error.kind = 'verification'
-    throw error
-  }
-}
-
-async function initializeShopPage(page, recovery = false) {
+async function initializeShopPage(lane, context, page, proxy, recovery = false, signal = workerStopController.signal) {
   try {
+    throwIfAborted(signal)
+    let response
     try {
-      await page.goto('https://pay.ldxp.cn/', { waitUntil: 'domcontentloaded', timeout: 20_000 })
+      response = await page.goto('https://pay.ldxp.cn/', { waitUntil: 'domcontentloaded', timeout: 20_000 })
     } catch (error) {
       if (error.name !== 'TimeoutError') throw error
       console.log(`${new Date().toISOString()} shop session navigation timed out; continuing with the loaded document`)
     }
-    await rejectVerificationPage(page)
-    if (recovery) console.log(`${new Date().toISOString()} shop session recovered after verification backoff`)
+    const snapshot = await collectChallengeSnapshot(page, response)
+    throwIfAborted(signal)
+    if (snapshot.isChallenge) {
+      await solveChallengeForContext(lane, context, page, proxy, signal)
+      if (recovery) console.log(`${new Date().toISOString()} lane ${lane.index + 1} shop session recovered after verification`)
+    } else {
+      publishChallengeState(lane, { state: 'clear' })
+    }
   } catch (error) {
-    if (error?.kind) throw error
+    if (isChallengeError(error) || error?.kind) throw error
     throw shopRequestError('/', error)
   }
 }
@@ -374,7 +458,7 @@ function browserLaunchOptions() {
   }
 }
 
-function browserContextOptions(proxy) {
+function browserContextOptions(proxy, storageState) {
   return {
     viewport: { width: 1024, height: 768 },
     locale: 'zh-CN',
@@ -383,10 +467,11 @@ function browserContextOptions(proxy) {
     userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
     extraHTTPHeaders: { 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
     ...(proxy ? { proxy } : {}),
+    ...(storageState ? { storageState } : {}),
   }
 }
 
-async function prepareLaneContext(context, recovery = false) {
+async function prepareLaneContext(lane, context, proxy, recovery = false, signal = workerStopController.signal) {
   context.setDefaultTimeout(browserProtocolTimeoutMilliseconds)
   await context.addInitScript(() => {
     Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => undefined, configurable: true })
@@ -394,7 +479,7 @@ async function prepareLaneContext(context, recovery = false) {
     if (!window.chrome) Object.defineProperty(window, 'chrome', { value: { runtime: {} } })
   })
   await context.route('**/*', async (route) => {
-    if (['image', 'media', 'font'].includes(route.request().resourceType())) await route.abort()
+    if (shouldBlockResource(route.request().resourceType(), lane.challengeResourcesAllowed)) await route.abort()
     else await route.continue()
   })
   const existingPages = context.pages()
@@ -402,7 +487,7 @@ async function prepareLaneContext(context, recovery = false) {
     await page.close()
   }
   const page = existingPages[0] || await context.newPage()
-  await initializeShopPage(page, recovery)
+  await initializeShopPage(lane, context, page, proxy, recovery, signal)
   return page
 }
 
@@ -415,29 +500,25 @@ function createLane(index, proxyPool) {
     proxyIndex: 0,
     proxy: proxyPool[0],
     pressureState: { failureCount: 0 },
+    challengeState: { failureCount: 0 },
+    challengeResourcesAllowed: false,
     quoteSemaphore: new Semaphore(1),
     requestLimiter: new TokenBucket(requestRatePerLane, 1),
   }
-}
-
-async function prepareLane(context, index, proxyPool) {
-  const lane = createLane(index, proxyPool)
-  lane.context = context
-  lane.page = await prepareLaneContext(context)
-  activeBrowserContexts[index] = context
-  return lane
 }
 
 async function closeLaneContext(lane) {
   const context = lane.context
   lane.context = null
   lane.page = null
+  lane.challengeResourcesAllowed = false
   if (activeBrowserContexts[lane.index] === context) activeBrowserContexts[lane.index] = null
   await context?.close().catch(() => {})
   publishStatus({})
 }
 
-async function replaceLaneContext(lane, proxyIndex, recovery = false) {
+async function replaceLaneContext(lane, proxyIndex, recovery = false, signal = workerStopController.signal) {
+  throwIfAborted(signal)
   await closeLaneContext(lane)
   if (stopping) throw new Error('product sync worker is stopping')
   if (!activeBrowser?.isConnected()) throw new Error('product sync browser is not connected')
@@ -445,8 +526,16 @@ async function replaceLaneContext(lane, proxyIndex, recovery = false) {
   const proxy = lane.proxyPool[proxyIndex]
   let context
   try {
-    context = await activeBrowser.newContext(browserContextOptions(proxy))
-    const page = await prepareLaneContext(context, recovery)
+    const restored = challengeManager.loadSession(proxy)
+    publishLaneStatus(lane, {
+      challenge_provider: restored?.provider || '',
+      challenge_state: restored ? 'restored' : challengeAutoSolveEnabled ? 'idle' : 'disabled',
+      challenge_attempt: 0,
+      session_restored: Boolean(restored),
+    })
+    context = await activeBrowser.newContext(browserContextOptions(proxy, restored?.storageState))
+    const page = await prepareLaneContext(lane, context, proxy, recovery, signal)
+    throwIfAborted(signal)
     if (stopping) throw new Error('product sync worker is stopping')
     if (!activeBrowser?.isConnected()) throw new Error('product sync browser is not connected')
     lane.context = context
@@ -472,6 +561,7 @@ async function initializeLane(lane, recovery = false) {
     {
       attemptsPerProxy: 2,
       retryMilliseconds: 2_000,
+      shouldRetryProxy: ({ error }) => !isChallengeError(error),
       onFailure: async ({ error, proxy, proxyIndex, attempt }) => {
         console.error(`${new Date().toISOString()} lane ${lane.index + 1} initialization failed on ${proxy?.server || 'direct'} (attempt ${attempt}): ${errorMessage(error)}`)
         publishLaneStatus(lane, {
@@ -492,7 +582,7 @@ async function initializeLane(lane, recovery = false) {
 async function recoverLaneAfterPressure(lane) {
   try {
     if (lane.proxyPool.length < 2) {
-      await initializeShopPage(lane.page, true)
+      await initializeShopPage(lane, lane.context, lane.page, lane.proxy, true)
       return
     }
 
@@ -573,7 +663,11 @@ async function runLane(lane) {
             last_error: errorMessage(error),
           })
           console.log(`${new Date().toISOString()} lane ${lane.index + 1} applying product sync pressure backoff for ${Math.round(waitMilliseconds / 1000)} seconds`)
-          await sleep(waitMilliseconds)
+          await waitWithStatusRefresh(waitMilliseconds, {
+            sleep,
+            shouldContinue: () => !stopping,
+            onRefresh: () => publishLaneStatus(lane, {}),
+          })
           if (!stopping) {
             try {
               await recoverLaneAfterPressure(lane)
@@ -607,9 +701,10 @@ async function runLaneLifecycle(lane, browser) {
   try {
     while (activeBrowser === browser && browser.isConnected() && !stopping) {
       try {
-        await initializeLane(lane, initializationFailures > 0)
+        await initializeLane(lane, initializationFailures > 0 || lane.challengeState.failureCount > 0)
         initializationFailures = 0
         lane.pressureState.failureCount = 0
+        lane.challengeState.failureCount = 0
         publishLaneStatus(lane, {
           state: 'idle',
           proxy_server: lane.proxy?.server || '',
@@ -619,27 +714,40 @@ async function runLaneLifecycle(lane, browser) {
           active_shop_name: '',
           last_error: '',
           retry_at: '',
+          challenge_failure_count: 0,
         })
         await runLane(lane)
       } catch (error) {
         if (stopping || activeBrowser !== browser || !browser.isConnected()) break
         await closeLaneContext(lane)
-        initializationFailures += 1
+        const challengeFailure = isChallengeError(error)
+        if (challengeFailure) lane.challengeState.failureCount += 1
+        else initializationFailures += 1
         const waitMilliseconds = error?.kind === 'lease_lost'
           ? 1_000
-          : isPressureError(error)
-            ? pressureBackoffMilliseconds(initializationFailures)
-            : Math.min(60_000, 5_000 * (2 ** Math.min(initializationFailures - 1, 4)))
+          : challengeFailure
+            ? challengeBackoffMilliseconds(lane.challengeState.failureCount, error.challengeState)
+            : isPressureError(error)
+              ? pressureBackoffMilliseconds(initializationFailures)
+              : Math.min(60_000, 5_000 * (2 ** Math.min(initializationFailures - 1, 4)))
         console.error(`${new Date().toISOString()} lane ${lane.index + 1} restarting independently in ${Math.round(waitMilliseconds / 1000)} seconds: ${errorMessage(error)}`)
         publishLaneStatus(lane, {
-          state: isPressureError(error) ? 'blocked' : 'restarting',
+          state: challengeFailure || isPressureError(error) ? 'blocked' : 'restarting',
           active_shop_id: '',
           active_shop_name: '',
           retry_at: new Date(Date.now() + waitMilliseconds).toISOString(),
           last_error_at: new Date().toISOString(),
           last_error: error?.kind === 'lease_lost' ? '' : errorMessage(error),
+          ...(challengeFailure ? {
+            challenge_state: error.challengeState || 'failed',
+            challenge_failure_count: lane.challengeState.failureCount,
+          } : {}),
         })
-        await sleep(waitMilliseconds)
+        await waitWithStatusRefresh(waitMilliseconds, {
+          sleep,
+          shouldContinue: () => !stopping,
+          onRefresh: () => publishLaneStatus(lane, {}),
+        })
       }
     }
   } finally {
@@ -652,42 +760,19 @@ async function runBrowser() {
   const lanes = []
   let browser
   try {
-    const usesRotatableContexts = laneProxyPools.some((pool) => pool.length > 1)
-    if (syncConcurrency === 1 && !usesRotatableContexts) {
-      fs.mkdirSync(chromeProfileDirectory, { recursive: true })
-      for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
-        fs.rmSync(`${chromeProfileDirectory}/${name}`, { force: true })
-      }
-      const context = await chromium.launchPersistentContext(chromeProfileDirectory, {
-        ...browserLaunchOptions(),
-        ...browserContextOptions(laneProxies[0]),
-      })
-      browser = context.browser()
-      contexts.push(context)
-      activeBrowser = browser
-      activeBrowserContexts = contexts
-      lanes.push(await prepareLane(context, 0, laneProxyPools[0]))
-      publishLaneStatus(lanes[0], {
-        state: 'idle',
-        proxy_server: laneProxies[0]?.server || '',
+    browser = await chromium.launch(browserLaunchOptions())
+    contexts = Array.from({ length: syncConcurrency }, () => null)
+    activeBrowser = browser
+    activeBrowserContexts = contexts
+    for (let index = 0; index < syncConcurrency; index += 1) {
+      const lane = createLane(index, laneProxyPools[index])
+      lanes.push(lane)
+      publishLaneStatus(lane, {
+        state: 'starting',
+        proxy_server: laneProxies[index]?.server || '',
         proxy_pool_position: 1,
-        proxy_pool_size: 1,
+        proxy_pool_size: laneProxyPools[index].length,
       })
-    } else {
-      browser = await chromium.launch(browserLaunchOptions())
-      contexts = Array.from({ length: syncConcurrency }, () => null)
-      activeBrowser = browser
-      activeBrowserContexts = contexts
-      for (let index = 0; index < syncConcurrency; index += 1) {
-        const lane = createLane(index, laneProxyPools[index])
-        lanes.push(lane)
-        publishLaneStatus(lane, {
-          state: 'starting',
-          proxy_server: laneProxies[index]?.server || '',
-          proxy_pool_position: 1,
-          proxy_pool_size: laneProxyPools[index].length,
-        })
-      }
     }
     publishStatus({
       browser_engine: 'playwright',
@@ -697,8 +782,7 @@ async function runBrowser() {
       request_rate_per_second_global: globalRequestRate,
       browser_started_at: new Date().toISOString(),
     })
-    if (syncConcurrency === 1 && !usesRotatableContexts) await runLane(lanes[0])
-    else await Promise.all(lanes.map((lane) => runLaneLifecycle(lane, browser)))
+    await Promise.all(lanes.map((lane) => runLaneLifecycle(lane, browser)))
     if (!stopping) throw new Error('product sync browser disconnected')
   } finally {
     if (activeBrowser === browser) activeBrowser = undefined
@@ -711,7 +795,7 @@ async function runBrowser() {
 async function main() {
   if (!backendToken) throw new Error('PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN is required')
   publishStatus({ state: 'starting' })
-  console.log(`${new Date().toISOString()} product sync worker starting; proxy_lanes=${configuredProxies.length}; proxy_endpoints=${configuredProxyCount}`)
+  console.log(`${new Date().toISOString()} product sync worker starting; proxy_lanes=${configuredProxies.length}; proxy_endpoints=${configuredProxyCount}; challenge_auto_solve=${challengeAutoSolveEnabled}`)
   let browserPressureFailures = 0
   while (!stopping) {
     try {
@@ -733,6 +817,7 @@ async function main() {
 async function shutdown(signal) {
   if (stopping) return
   stopping = true
+  workerStopController.abort(new Error(`product sync worker received ${signal}`))
   publishStatus({ state: 'stopping', stop_signal: signal })
   try {
     await Promise.all(activeBrowserContexts.filter(Boolean).map((context) => context.close().catch(() => {})))

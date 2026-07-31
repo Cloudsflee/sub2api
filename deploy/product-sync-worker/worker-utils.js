@@ -48,6 +48,18 @@ function waitForPromiseOrAbort(promise, signal) {
   })
 }
 
+async function waitWithStatusRefresh(milliseconds, options = {}) {
+  let remaining = Math.max(0, Number(milliseconds) || 0)
+  const intervalMilliseconds = Math.max(1, Number(options.intervalMilliseconds) || 30_000)
+  const sleep = options.sleep || ((duration) => new Promise((resolve) => setTimeout(resolve, duration)))
+  while (remaining > 0 && (options.shouldContinue?.() ?? true)) {
+    const duration = Math.min(remaining, intervalMilliseconds)
+    await sleep(duration)
+    remaining -= duration
+    await options.onRefresh?.({ remainingMilliseconds: remaining })
+  }
+}
+
 function createJobHeartbeat(options = {}) {
   const send = options.send
   if (typeof send !== 'function') throw new Error('heartbeat sender is required')
@@ -107,6 +119,14 @@ function parsePositiveMilliseconds(value, fallback, name) {
     throw new Error(`${name} must be a positive number`)
   }
   return Math.floor(parsed)
+}
+
+function parseBoolean(value, fallback = false, name = 'boolean setting') {
+  if (value === undefined || value === null || String(value).trim() === '') return fallback
+  const normalized = String(value).trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  throw new Error(`${name} must be true or false`)
 }
 
 function parseSyncConcurrency(value, fallback = 1) {
@@ -198,16 +218,6 @@ function proxyPoolsForConcurrency(concurrency, configurations, fallbackConfigura
   return laneProxies.map((proxy, index) => (
     fallbackConfigurations[index] ? [proxy, fallbackConfigurations[index]] : [proxy]
   ))
-}
-
-function isVerificationPageState(state) {
-  if (!state) return false
-  if (state.hasCaptcha) return true
-  const value = `${state.title || ''}\n${state.text || ''}`.toLowerCase()
-  return value.includes('verification')
-    || value.includes('please slide to verify')
-    || value.includes('verify that you are a real person')
-    || value.includes('滑动验证')
 }
 
 function unavailableMessage(value) {
@@ -357,7 +367,13 @@ function parseShopHTTPResponse(result) {
   }
   const contentType = String(result.contentType || '').toLowerCase()
   if (!contentType.includes('application/json')) {
-    throw new ShopSyncError('verification', `shop API verification required: HTTP ${result.status || 0}`)
+    const error = new ShopSyncError('verification', `shop API verification required: HTTP ${result.status || 0}`)
+    error.challengeResponse = {
+      contentType,
+      responseError: String(result.responseError || ''),
+      text: String(result.text || '').slice(0, 2_000),
+    }
+    throw error
   }
   if (!Number.isInteger(result.status) || result.status < 200 || result.status >= 300) {
     throw new ShopSyncError('unknown', `shop API returned HTTP ${result.status || 0}`)
@@ -370,7 +386,7 @@ function parseShopHTTPResponse(result) {
 
 function shopRequestError(path, error) {
   if (error instanceof ShopSyncError) return error
-  const message = String(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 500)
+  const message = redactURLCredentials(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 500)
   const name = String(error?.name || '').toLowerCase()
   const browserSessionClosed = /target (?:page, )?context or browser has been closed|page, context or browser has been closed|browser has been closed|context has been closed|page has been closed/i.test(message)
   const isNetworkFailure = name === 'aborterror'
@@ -386,7 +402,11 @@ function shopRequestError(path, error) {
 
 function isPressureError(error) {
   if (error?.restartLane || error?.kind === 'lease_lost') return false
-  return error?.kind === 'rate_limit' || error?.kind === 'verification' || error?.kind === 'network'
+  return error?.kind === 'rate_limit' || error?.kind === 'network'
+}
+
+function redactURLCredentials(value) {
+  return String(value || '').replace(/\b(https?|socks5):\/\/[^\s/@]+(?::[^\s/@]*)?@/gi, '$1://***@')
 }
 
 function pressureBackoffMilliseconds(failureCount, random = Math.random) {
@@ -494,8 +514,10 @@ async function initializeProxyPool(proxyPool, startIndex, initialize, options = 
       } catch (error) {
         lastError = error
         await options.onFailure?.({ error, proxy: proxyPool[proxyIndex], proxyIndex, attempt })
-        const isLastAttempt = offset === proxyPool.length - 1 && attempt === attemptsPerProxy
-        if (!isLastAttempt && retryMilliseconds > 0) await sleep(retryMilliseconds)
+        const retryCurrentProxy = attempt < attemptsPerProxy
+          && (options.shouldRetryProxy?.({ error, proxy: proxyPool[proxyIndex], proxyIndex, attempt }) ?? true)
+        if (!retryCurrentProxy) break
+        if (retryMilliseconds > 0) await sleep(retryMilliseconds)
       }
     }
   }
@@ -529,9 +551,20 @@ function workerStatusIsHealthy(status, now = Date.now(), maxStaleMilliseconds = 
   if (['error', 'stopped', 'stopping'].includes(status.state)) return false
   const updatedAt = Date.parse(status.updated_at)
   if (!Number.isFinite(updatedAt) || updatedAt > now + 60_000 || now - updatedAt > maxStaleMilliseconds) return false
+  const lanes = Array.isArray(status.lanes) ? status.lanes : []
+  const challengeRecoveryActive = status.challenge_auto_solve_enabled === true && lanes.some((lane) => (
+    ['queued', 'detecting', 'solving'].includes(lane?.challenge_state)
+  ))
+  const challengeBackoffActive = status.challenge_auto_solve_enabled === true && lanes.length > 0 && lanes.every((lane) => {
+    const retryAt = Date.parse(lane?.retry_at)
+    return lane?.state === 'blocked'
+      && ['failed', 'timeout', 'unsupported'].includes(lane?.challenge_state)
+      && Number.isFinite(retryAt) && retryAt > now
+  })
+  if (challengeRecoveryActive || challengeBackoffActive) return true
   if (!Number.isInteger(status.browser_context_count) || status.browser_context_count < 1) return false
   if (!Number.isInteger(status.browser_page_count) || status.browser_page_count < 1) return false
-  if (!Array.isArray(status.lanes) || !status.lanes.some((lane) => (
+  if (!lanes.some((lane) => (
     lane?.context_ready === true && ['idle', 'syncing', 'blocked'].includes(lane.state)
   ))) {
     return false
@@ -608,9 +641,9 @@ module.exports = {
   createJobHeartbeat,
   initializeProxyPool,
   isPressureError,
-  isVerificationPageState,
   mapWithConcurrency,
   normalizeNonNegativeInteger,
+  parseBoolean,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
   parseProxyConfigurations,
@@ -621,6 +654,7 @@ module.exports = {
   proxyLanesForConcurrency,
   proxyPoolsForConcurrency,
   quoteResult,
+  redactURLCredentials,
   selectPaymentChannel,
   shopRequestError,
   shopUnavailableMessage,
@@ -629,6 +663,7 @@ module.exports = {
   throwIfAborted,
   unavailableMessage,
   waitForPromiseOrAbort,
+  waitWithStatusRefresh,
   withPressureRecovery,
   workerStatusIsHealthy,
 }

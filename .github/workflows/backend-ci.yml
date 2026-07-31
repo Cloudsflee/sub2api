@@ -84,6 +84,22 @@ jobs:
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
 
+  product-sync-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: deploy/product-sync-worker/package-lock.json
+      - name: Install worker dependencies
+        working-directory: deploy/product-sync-worker
+        run: npm ci --no-audit --no-fund
+      - name: Test product sync worker
+        working-directory: deploy/product-sync-worker
+        run: npm test
+
   golangci-lint:
     runs-on: ubuntu-latest
     steps:
@@ -110,7 +126,7 @@ jobs:
       github.event_name == 'push' &&
       github.ref == 'refs/heads/custom' &&
       github.repository == 'Cloudsflee/sub2api'
-    needs: [shell, managed-update, test, frontend, golangci-lint]
+    needs: [shell, managed-update, test, frontend, product-sync-worker, golangci-lint]
     runs-on: ubuntu-latest
     permissions:
       contents: write
