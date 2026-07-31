@@ -14,6 +14,7 @@ const {
   collectChallengeSnapshot,
   computeDragDistance,
   defaultChallengeProviders,
+  dragSlider,
   generateDragTrajectory,
   isHTTPCustomDenial,
   readStoredSession,
@@ -165,6 +166,46 @@ test('drag trajectories use 36-60 nonlinear steps, bounded duration, jitter, and
   assert.ok(trajectory.points.at(-2).x < trajectory.points.at(-1).x)
 })
 
+test('slider drag uses absolute deadlines so mouse protocol time stays inside the trajectory budget', async () => {
+  let elapsed = 0
+  let pressedAt = 0
+  const waits = []
+  const events = []
+  const page = {
+    mouse: {
+      move: async (x, y) => {
+        events.push(['move', x, y])
+        elapsed += 7
+      },
+      down: async () => {
+        pressedAt = elapsed
+        events.push(['down'])
+      },
+      up: async () => events.push(['up']),
+    },
+  }
+  const trajectory = {
+    durationMilliseconds: 30,
+    points: [
+      { x: 10, y: 1, delayMilliseconds: 10 },
+      { x: 20, y: -1, delayMilliseconds: 10 },
+      { x: 30, y: 0, delayMilliseconds: 10 },
+    ],
+  }
+
+  await dragSlider(page, sliderGeometry(), trajectory, {
+    now: () => elapsed,
+    wait: async (milliseconds) => {
+      waits.push(milliseconds)
+      elapsed += milliseconds
+    },
+  })
+
+  assert.deepEqual(waits, [10, 3, 3])
+  assert.equal(elapsed - pressedAt, 37)
+  assert.deepEqual(events.map(([event]) => event), ['move', 'down', 'move', 'move', 'move', 'up'])
+})
+
 test('challenge manager succeeds on the second drag, reloads first, and saves storage state', async (t) => {
   const directory = temporaryDirectory()
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
@@ -290,6 +331,25 @@ test('one shared cancellable lock serializes six lane recoveries', async (t) => 
   })
   const results = await Promise.all(Array.from({ length: 6 }, () => manager.solve({ context: {}, page: {} })))
   assert.equal(maximumActive, 1)
+  assert.deepEqual(results.map((result) => result.state), Array(6).fill('clear'))
+})
+
+test('six queued lanes each receive a full timeout budget after acquiring the challenge lock', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const mutex = new CancellableMutex()
+  const release = await mutex.acquire()
+  const manager = new ChallengeManager({
+    enabled: true,
+    mutex,
+    sessionDirectory: directory,
+    timeoutMilliseconds: 30,
+    navigate: async () => ({}),
+    inspect: async () => clearSnapshot(),
+  })
+
+  setTimeout(release, 50)
+  const results = await Promise.all(Array.from({ length: 6 }, () => manager.solve({ context: {}, page: {} })))
   assert.deepEqual(results.map((result) => result.state), Array(6).fill('clear'))
 })
 

@@ -1,6 +1,7 @@
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
+const { performance } = require('node:perf_hooks')
 
 const DEFAULT_ORIGIN = 'https://pay.ldxp.cn'
 const MAX_DRAG_ATTEMPTS = 2
@@ -385,19 +386,24 @@ async function locateSlider(page, providerID, options = {}) {
 
 async function dragSlider(page, geometry, trajectory, options = {}) {
   const signal = options.signal
+  const now = options.now || (() => performance.now())
+  const wait = options.wait || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
   const startX = geometry.handleBox.x + geometry.handleBox.width / 2
   const startY = geometry.handleBox.y + geometry.handleBox.height / 2
   throwIfAborted(signal)
   await page.mouse.move(startX, startY)
   await page.mouse.down()
   try {
+    const startedAt = now()
+    let scheduledAt = 0
     for (const point of trajectory.points) {
+      scheduledAt += point.delayMilliseconds
+      const waitMilliseconds = scheduledAt - (now() - startedAt)
+      if (waitMilliseconds > 0) {
+        await waitForPromiseOrAbort(wait(waitMilliseconds), signal)
+      }
       throwIfAborted(signal)
       await page.mouse.move(startX + point.x, startY + point.y)
-      await waitForPromiseOrAbort(
-        new Promise((resolve) => setTimeout(resolve, point.delayMilliseconds)),
-        signal
-      )
     }
   } finally {
     await page.mouse.up().catch(() => {})
@@ -537,21 +543,29 @@ class ChallengeManager {
     if (!this.enabled) {
       throw new ChallengeError('disabled', 'shop API verification required but automatic challenge recovery is disabled')
     }
-    const timeoutController = new AbortController()
     const timeoutError = new ChallengeError('timeout', `verification challenge exceeded ${this.timeoutMilliseconds} milliseconds`)
-    const timer = setTimeout(() => timeoutController.abort(timeoutError), this.timeoutMilliseconds)
-    const signal = combinedAbortSignal([options.signal, this.stopSignal, timeoutController.signal])
+    const queueSignal = combinedAbortSignal([options.signal, this.stopSignal])
+    let timeoutController
     const report = (values) => options.onState?.(values)
     report({ state: 'queued' })
 
     try {
       return await this.mutex.runExclusive(
-        () => this.solveLocked(options, signal, report),
-        signal
+        async () => {
+          timeoutController = new AbortController()
+          const timer = setTimeout(() => timeoutController.abort(timeoutError), this.timeoutMilliseconds)
+          const signal = combinedAbortSignal([options.signal, this.stopSignal, timeoutController.signal])
+          try {
+            return await this.solveLocked(options, signal, report)
+          } finally {
+            clearTimeout(timer)
+          }
+        },
+        queueSignal
       )
     } catch (error) {
       if (options.signal?.aborted || this.stopSignal?.aborted) throw abortReason(options.signal?.aborted ? options.signal : this.stopSignal)
-      const finalError = timeoutController.signal.aborted ? timeoutError : error
+      const finalError = timeoutController?.signal.aborted ? timeoutError : error
       if (finalError instanceof ChallengeError) {
         report({ state: finalError.challengeState })
         throw finalError
@@ -559,8 +573,6 @@ class ChallengeManager {
       const wrapped = new ChallengeError('failed', `verification challenge recovery failed: ${String(finalError?.message || finalError)}`, { cause: finalError })
       report({ state: wrapped.challengeState })
       throw wrapped
-    } finally {
-      clearTimeout(timer)
     }
   }
 
@@ -711,6 +723,7 @@ module.exports = {
   collectChallengeSnapshot,
   computeDragDistance,
   defaultChallengeProviders,
+  dragSlider,
   generateDragTrajectory,
   isChallengeError,
   isHTTPCustomDenial,

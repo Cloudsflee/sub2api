@@ -88,11 +88,15 @@ by `denied by intelligent_cc_acl` is accepted.
 The live slider geometry determines the drag distance. For example, a 360 px
 track with a 40 px handle produces a 320 px movement; no fixed distance is
 configured. Each attempt uses 36-60 nonlinear steps over 900-1600 ms with
-small vertical variation and an end correction. A context gets at most two
-drag attempts and reloads the verification page before the second. All lanes
-share one cancellable lock, so only one lane can drag at a time. After dragging,
-the manager requests the home page again and requires the verification DOM,
-title, copy, and `http_custom` denial to be gone.
+small vertical variation and an end correction. Movement uses absolute
+deadlines from mouse-down, so browser protocol latency stays inside that
+duration instead of accumulating once per step. A context gets at most two drag
+attempts and reloads the verification page before the second. All lanes share
+one cancellable lock, so only one lane can drag at a time. The 90-second
+per-context recovery budget starts after that lock is acquired; queued lanes
+remain immediately cancellable without losing their own solve budget. After
+dragging, the manager requests the home page again and requires the verification
+DOM, title, copy, and `http_custom` denial to be gone.
 
 At startup, each context restores the storage state for its provider, target
 origin, and proxy identity before validating the home page. Successful states
