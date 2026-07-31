@@ -1,24 +1,50 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { get, post } = vi.hoisted(() => ({
+const { get, post, patch, del } = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
+  patch: vi.fn(),
+  del: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({
-  apiClient: { get, post },
+  apiClient: { get, post, patch, delete: del },
 }))
 
 import {
+  deletePublicAccountImportShop,
+  getPublicAccountImportShops,
   getPublicAccountImportProducts,
 	getPublicAccountImportProductsWithETag,
   requestPublicAccountImportProductRefresh,
+  updatePublicAccountImportShopTrustLevel,
 } from '@/api/publicAccountImport'
 
 describe('public account import product API', () => {
   beforeEach(() => {
     get.mockReset()
     post.mockReset()
+    patch.mockReset()
+    del.mockReset()
+  })
+
+  it('normalizes public trust levels and uses the administrator shop paths for writes', async () => {
+    const shop = {
+      id: 'shop/one', name: 'Shop', url: 'https://example.com/shop',
+      created_at: '2026-07-31T00:00:00Z', trust_level: 'invalid',
+    }
+    get.mockResolvedValue({ data: { shops: [shop] } })
+    patch.mockResolvedValue({ data: { ...shop, trust_level: 'trusted' } })
+    del.mockResolvedValue({ data: { id: shop.id } })
+
+    await expect(getPublicAccountImportShops()).resolves.toEqual([{ ...shop, trust_level: 'neutral' }])
+    await expect(updatePublicAccountImportShopTrustLevel(shop.id, 'trusted')).resolves.toMatchObject({ trust_level: 'trusted' })
+    await expect(deletePublicAccountImportShop(shop.id)).resolves.toEqual({ id: shop.id })
+
+    expect(patch).toHaveBeenCalledWith('/admin/public-account-import/shops/shop%2Fone', {
+      trust_level: 'trusted',
+    })
+    expect(del).toHaveBeenCalledWith('/admin/public-account-import/shops/shop%2Fone')
   })
 
   it('normalizes per-shop product sync statuses while preserving catalog counts', async () => {

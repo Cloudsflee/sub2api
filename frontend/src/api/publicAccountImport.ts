@@ -34,11 +34,14 @@ export interface PublicAccountImportPayload {
   group_ids: number[]
 }
 
+export type PublicAccountImportShopTrustLevel = 'trusted' | 'neutral' | 'untrusted'
+
 export interface PublicAccountImportShop {
   id: string
   name: string
   url: string
   created_at: string
+  trust_level: PublicAccountImportShopTrustLevel
 }
 
 export interface PublicAccountImportShopSubmission {
@@ -49,6 +52,10 @@ export interface PublicAccountImportShopSubmission {
 export interface PublicAccountImportShopPayload {
   name: string
   url: string
+}
+
+export interface PublicAccountImportShopDeletion {
+  id: string
 }
 
 export interface PublicAccountImportProduct {
@@ -129,7 +136,7 @@ export async function getPublicAccountImportShops(): Promise<PublicAccountImport
   const { data } = await apiClient.get<{ shops: PublicAccountImportShop[] }>(
     '/public/account-import/shops'
   )
-  return data.shops || []
+  return (data.shops || []).map(normalizePublicAccountImportShop)
 }
 
 export async function submitPublicAccountImportShop(
@@ -138,6 +145,26 @@ export async function submitPublicAccountImportShop(
   const { data } = await apiClient.post<PublicAccountImportShopSubmission>(
     '/public/account-import/shops',
     payload
+  )
+  return { ...data, shop: normalizePublicAccountImportShop(data.shop) }
+}
+
+export async function updatePublicAccountImportShopTrustLevel(
+  shopId: string,
+  trustLevel: PublicAccountImportShopTrustLevel
+): Promise<PublicAccountImportShop> {
+  const { data } = await apiClient.patch<PublicAccountImportShop>(
+    `/admin/public-account-import/shops/${encodeURIComponent(shopId)}`,
+    { trust_level: trustLevel }
+  )
+  return normalizePublicAccountImportShop(data)
+}
+
+export async function deletePublicAccountImportShop(
+  shopId: string
+): Promise<PublicAccountImportShopDeletion> {
+  const { data } = await apiClient.delete<PublicAccountImportShopDeletion>(
+    `/admin/public-account-import/shops/${encodeURIComponent(shopId)}`
   )
   return data
 }
@@ -225,4 +252,19 @@ function normalizePublicAccountImportProductSyncStatus(
 function normalizeNonNegativeInteger(value: unknown): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0
+}
+
+function normalizePublicAccountImportShop(
+  shop: PublicAccountImportShop
+): PublicAccountImportShop {
+  return {
+    ...shop,
+    trust_level: normalizePublicAccountImportShopTrustLevel(shop?.trust_level),
+  }
+}
+
+function normalizePublicAccountImportShopTrustLevel(
+  value: unknown
+): PublicAccountImportShopTrustLevel {
+  return value === 'trusted' || value === 'untrusted' ? value : 'neutral'
 }

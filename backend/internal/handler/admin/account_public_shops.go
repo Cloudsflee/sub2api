@@ -29,15 +29,19 @@ const (
 	publicAccountImportShopMaxURLLength   = 2048
 	publicAccountImportShopMaxCount       = 500
 	publicAccountImportShopStoreVersion   = 1
+	publicAccountImportShopTrusted        = "trusted"
+	publicAccountImportShopNeutral        = "neutral"
+	publicAccountImportShopUntrusted      = "untrusted"
 )
 
 var publicAccountImportShopLinksMu sync.Mutex
 
 type PublicAccountImportShop struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	URL       string `json:"url"`
-	CreatedAt string `json:"created_at"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	CreatedAt  string `json:"created_at"`
+	TrustLevel string `json:"trust_level"`
 }
 
 type PublicAccountImportShopsResponse struct {
@@ -47,6 +51,14 @@ type PublicAccountImportShopsResponse struct {
 type PublicAccountImportShopRequest struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
+}
+
+type PublicAccountImportShopTrustLevelRequest struct {
+	TrustLevel string `json:"trust_level"`
+}
+
+type PublicAccountImportShopDeletion struct {
+	ID string `json:"id"`
 }
 
 type PublicAccountImportShopSubmission struct {
@@ -126,10 +138,11 @@ func (h *AccountHandler) SubmitPublicAccountImportShop(c *gin.Context) {
 	}
 
 	shop := PublicAccountImportShop{
-		ID:        publicAccountImportShopID(shopURL),
-		Name:      name,
-		URL:       shopURL,
-		CreatedAt: publicAccountImportTimestamp(),
+		ID:         publicAccountImportShopID(shopURL),
+		Name:       name,
+		URL:        shopURL,
+		CreatedAt:  publicAccountImportTimestamp(),
+		TrustLevel: publicAccountImportShopNeutral,
 	}
 	shops = append([]PublicAccountImportShop{shop}, shops...)
 	if err := savePublicAccountImportShops(path, shops); err != nil {
@@ -138,6 +151,131 @@ func (h *AccountHandler) SubmitPublicAccountImportShop(c *gin.Context) {
 	}
 
 	response.Created(c, PublicAccountImportShopSubmission{Shop: shop, Created: true})
+}
+
+func (h *AccountHandler) UpdatePublicAccountImportShopTrustLevel(c *gin.Context) {
+	if !publicAccountImportEnabled() {
+		response.NotFound(c, "Public account import is disabled")
+		return
+	}
+
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, publicAccountImportShopMaxRequestSize)
+	var req PublicAccountImportShopTrustLevelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid shop trust level request")
+		return
+	}
+	if !validPublicAccountImportShopTrustLevel(req.TrustLevel) {
+		response.BadRequest(c, "Invalid shop trust level")
+		return
+	}
+
+	shopID := strings.TrimSpace(c.Param("id"))
+	path := publicAccountImportShopLinksPath()
+	publicAccountImportShopLinksMu.Lock()
+	defer publicAccountImportShopLinksMu.Unlock()
+
+	shops, err := loadPublicAccountImportShops(path)
+	if err != nil {
+		response.InternalError(c, "Failed to load shop links")
+		return
+	}
+	for i := range shops {
+		if shops[i].ID != shopID {
+			continue
+		}
+		shops[i].TrustLevel = req.TrustLevel
+		if err := savePublicAccountImportShops(path, shops); err != nil {
+			response.InternalError(c, "Failed to save shop trust level")
+			return
+		}
+		response.Success(c, shops[i])
+		return
+	}
+
+	response.NotFound(c, "Shop not found")
+}
+
+func (h *AccountHandler) DeletePublicAccountImportShop(c *gin.Context) {
+	if !publicAccountImportEnabled() {
+		response.NotFound(c, "Public account import is disabled")
+		return
+	}
+
+	shopID := strings.TrimSpace(c.Param("id"))
+	deleted, err := deletePublicAccountImportShopWithPersistence(
+		shopID,
+		savePublicAccountImportShops,
+		savePublicProductCacheLocked,
+	)
+	if err != nil {
+		response.InternalError(c, "Failed to delete shop")
+		return
+	}
+	if !deleted {
+		response.NotFound(c, "Shop not found")
+		return
+	}
+
+	response.Success(c, PublicAccountImportShopDeletion{ID: shopID})
+}
+
+func deletePublicAccountImportShopWithPersistence(
+	shopID string,
+	saveShops func(string, []PublicAccountImportShop) error,
+	saveProducts func() error,
+) (bool, error) {
+	// Every operation that needs both stores takes the shop lock first.
+	publicAccountImportShopLinksMu.Lock()
+	defer publicAccountImportShopLinksMu.Unlock()
+
+	path := publicAccountImportShopLinksPath()
+	shops, err := loadPublicAccountImportShops(path)
+	if err != nil {
+		return false, err
+	}
+	shopIndex := -1
+	for i := range shops {
+		if shops[i].ID == shopID {
+			shopIndex = i
+			break
+		}
+	}
+	if shopIndex < 0 {
+		return false, nil
+	}
+
+	publicProductCacheMu.Lock()
+	defer publicProductCacheMu.Unlock()
+	if err := loadPublicProductCacheLocked(); err != nil {
+		return true, err
+	}
+
+	previousCache := clonePublicAccountImportProductStore(publicProductCache)
+	_, hadProductCache := publicProductCache.Shops[shopID]
+	if hadProductCache {
+		publicProductCache = clonePublicAccountImportProductStore(publicProductCache)
+		delete(publicProductCache.Shops, shopID)
+		if err := saveProducts(); err != nil {
+			publicProductCache = previousCache
+			return true, err
+		}
+	}
+
+	remaining := make([]PublicAccountImportShop, 0, len(shops)-1)
+	remaining = append(remaining, shops[:shopIndex]...)
+	remaining = append(remaining, shops[shopIndex+1:]...)
+	if err := saveShops(path, remaining); err != nil {
+		if hadProductCache {
+			publicProductCache = previousCache
+			if rollbackErr := saveProducts(); rollbackErr != nil {
+				return true, fmt.Errorf("delete shop: %w; restore product cache: %v", err, rollbackErr)
+			}
+		}
+		return true, err
+	}
+
+	return true, nil
 }
 
 func publicAccountImportShopLinksPath() string {
@@ -222,6 +360,22 @@ func publicAccountImportTimestamp() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05Z")
 }
 
+func validPublicAccountImportShopTrustLevel(value string) bool {
+	switch value {
+	case publicAccountImportShopTrusted, publicAccountImportShopNeutral, publicAccountImportShopUntrusted:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizePublicAccountImportShopTrustLevel(value string) string {
+	if validPublicAccountImportShopTrustLevel(value) {
+		return value
+	}
+	return publicAccountImportShopNeutral
+}
+
 func loadPublicAccountImportShops(path string) ([]PublicAccountImportShop, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -247,11 +401,18 @@ func loadPublicAccountImportShops(path string) ([]PublicAccountImportShop, error
 	if store.Shops == nil {
 		store.Shops = []PublicAccountImportShop{}
 	}
+	for i := range store.Shops {
+		store.Shops[i].TrustLevel = normalizePublicAccountImportShopTrustLevel(store.Shops[i].TrustLevel)
+	}
 	return store.Shops, nil
 }
 
 func savePublicAccountImportShops(path string, shops []PublicAccountImportShop) error {
-	store := publicAccountImportShopStore{Version: publicAccountImportShopStoreVersion, Shops: shops}
+	normalizedShops := append([]PublicAccountImportShop(nil), shops...)
+	for i := range normalizedShops {
+		normalizedShops[i].TrustLevel = normalizePublicAccountImportShopTrustLevel(normalizedShops[i].TrustLevel)
+	}
+	store := publicAccountImportShopStore{Version: publicAccountImportShopStoreVersion, Shops: normalizedShops}
 	data, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
 		return err

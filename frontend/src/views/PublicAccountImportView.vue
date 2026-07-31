@@ -314,18 +314,27 @@
           <div
             v-for="shop in pagedShops"
             :key="shop.id"
-            class="flex min-h-20 items-center gap-2 px-1 py-3 sm:px-3"
+            class="flex min-h-20 flex-wrap items-center gap-2 px-1 py-3 sm:flex-nowrap sm:px-3"
           >
             <a
               :href="shopHref(shop.url)"
               target="_blank"
               rel="noopener noreferrer nofollow ugc"
-              class="flex min-w-0 flex-1 items-center gap-3 text-gray-800 transition-colors hover:text-primary-700 dark:text-dark-100 dark:hover:text-primary-300"
+              class="flex min-w-0 basis-full items-center gap-3 text-gray-800 transition-colors hover:text-primary-700 dark:text-dark-100 dark:hover:text-primary-300 sm:basis-auto sm:flex-1"
               :title="t('publicAccountImport.visitShop')"
             >
               <Icon name="link" size="sm" class="shrink-0 text-gray-400" />
               <span class="min-w-0 flex-1">
-                <span class="block break-words text-sm font-medium">{{ shop.name }}</span>
+                <span class="flex flex-wrap items-center gap-2">
+                  <span class="break-words text-sm font-medium">{{ shop.name }}</span>
+                  <span
+                    class="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[11px] font-semibold"
+                    :class="shopTrustLevelClass(shop.trust_level)"
+                    :data-shop-trust-level="shop.trust_level"
+                  >
+                    {{ shopTrustLevelLabel(shop.trust_level) }}
+                  </span>
+                </span>
                 <span class="block break-all text-xs text-gray-500 dark:text-dark-400">
                   {{ shop.url }}
                 </span>
@@ -357,6 +366,34 @@
                   size="sm"
                   :class="{ 'animate-spin': shopProductRefreshIsSpinning(shop.id) }"
                 />
+              </button>
+            </div>
+            <div v-if="isAdmin" class="flex shrink-0 items-center gap-2" data-shop-admin-controls>
+              <label class="sr-only" :for="`public-shop-trust-${shop.id}`">
+                {{ t('publicAccountImport.shopTrustLevelLabel') }}
+              </label>
+              <select
+                :id="`public-shop-trust-${shop.id}`"
+                :value="shop.trust_level"
+                class="h-10 w-28 rounded-md border border-gray-300 bg-white px-2 text-xs font-medium text-gray-700 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-800 dark:text-dark-200"
+                :disabled="shopManagementIsDisabled(shop.id)"
+                :data-shop-trust-select="shop.id"
+                @change="handleShopTrustLevelChange(shop, $event)"
+              >
+                <option value="trusted">{{ t('publicAccountImport.shopTrustTrusted') }}</option>
+                <option value="neutral">{{ t('publicAccountImport.shopTrustNeutral') }}</option>
+                <option value="untrusted">{{ t('publicAccountImport.shopTrustUntrusted') }}</option>
+              </select>
+              <button
+                type="button"
+                class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-red-200 text-red-600 transition-colors hover:border-red-400 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:border-red-700 dark:hover:bg-red-950/30"
+                :disabled="shopManagementIsDisabled(shop.id)"
+                :title="t('publicAccountImport.deleteShop')"
+                :aria-label="t('publicAccountImport.deleteShop')"
+                :data-shop-delete="shop.id"
+                @click="openShopDeleteDialog(shop)"
+              >
+                <Icon name="trash" size="sm" />
               </button>
             </div>
           </div>
@@ -499,8 +536,17 @@
             />
             <div class="min-w-0 flex-1">
               <div class="line-clamp-2 text-sm font-semibold text-gray-900 dark:text-white">{{ product.name }}</div>
-              <div class="mt-1 truncate text-xs text-gray-500 dark:text-dark-400">
-                {{ product.shop_name }}<span v-if="product.category"> · {{ product.category }}</span>
+              <div class="mt-1 flex min-w-0 items-center gap-2 text-xs text-gray-500 dark:text-dark-400">
+                <span class="min-w-0 flex-1 truncate">
+                  {{ product.shop_name }}<span v-if="product.category"> · {{ product.category }}</span>
+                </span>
+                <span
+                  class="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[11px] font-semibold"
+                  :class="shopTrustLevelClass(productShopTrustLevel(product.shop_id))"
+                  :data-product-shop-trust-level="productShopTrustLevel(product.shop_id)"
+                >
+                  {{ shopTrustLevelLabel(productShopTrustLevel(product.shop_id)) }}
+                </span>
               </div>
               <div class="mt-1 text-xs text-gray-400 dark:text-dark-500" :title="product.updated_at">
                 {{ t('publicAccountImport.productUpdatedAt', { time: formatProductUpdatedAt(product.updated_at) }) }}
@@ -549,6 +595,17 @@
         </div>
       </section>
     </main>
+
+    <ConfirmDialog
+      :show="Boolean(deletingShop)"
+      :title="t('publicAccountImport.deleteShopTitle')"
+      :message="t('publicAccountImport.deleteShopConfirm', { name: deletingShop?.name || '' })"
+      :confirm-text="t('common.delete')"
+      :cancel-text="t('common.cancel')"
+      danger
+      @confirm="confirmShopDelete"
+      @cancel="cancelShopDelete"
+    />
   </div>
 </template>
 
@@ -557,19 +614,24 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import {
+  deletePublicAccountImportShop,
   getPublicAccountImportGroups,
 	getPublicAccountImportProductsWithETag,
   getPublicAccountImportShops,
   requestPublicAccountImportProductRefresh,
   submitPublicAccountImport,
   submitPublicAccountImportShop,
+  updatePublicAccountImportShopTrustLevel,
   type PublicAccountImportGroup,
   type PublicAccountImportProduct,
   type PublicAccountImportProductSyncStatus,
   type PublicAccountImportResult,
   type PublicAccountImportShop,
+  type PublicAccountImportShopTrustLevel,
 } from '@/api/publicAccountImport'
 import {
   filterAndSortPublicProducts,
@@ -605,6 +667,7 @@ interface ProductPriceVerification {
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const authStore = useAuthStore()
 const fileInput = ref<HTMLInputElement | null>(null)
 const files = ref<File[]>([])
 const groups = ref<PublicAccountImportGroup[]>([])
@@ -635,6 +698,9 @@ const failedProductShops = ref(0)
 const expiredProductShops = ref(0)
 const shopProductSyncStatuses = ref<Record<string, TrackedPublicAccountImportProductSyncStatus>>({})
 const shopProductRefreshRequests = ref<Record<string, boolean>>({})
+const shopTrustUpdates = ref<Record<string, boolean>>({})
+const deletingShop = ref<PublicAccountImportShop | null>(null)
+const deletingShopRequest = ref(false)
 const shopProductSyncClock = ref(Date.now())
 const productSearch = ref('')
 const productPriceOrder = ref<'desc' | 'asc'>('asc')
@@ -650,6 +716,7 @@ const productVerificationPromises = new Map<string, Promise<boolean>>()
 const dragActive = computed(() => dragDepth.value > 0)
 const siteName = computed(() => appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '/logo.png', { allowRelative: true, allowDataUrl: true }))
+const isAdmin = computed(() => authStore.isAdmin)
 const mainTabs = computed(() => [
   { value: 'import' as const, label: t('publicAccountImport.importModule') },
   { value: 'shops' as const, label: t('publicAccountImport.shopModule') },
@@ -660,6 +727,7 @@ const pagedShops = computed(() => {
   const start = (shopPage.value - 1) * CATALOG_PAGE_SIZE
   return shops.value.slice(start, start + CATALOG_PAGE_SIZE)
 })
+const shopsByID = computed(() => new Map(shops.value.map((shop) => [shop.id, shop])))
 const filteredProducts = computed(() => filterAndSortPublicProducts(
   products.value,
   productSearch.value,
@@ -1149,6 +1217,122 @@ function publicProductVisitorID(): string {
 function clearShopMessages() {
   shopErrorMessage.value = ''
   shopNoticeMessage.value = ''
+}
+
+function shopTrustLevelLabel(level: PublicAccountImportShopTrustLevel): string {
+  if (level === 'trusted') return t('publicAccountImport.shopTrustTrusted')
+  if (level === 'untrusted') return t('publicAccountImport.shopTrustUntrusted')
+  return t('publicAccountImport.shopTrustNeutral')
+}
+
+function shopTrustLevelClass(level: PublicAccountImportShopTrustLevel): string {
+  if (level === 'trusted') {
+    return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+  }
+  if (level === 'untrusted') {
+    return 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300'
+  }
+  return 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-dark-300'
+}
+
+function productShopTrustLevel(shopId: string): PublicAccountImportShopTrustLevel {
+  return shopsByID.value.get(shopId)?.trust_level || 'neutral'
+}
+
+function shopManagementIsDisabled(shopId: string): boolean {
+  return Boolean(shopTrustUpdates.value[shopId]) || (
+    deletingShopRequest.value && deletingShop.value?.id === shopId
+  )
+}
+
+async function handleShopTrustLevelChange(shop: PublicAccountImportShop, event: Event) {
+  const target = event.target as HTMLSelectElement
+  const trustLevel = target.value as PublicAccountImportShopTrustLevel
+  if (
+    shopTrustUpdates.value[shop.id] ||
+    !['trusted', 'neutral', 'untrusted'].includes(trustLevel) ||
+    trustLevel === shop.trust_level
+  ) return
+
+  const previousShop = shop
+  shopTrustUpdates.value = { ...shopTrustUpdates.value, [shop.id]: true }
+  shops.value = shops.value.map((item) => item.id === shop.id ? { ...item, trust_level: trustLevel } : item)
+  clearShopMessages()
+  try {
+    const updatedShop = await updatePublicAccountImportShopTrustLevel(shop.id, trustLevel)
+    shops.value = shops.value.map((item) => item.id === shop.id ? updatedShop : item)
+    shopNoticeMessage.value = t('publicAccountImport.shopTrustUpdated', { name: updatedShop.name })
+  } catch (error: any) {
+    shops.value = shops.value.map((item) => item.id === shop.id ? previousShop : item)
+    shopErrorMessage.value = error?.message || t('publicAccountImport.shopTrustUpdateFailed', { name: shop.name })
+  } finally {
+    const next = { ...shopTrustUpdates.value }
+    delete next[shop.id]
+    shopTrustUpdates.value = next
+  }
+}
+
+function openShopDeleteDialog(shop: PublicAccountImportShop) {
+  if (!isAdmin.value || deletingShopRequest.value) return
+  clearShopMessages()
+  deletingShop.value = shop
+}
+
+function cancelShopDelete() {
+  if (deletingShopRequest.value) return
+  deletingShop.value = null
+}
+
+async function confirmShopDelete() {
+  const shop = deletingShop.value
+  if (!shop || deletingShopRequest.value) return
+  deletingShopRequest.value = true
+  clearShopMessages()
+  try {
+    const deletion = await deletePublicAccountImportShop(shop.id)
+    const deletedShopID = deletion.id === shop.id ? deletion.id : shop.id
+    const removedProductIDs = products.value
+      .filter((product) => product.shop_id === deletedShopID)
+      .map((product) => product.id)
+
+    shops.value = shops.value.filter((item) => item.id !== deletedShopID)
+    products.value = products.value.filter((product) => product.shop_id !== deletedShopID)
+
+    const nextStatuses = { ...shopProductSyncStatuses.value }
+    delete nextStatuses[deletedShopID]
+    shopProductSyncStatuses.value = nextStatuses
+    const nextRefreshRequests = { ...shopProductRefreshRequests.value }
+    delete nextRefreshRequests[deletedShopID]
+    shopProductRefreshRequests.value = nextRefreshRequests
+    const nextTrustUpdates = { ...shopTrustUpdates.value }
+    delete nextTrustUpdates[deletedShopID]
+    shopTrustUpdates.value = nextTrustUpdates
+
+    const nextVerifications = { ...productPriceVerifications.value }
+    for (const productID of removedProductIDs) {
+      delete nextVerifications[productID]
+      productVerificationPromises.delete(productID)
+    }
+    productPriceVerifications.value = nextVerifications
+    updateProductSyncCountersFromStatuses()
+
+    deletingShop.value = null
+    shopNoticeMessage.value = t('publicAccountImport.shopDeleted', { name: shop.name })
+    productCatalogETag = null
+    void loadPublicProducts(false)
+  } catch (error: any) {
+    shopErrorMessage.value = error?.message || t('publicAccountImport.shopDeleteFailed', { name: shop.name })
+  } finally {
+    deletingShopRequest.value = false
+  }
+}
+
+function updateProductSyncCountersFromStatuses() {
+  const statuses = Object.values(shopProductSyncStatuses.value)
+  queuedProductShops.value = statuses.filter((status) => status.state === 'queued').length
+  refreshingProductShops.value = statuses.filter((status) => status.state === 'refreshing').length
+  failedProductShops.value = statuses.filter((status) => status.state === 'failed').length
+  expiredProductShops.value = statuses.filter((status) => status.snapshot_state === 'expired').length
 }
 
 function shopHref(value: string): string {

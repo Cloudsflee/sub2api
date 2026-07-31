@@ -3,7 +3,9 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import PublicAccountImportView from '../PublicAccountImportView.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type {
+  PublicAccountImportProduct,
   PublicAccountImportProductRefreshResponse,
   PublicAccountImportProductSyncStatus,
   PublicAccountImportProductsResponse,
@@ -14,18 +16,24 @@ const {
   getGroups,
   getProducts,
   getShops,
+  updateTrust,
+  deleteShop,
   requestRefresh,
   submitImport,
   submitShop,
   fetchPublicSettings,
+  authState,
 } = vi.hoisted(() => ({
   getGroups: vi.fn(),
   getProducts: vi.fn(),
   getShops: vi.fn(),
+  updateTrust: vi.fn(),
+  deleteShop: vi.fn(),
   requestRefresh: vi.fn(),
   submitImport: vi.fn(),
   submitShop: vi.fn(),
   fetchPublicSettings: vi.fn(),
+  authState: { isAdmin: false },
 }))
 
 vi.mock('@/api/publicAccountImport', async () => {
@@ -41,6 +49,8 @@ vi.mock('@/api/publicAccountImport', async () => {
 			data: await getProducts(...args),
 		}),
     getPublicAccountImportShops: getShops,
+    updatePublicAccountImportShopTrustLevel: updateTrust,
+    deletePublicAccountImportShop: deleteShop,
     requestPublicAccountImportProductRefresh: requestRefresh,
     submitPublicAccountImport: submitImport,
     submitPublicAccountImportShop: submitShop,
@@ -53,6 +63,10 @@ vi.mock('@/stores/app', () => ({
     siteLogo: '',
     fetchPublicSettings,
   }),
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => authState,
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -68,9 +82,9 @@ vi.mock('vue-i18n', async () => {
 })
 
 const shops: PublicAccountImportShop[] = [
-  { id: 'one', name: 'One', url: 'https://pay.ldxp.cn/shop/7HZ37ZCG/g47fr5', created_at: '2026-07-27T00:00:00Z' },
-  { id: 'two', name: 'Two', url: 'https://pay.ldxp.cn/shop/two', created_at: '2026-07-27T00:00:00Z' },
-  { id: 'other', name: 'Other', url: 'https://example.com/shop', created_at: '2026-07-27T00:00:00Z' },
+  { id: 'one', name: 'One', url: 'https://pay.ldxp.cn/shop/7HZ37ZCG/g47fr5', created_at: '2026-07-27T00:00:00Z', trust_level: 'trusted' },
+  { id: 'two', name: 'Two', url: 'https://pay.ldxp.cn/shop/two', created_at: '2026-07-27T00:00:00Z', trust_level: 'neutral' },
+  { id: 'other', name: 'Other', url: 'https://example.com/shop', created_at: '2026-07-27T00:00:00Z', trust_level: 'untrusted' },
 ]
 
 function status(
@@ -138,10 +152,13 @@ describe('PublicAccountImportView per-shop product refresh', () => {
     getGroups.mockReset().mockResolvedValue([])
     getProducts.mockReset().mockResolvedValue(catalog([status('one'), status('two')]))
     getShops.mockReset().mockResolvedValue(shops)
+    updateTrust.mockReset()
+    deleteShop.mockReset()
     requestRefresh.mockReset()
     submitImport.mockReset()
     submitShop.mockReset()
     fetchPublicSettings.mockReset()
+    authState.isAdmin = false
   })
 
   afterEach(() => {
@@ -166,6 +183,90 @@ describe('PublicAccountImportView per-shop product refresh', () => {
     expect(wrapper.text()).toContain('publicAccountImport.shopProductsUpdatedAt')
     expect(wrapper.text()).toContain('publicAccountImport.shopProductsQueued')
 
+    wrapper.unmount()
+  })
+
+  it('shows trust labels publicly and hides management controls from anonymous visitors', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await openShopsTab(wrapper)
+
+    expect(wrapper.find('[data-shop-trust-level="trusted"]').text()).toBe('publicAccountImport.shopTrustTrusted')
+    expect(wrapper.find('[data-shop-trust-level="neutral"]').text()).toBe('publicAccountImport.shopTrustNeutral')
+    expect(wrapper.find('[data-shop-trust-level="untrusted"]').text()).toBe('publicAccountImport.shopTrustUntrusted')
+    expect(wrapper.find('[data-shop-admin-controls]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('lets administrators update one trust level and rolls back a failed update', async () => {
+    authState.isAdmin = true
+    updateTrust
+      .mockResolvedValueOnce({ ...shops[0], trust_level: 'untrusted' })
+      .mockRejectedValueOnce(new Error('classification failed'))
+    const wrapper = mountView()
+    await flushPromises()
+    await openShopsTab(wrapper)
+
+    const first = wrapper.find('select[data-shop-trust-select="one"]')
+    await first.setValue('untrusted')
+    await flushPromises()
+    expect(updateTrust).toHaveBeenNthCalledWith(1, 'one', 'untrusted')
+    expect((wrapper.find('select[data-shop-trust-select="one"]').element as HTMLSelectElement).value).toBe('untrusted')
+
+    await wrapper.find('select[data-shop-trust-select="one"]').setValue('neutral')
+    await flushPromises()
+    expect(updateTrust).toHaveBeenNthCalledWith(2, 'one', 'neutral')
+    expect((wrapper.find('select[data-shop-trust-select="one"]').element as HTMLSelectElement).value).toBe('untrusted')
+    expect(wrapper.text()).toContain('classification failed')
+    wrapper.unmount()
+  })
+
+  it('confirms an administrator deletion and removes the shop, products, and status locally', async () => {
+    authState.isAdmin = true
+    const product: PublicAccountImportProduct = {
+      id: 'product-one', shop_id: 'one', shop_name: 'One', shop_url: shops[0].url,
+      name: 'Product one', url: 'https://pay.ldxp.cn/item/product-one', goods_type: 'card',
+      price: 2, stock: 1, minimum_quantity: 1, updated_at: '2026-07-27T01:00:00Z',
+    }
+    getProducts
+      .mockResolvedValueOnce({ ...catalog([status('one'), status('two')]), products: [product] })
+      .mockResolvedValue(catalog([status('two')]))
+    deleteShop.mockResolvedValue({ id: 'one' })
+    const wrapper = mountView()
+    await flushPromises()
+    await openShopsTab(wrapper)
+
+    await wrapper.find('button[data-shop-delete="one"]').trigger('click')
+    const dialog = wrapper.findComponent(ConfirmDialog)
+    expect(dialog.props('show')).toBe(true)
+    dialog.vm.$emit('confirm')
+    await flushPromises()
+
+    expect(deleteShop).toHaveBeenCalledWith('one')
+    expect(wrapper.find('select[data-shop-trust-select="one"]').exists()).toBe(false)
+    expect(wrapper.find('button[data-shop-product-refresh="one"]').exists()).toBe(false)
+    expect(dialog.props('show')).toBe(false)
+    const productsTab = wrapper.findAll('button').find((button) => button.text().includes('publicAccountImport.productModule'))
+    await productsTab!.trigger('click')
+    expect(wrapper.find('a[href="https://pay.ldxp.cn/item/product-one"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the shop and confirmation open when an administrator deletion fails', async () => {
+    authState.isAdmin = true
+    deleteShop.mockRejectedValue(new Error('delete failed'))
+    const wrapper = mountView()
+    await flushPromises()
+    await openShopsTab(wrapper)
+
+    await wrapper.find('button[data-shop-delete="one"]').trigger('click')
+    const dialog = wrapper.findComponent(ConfirmDialog)
+    dialog.vm.$emit('confirm')
+    await flushPromises()
+
+    expect(wrapper.find('select[data-shop-trust-select="one"]').exists()).toBe(true)
+    expect(dialog.props('show')).toBe(true)
+    expect(wrapper.text()).toContain('delete failed')
     wrapper.unmount()
   })
 
@@ -279,7 +380,7 @@ describe('PublicAccountImportView per-shop product refresh', () => {
 
   it('refreshes shop sync statuses immediately after submitting a new shop', async () => {
     submitShop.mockResolvedValue({
-      shop: { id: 'new', name: 'New', url: 'https://pay.ldxp.cn/shop/new', created_at: '2026-07-27T00:00:00Z' },
+      shop: { id: 'new', name: 'New', url: 'https://pay.ldxp.cn/shop/new', created_at: '2026-07-27T00:00:00Z', trust_level: 'neutral' },
       created: true,
     })
     const wrapper = mountView()

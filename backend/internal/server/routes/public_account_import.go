@@ -21,3 +21,11 @@ func RegisterPublicAccountImportRoutes(v1 *gin.RouterGroup, h *handler.Handlers,
 		publicImport.POST("", h.Admin.Account.PublicImportCodexSessions)
 	}
 }
+
+func registerAdminPublicAccountImportRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	shops := admin.Group("/public-account-import/shops")
+	{
+		shops.PATCH("/:id", h.Admin.Account.UpdatePublicAccountImportShopTrustLevel)
+		shops.DELETE("/:id", h.Admin.Account.DeletePublicAccountImportShop)
+	}
+}

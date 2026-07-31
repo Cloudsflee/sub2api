@@ -314,7 +314,7 @@ func TestPublicAccountImportProductRefreshStatusIncludesAutomaticFailure(t *test
 
 	status := publicAccountImportProductRefreshStatusForShops(shops, store, now)
 	require.Equal(t, 1, status.Failed)
-	require.Equal(t, "failed", publicAccountImportProductSyncStatusForShop("failed", store.Shops["failed"], now).State)
+	require.Equal(t, "failed", publicAccountImportProductSyncStatusForShop(shops[0], store.Shops["failed"], now).State)
 }
 
 func TestPublicAccountImportProductRefreshStatusSeparatesQueueFromActiveJobs(t *testing.T) {
@@ -623,12 +623,13 @@ func TestPublicAccountImportProductSyncStatusAllowsExpiredRequestRetry(t *testin
 		RefreshRequestedAt: now.Add(-publicAccountImportProductRefreshMaxAge - time.Second).Format(time.RFC3339Nano),
 	}
 
-	status := publicAccountImportProductSyncStatusForShop("shop", cached, now)
+	shop := PublicAccountImportShop{ID: "shop", TrustLevel: publicAccountImportShopNeutral}
+	status := publicAccountImportProductSyncStatusForShop(shop, cached, now)
 	require.Equal(t, "failed", status.State)
 	require.Zero(t, status.RetryAfterSeconds)
 
 	cached.SyncStartedAt = now.Add(-time.Minute).Format(time.RFC3339Nano)
-	status = publicAccountImportProductSyncStatusForShop("shop", cached, now)
+	status = publicAccountImportProductSyncStatusForShop(shop, cached, now)
 	require.Equal(t, "refreshing", status.State)
 }
 
@@ -681,9 +682,120 @@ func TestPublicAccountImportProductRefreshRequeuesExpiredRequest(t *testing.T) {
 func TestPublicAccountImportProductRefreshRetryAfterUsesPerShopCompletion(t *testing.T) {
 	now := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
 	cached := publicAccountImportProductShopCache{ManualRefreshCompletedAt: now.Add(-2*time.Minute - 500*time.Millisecond).Format(time.RFC3339Nano)}
-	require.Equal(t, 180, publicAccountImportProductRefreshRetryAfter(cached, now))
-	require.Zero(t, publicAccountImportProductRefreshRetryAfter(cached, now.Add(3*time.Minute)))
-	require.Zero(t, publicAccountImportProductRefreshRetryAfter(publicAccountImportProductShopCache{}, now))
+	shop := PublicAccountImportShop{TrustLevel: publicAccountImportShopNeutral}
+	require.Equal(t, 180, publicAccountImportProductRefreshRetryAfter(shop, cached, now))
+	require.Zero(t, publicAccountImportProductRefreshRetryAfter(shop, cached, now.Add(3*time.Minute)))
+	require.Zero(t, publicAccountImportProductRefreshRetryAfter(shop, publicAccountImportProductShopCache{}, now))
+}
+
+func TestPublicAccountImportProductAutoRefreshBoundariesByTrustLevel(t *testing.T) {
+	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		trustLevel string
+		age        time.Duration
+	}{
+		{name: "trusted", trustLevel: publicAccountImportShopTrusted, age: 5 * time.Minute},
+		{name: "neutral", trustLevel: publicAccountImportShopNeutral, age: 15 * time.Minute},
+		{name: "untrusted", trustLevel: publicAccountImportShopUntrusted, age: 60 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shop := PublicAccountImportShop{ID: tt.name, TrustLevel: tt.trustLevel}
+			atBoundary := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+				shop.ID: authoritativeProductCache(shop.ID, now.Add(-tt.age), 1),
+			}}
+			require.Empty(t, selectPublicAccountImportProductSyncShops([]PublicAccountImportShop{shop}, atBoundary, now, 1))
+
+			pastBoundary := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+				shop.ID: authoritativeProductCache(shop.ID, now.Add(-tt.age-time.Second), 1),
+			}}
+			require.Equal(t, []PublicAccountImportShop{shop}, selectPublicAccountImportProductSyncShops([]PublicAccountImportShop{shop}, pastBoundary, now, 1))
+		})
+	}
+}
+
+func TestPublicAccountImportProductStrictExpiryBoundariesByTrustLevel(t *testing.T) {
+	t.Setenv(publicAccountImportProductStrictModeEnv, "true")
+	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		trustLevel string
+		maxAge     time.Duration
+	}{
+		{name: "trusted", trustLevel: publicAccountImportShopTrusted, maxAge: 30 * time.Minute},
+		{name: "neutral", trustLevel: publicAccountImportShopNeutral, maxAge: 30 * time.Minute},
+		{name: "untrusted", trustLevel: publicAccountImportShopUntrusted, maxAge: 120 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shop := PublicAccountImportShop{ID: tt.name, TrustLevel: tt.trustLevel}
+			atBoundary := authoritativeProductCache(shop.ID, now.Add(-tt.maxAge), 1)
+			require.Equal(t, "stale", publicAccountImportProductSnapshotState(shop, atBoundary, now, true))
+			require.Equal(t, now.Format(time.RFC3339Nano), publicAccountImportProductSyncStatusForShop(shop, atBoundary, now).SnapshotExpiresAt)
+
+			pastBoundary := authoritativeProductCache(shop.ID, now.Add(-tt.maxAge-time.Second), 1)
+			require.Equal(t, "expired", publicAccountImportProductSnapshotState(shop, pastBoundary, now, true))
+		})
+	}
+}
+
+func TestPublicAccountImportProductFailureRetryBoundariesByTrustLevel(t *testing.T) {
+	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		trustLevel string
+		retryAge   time.Duration
+	}{
+		{name: "trusted", trustLevel: publicAccountImportShopTrusted, retryAge: time.Minute},
+		{name: "neutral", trustLevel: publicAccountImportShopNeutral, retryAge: time.Minute},
+		{name: "untrusted", trustLevel: publicAccountImportShopUntrusted, retryAge: 15 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shop := PublicAccountImportShop{ID: tt.name, TrustLevel: tt.trustLevel}
+			store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
+				shop.ID: {Error: "failed", LastAttempt: now.Add(-tt.retryAge + time.Second).Format(time.RFC3339Nano)},
+			}}
+			require.Empty(t, selectPublicAccountImportProductSyncShops([]PublicAccountImportShop{shop}, store, now, 1))
+
+			cached := store.Shops[shop.ID]
+			cached.LastAttempt = now.Add(-tt.retryAge).Format(time.RFC3339Nano)
+			store.Shops[shop.ID] = cached
+			require.Equal(t, []PublicAccountImportShop{shop}, selectPublicAccountImportProductSyncShops([]PublicAccountImportShop{shop}, store, now, 1))
+		})
+	}
+}
+
+func TestPublicAccountImportProductManualRefreshCooldownBoundariesByTrustLevel(t *testing.T) {
+	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		trustLevel string
+		cooldown   time.Duration
+	}{
+		{name: "trusted", trustLevel: publicAccountImportShopTrusted, cooldown: 5 * time.Minute},
+		{name: "neutral", trustLevel: publicAccountImportShopNeutral, cooldown: 5 * time.Minute},
+		{name: "untrusted", trustLevel: publicAccountImportShopUntrusted, cooldown: 60 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shop := PublicAccountImportShop{ID: tt.name, TrustLevel: tt.trustLevel}
+			cached := publicAccountImportProductShopCache{
+				ManualRefreshCompletedAt: now.Add(-tt.cooldown + time.Second).Format(time.RFC3339Nano),
+			}
+			require.Equal(t, 1, publicAccountImportProductRefreshRetryAfter(shop, cached, now))
+			cached.ManualRefreshCompletedAt = now.Add(-tt.cooldown).Format(time.RFC3339Nano)
+			require.Zero(t, publicAccountImportProductRefreshRetryAfter(shop, cached, now))
+		})
+	}
+
+	untrusted := PublicAccountImportShop{ID: "untrusted-success", TrustLevel: publicAccountImportShopUntrusted}
+	cached := publicAccountImportProductShopCache{
+		UpdatedAt:                now.Add(-30 * time.Minute).Format(time.RFC3339Nano),
+		ManualRefreshCompletedAt: now.Add(-2 * time.Hour).Format(time.RFC3339Nano),
+	}
+	require.Equal(t, 30*60, publicAccountImportProductRefreshRetryAfter(untrusted, cached, now))
 }
 
 func TestLoadPublicAccountImportProductStoreVersionOneWithoutManualCompletion(t *testing.T) {

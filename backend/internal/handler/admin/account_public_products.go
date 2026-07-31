@@ -25,24 +25,28 @@ import (
 )
 
 const (
-	publicAccountImportProductsFileEnv        = "PUBLIC_ACCOUNT_IMPORT_PRODUCTS_FILE"
-	publicAccountImportProductSyncTokenEnv    = "PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN"
-	publicAccountImportProductStrictModeEnv   = "PUBLIC_ACCOUNT_IMPORT_PRODUCT_STRICT_MODE"
-	publicAccountImportProductsFile           = "/app/data/public-account-import-products.json"
-	publicAccountImportProductStoreVersion    = 1
-	publicAccountImportProductSchemaVersion   = 2
-	publicAccountImportProductSyncInterval    = time.Second
-	publicAccountImportProductRefreshAge      = 15 * time.Minute
-	publicAccountImportProductRefreshCooldown = 5 * time.Minute
-	publicAccountImportProductRetryAge        = 1 * time.Minute
-	publicAccountImportProductSyncLeaseAge    = 90 * time.Second
-	publicAccountImportProductSyncMaxAge      = 30 * time.Minute
-	publicAccountImportProductMaxCacheAge     = 30 * time.Minute
-	publicAccountImportProductRefreshMaxAge   = 30 * time.Minute
-	publicAccountImportProductMaxSyncJobs     = 6
-	publicAccountImportProductMaxProducts     = 1000
-	publicAccountImportProductMaxBody         = 8 << 20
-	publicAccountImportProductFailureMaxBody  = 8 << 10
+	publicAccountImportProductsFileEnv                 = "PUBLIC_ACCOUNT_IMPORT_PRODUCTS_FILE"
+	publicAccountImportProductSyncTokenEnv             = "PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN"
+	publicAccountImportProductStrictModeEnv            = "PUBLIC_ACCOUNT_IMPORT_PRODUCT_STRICT_MODE"
+	publicAccountImportProductsFile                    = "/app/data/public-account-import-products.json"
+	publicAccountImportProductStoreVersion             = 1
+	publicAccountImportProductSchemaVersion            = 2
+	publicAccountImportProductSyncInterval             = time.Second
+	publicAccountImportProductTrustedRefreshAge        = 5 * time.Minute
+	publicAccountImportProductRefreshAge               = 15 * time.Minute
+	publicAccountImportProductUntrustedRefreshAge      = 60 * time.Minute
+	publicAccountImportProductRefreshCooldown          = 5 * time.Minute
+	publicAccountImportProductUntrustedRefreshCooldown = 60 * time.Minute
+	publicAccountImportProductRetryAge                 = 1 * time.Minute
+	publicAccountImportProductUntrustedRetryAge        = 15 * time.Minute
+	publicAccountImportProductSyncLeaseAge             = 90 * time.Second
+	publicAccountImportProductSyncMaxAge               = 30 * time.Minute
+	publicAccountImportProductMaxCacheAge              = 30 * time.Minute
+	publicAccountImportProductRefreshMaxAge            = 30 * time.Minute
+	publicAccountImportProductMaxSyncJobs              = 6
+	publicAccountImportProductMaxProducts              = 1000
+	publicAccountImportProductMaxBody                  = 8 << 20
+	publicAccountImportProductFailureMaxBody           = 8 << 10
 )
 
 type PublicAccountImportProduct struct {
@@ -341,7 +345,7 @@ func (h *AccountHandler) RequestPublicAccountImportProductRefresh(c *gin.Context
 
 	now := time.Now().UTC()
 	cached := publicProductCache.Shops[shop.ID]
-	status := publicAccountImportProductSyncStatusForShop(shop.ID, cached, now)
+	status := publicAccountImportProductSyncStatusForShop(*shop, cached, now)
 	if status.State == "queued" || status.State == "refreshing" || status.RetryAfterSeconds > 0 {
 		response.Success(c, publicAccountImportProductRefreshResponse(false, status))
 		return
@@ -361,7 +365,7 @@ func (h *AccountHandler) RequestPublicAccountImportProductRefresh(c *gin.Context
 		return
 	}
 	publicProductLastJobAt = time.Time{}
-	status = publicAccountImportProductSyncStatusForShop(shop.ID, cached, now)
+	status = publicAccountImportProductSyncStatusForShop(*shop, cached, now)
 	response.Success(c, publicAccountImportProductRefreshResponse(true, status))
 }
 
@@ -728,7 +732,7 @@ func publicAccountImportProductSnapshot(shops []PublicAccountImportShop, store p
 			pending++
 			continue
 		}
-		snapshotState := publicAccountImportProductSnapshotState(cached, now, strictMode)
+		snapshotState := publicAccountImportProductSnapshotState(shop, cached, now, strictMode)
 		if snapshotState != "fresh" {
 			pending++
 		}
@@ -776,7 +780,7 @@ func publicAccountImportProductCacheIsFresh(cached publicAccountImportProductSho
 	return now.Sub(updatedAt) <= maxAge
 }
 
-func publicAccountImportProductSnapshotState(cached publicAccountImportProductShopCache, now time.Time, strictMode bool) string {
+func publicAccountImportProductSnapshotState(shop PublicAccountImportShop, cached publicAccountImportProductShopCache, now time.Time, strictMode bool) string {
 	updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt)
 	if updatedAt.IsZero() {
 		return "pending"
@@ -794,13 +798,42 @@ func publicAccountImportProductSnapshotState(cached publicAccountImportProductSh
 		}
 		return "legacy"
 	}
-	if now.Sub(updatedAt) <= publicAccountImportProductRefreshAge {
+	if now.Sub(updatedAt) <= publicAccountImportProductRefreshAgeForShop(shop) {
 		return "fresh"
 	}
-	if strictMode && now.Sub(updatedAt) > publicAccountImportProductMaxCacheAge {
+	if strictMode && now.Sub(updatedAt) > publicAccountImportProductMaxCacheAgeForShop(shop) {
 		return "expired"
 	}
 	return "stale"
+}
+
+func publicAccountImportProductRefreshAgeForShop(shop PublicAccountImportShop) time.Duration {
+	switch normalizePublicAccountImportShopTrustLevel(shop.TrustLevel) {
+	case publicAccountImportShopTrusted:
+		return publicAccountImportProductTrustedRefreshAge
+	case publicAccountImportShopUntrusted:
+		return publicAccountImportProductUntrustedRefreshAge
+	default:
+		return publicAccountImportProductRefreshAge
+	}
+}
+
+func publicAccountImportProductMaxCacheAgeForShop(shop PublicAccountImportShop) time.Duration {
+	return max(publicAccountImportProductMaxCacheAge, 2*publicAccountImportProductRefreshAgeForShop(shop))
+}
+
+func publicAccountImportProductRetryAgeForShop(shop PublicAccountImportShop) time.Duration {
+	if normalizePublicAccountImportShopTrustLevel(shop.TrustLevel) == publicAccountImportShopUntrusted {
+		return publicAccountImportProductUntrustedRetryAge
+	}
+	return publicAccountImportProductRetryAge
+}
+
+func publicAccountImportProductRefreshCooldownForShop(shop PublicAccountImportShop) time.Duration {
+	if normalizePublicAccountImportShopTrustLevel(shop.TrustLevel) == publicAccountImportShopUntrusted {
+		return publicAccountImportProductUntrustedRefreshCooldown
+	}
+	return publicAccountImportProductRefreshCooldown
 }
 
 func publicAccountImportProductSnapshotIsAuthoritative(cached publicAccountImportProductShopCache) bool {
@@ -913,14 +946,14 @@ func selectPublicAccountImportProductSyncShops(shops []PublicAccountImportShop, 
 			continue
 		}
 		manual := publicAccountImportProductRefreshIsPending(cached, now)
-		if !manual && publicAccountImportProductSnapshotState(cached, now, false) == "fresh" {
+		if !manual && publicAccountImportProductSnapshotState(shops[i], cached, now, false) == "fresh" {
 			continue
 		}
 		attempt := parsePublicAccountImportProductTimestamp(cached.LastAttempt)
 		if attempt.After(now.Add(time.Minute)) {
 			attempt = time.Time{}
 		}
-		if !attempt.IsZero() && now.Sub(attempt) < publicAccountImportProductRetryAge {
+		if !attempt.IsZero() && now.Sub(attempt) < publicAccountImportProductRetryAgeForShop(shops[i]) {
 			continue
 		}
 		candidates = append(candidates, candidate{shop: shops[i], attempt: attempt, manual: manual})
@@ -1036,12 +1069,12 @@ func publicAccountImportProductRefreshStatusForShops(shops []PublicAccountImport
 func publicAccountImportProductSyncStatuses(shops []PublicAccountImportShop, store publicAccountImportProductStore, now time.Time) []PublicAccountImportProductSyncStatus {
 	statuses := make([]PublicAccountImportProductSyncStatus, 0, len(shops))
 	for _, shop := range shops {
-		statuses = append(statuses, publicAccountImportProductSyncStatusForShop(shop.ID, store.Shops[shop.ID], now))
+		statuses = append(statuses, publicAccountImportProductSyncStatusForShop(shop, store.Shops[shop.ID], now))
 	}
 	return statuses
 }
 
-func publicAccountImportProductSyncStatusForShop(shopID string, cached publicAccountImportProductShopCache, now time.Time) PublicAccountImportProductSyncStatus {
+func publicAccountImportProductSyncStatusForShop(shop PublicAccountImportShop, cached publicAccountImportProductShopCache, now time.Time) PublicAccountImportProductSyncStatus {
 	state := "idle"
 	requested, failed := publicAccountImportProductRefreshState(cached, now)
 	if publicAccountImportProductSyncIsActive(cached, now) {
@@ -1051,24 +1084,30 @@ func publicAccountImportProductSyncStatusForShop(shopID string, cached publicAcc
 	} else if failed || strings.TrimSpace(cached.Error) != "" {
 		state = "failed"
 	}
-	snapshotState := publicAccountImportProductSnapshotState(cached, now, publicAccountImportProductStrictMode())
+	snapshotState := publicAccountImportProductSnapshotState(shop, cached, now, publicAccountImportProductStrictMode())
 	expiresAt := ""
 	if updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt); !updatedAt.IsZero() {
-		expiresAt = updatedAt.Add(publicAccountImportProductMaxCacheAge).Format(time.RFC3339Nano)
+		expiresAt = updatedAt.Add(publicAccountImportProductMaxCacheAgeForShop(shop)).Format(time.RFC3339Nano)
 	}
 	return PublicAccountImportProductSyncStatus{
-		ShopID: shopID, State: state, UpdatedAt: cached.UpdatedAt,
+		ShopID: shop.ID, State: state, UpdatedAt: cached.UpdatedAt,
 		SnapshotState: snapshotState, SnapshotUpdatedAt: cached.UpdatedAt, SnapshotExpiresAt: expiresAt,
-		RetryAfterSeconds: publicAccountImportProductRefreshRetryAfter(cached, now),
+		RetryAfterSeconds: publicAccountImportProductRefreshRetryAfter(shop, cached, now),
 	}
 }
 
-func publicAccountImportProductRefreshRetryAfter(cached publicAccountImportProductShopCache, now time.Time) int {
+func publicAccountImportProductRefreshRetryAfter(shop PublicAccountImportShop, cached publicAccountImportProductShopCache, now time.Time) int {
 	completedAt := parsePublicAccountImportProductTimestamp(cached.ManualRefreshCompletedAt)
+	if normalizePublicAccountImportShopTrustLevel(shop.TrustLevel) == publicAccountImportShopUntrusted {
+		updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt)
+		if updatedAt.After(completedAt) {
+			completedAt = updatedAt
+		}
+	}
 	if completedAt.IsZero() || completedAt.After(now) {
 		return 0
 	}
-	remaining := completedAt.Add(publicAccountImportProductRefreshCooldown).Sub(now)
+	remaining := completedAt.Add(publicAccountImportProductRefreshCooldownForShop(shop)).Sub(now)
 	if remaining <= 0 {
 		return 0
 	}
