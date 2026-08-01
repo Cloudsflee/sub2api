@@ -508,6 +508,39 @@ function ensureBrowserProfileDirectory() {
   }
 }
 
+function browserProfileIsInUse(profileDirectory) {
+  const lockPath = path.join(profileDirectory, 'SingletonLock')
+  let lockTarget
+  try {
+    lockTarget = fs.readlinkSync(lockPath)
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'EINVAL') return false
+    return true
+  }
+  const match = String(lockTarget).match(/-(\d+)$/)
+  if (!match) return true
+  const pid = match[1]
+  try {
+    const commandLine = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replaceAll('\0', ' ')
+    return commandLine.includes(profileDirectory)
+  } catch (error) {
+    return !['ENOENT', 'EACCES'].includes(error?.code)
+  }
+}
+
+function clearStaleBrowserProfileLocks(profileDirectory) {
+  if (browserProfileIsInUse(profileDirectory)) {
+    throw new Error(`browser profile is already in use: ${redactURLCredentials(profileDirectory)}`)
+  }
+  for (const lockName of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+    try {
+      fs.unlinkSync(path.join(profileDirectory, lockName))
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+  }
+}
+
 async function restorePersistentStorage(context, page, storageState) {
   if (!storageState || typeof storageState !== 'object') return false
   const cookies = Array.isArray(storageState.cookies) ? storageState.cookies : []
@@ -627,6 +660,12 @@ async function replaceLaneContext(lane, proxyIndex, recovery = false, signal = w
     try { fs.chmodSync(profileDirectory, 0o700) } catch (error) {
       if (!['EPERM', 'EACCES'].includes(error?.code)) throw error
     }
+    // A crashed Chrome leaves Singleton* symlinks in the persistent profile.
+    // They otherwise make every subsequent launch fail with "profile appears
+    // to be in use", preventing the lane from ever reaching the challenge
+    // manager.  Only remove locks when no process still references this
+    // profile, so a genuinely concurrent owner is never corrupted.
+    clearStaleBrowserProfileLocks(profileDirectory)
     context = await chromium.launchPersistentContext(profileDirectory, {
       ...browserContextOptions(proxy),
       executablePath: chromePath,

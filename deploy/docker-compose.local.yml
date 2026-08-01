@@ -204,6 +204,10 @@ services:
       context: ./product-sync-worker
     container_name: sub2api-product-sync-worker
     restart: unless-stopped
+    # Chrome launches a browser tree per lane.  Use Docker's tiny init so
+    # short-lived Chrome/crashpad descendants are reaped instead of becoming
+    # zombies under the Node PID 1 process and exhausting pids_limit.
+    init: true
     cpus: "1.0"
     mem_limit: ${PRODUCT_SYNC_WORKER_MEMORY_LIMIT:-1g}
     # Six headed, persistent Chrome profiles create substantially more than
