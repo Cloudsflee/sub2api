@@ -1,8 +1,8 @@
 # Product catalog sync worker
 
 The worker polls the public product-sync job endpoint independently of the
-account-import page. Each lane uses an isolated Playwright Chromium context
-that must receive JSON from `pay.ldxp.cn`; Alibaba Cloud ESA may challenge
+account-import page. Each lane uses an isolated persistent Playwright context
+backed by Camoufox/Firefox in production; Alibaba Cloud ESA may challenge
 data-center IP addresses.
 
 Configure trusted HTTP/HTTPS egress proxies if the Playwright session receives
@@ -16,6 +16,9 @@ PRODUCT_SYNC_REQUEST_RATE_PER_LANE=0.75
 PRODUCT_SYNC_PROXY_URLS=http://172.18.0.1:17891,http://172.18.0.1:17892,http://172.18.0.1:17893,http://172.18.0.1:17894,http://172.18.0.1:17895,http://172.18.0.1:17896
 PRODUCT_SYNC_PROXY_FALLBACK_URLS=http://172.18.0.1:17897,http://172.18.0.1:17898,http://172.18.0.1:17899
 PRODUCT_SYNC_WORKER_MEMORY_LIMIT=1.75g
+PRODUCT_SYNC_BROWSER=camoufox
+CAMOUFOX_PATH=/opt/camoufox/camoufox
+CAMOUFOX_FIREFOX_VERSION=152.0
 PRODUCT_SYNC_CHALLENGE_AUTO_SOLVE=true
 PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG=true
 PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG_DEBUG=false
@@ -51,13 +54,18 @@ PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG_DEBUG=false
 PRODUCT_SYNC_CHALLENGE_SESSION_DIR=/data/challenge-sessions
 PRODUCT_SYNC_CHALLENGE_TIMEOUT_MILLISECONDS=90000
 PRODUCT_SYNC_BROWSER_PROFILE_DIR=/data/browser-profiles
+PRODUCT_SYNC_BROWSER=camoufox
+CAMOUFOX_PATH=/opt/camoufox/camoufox
+CAMOUFOX_FIREFOX_VERSION=152.0
 ```
 
 The shared token is required by both the worker and application. Automatic
 challenge recovery is disabled by default in deployment templates and must be
-explicitly enabled in production. Each lane uses one headed, persistent Chrome
-profile with one context and one page; the container supplies Xvfb so no host
-display is required. This avoids the incognito fingerprint that ESA rejects.
+explicitly enabled in production. Each lane uses one headed, persistent
+Camoufox profile with one context and one page; the container supplies Xvfb so
+no host display is required. This avoids the incognito fingerprint that ESA
+rejects. Set `PRODUCT_SYNC_BROWSER=chromium` only for a rollback; the image
+retains Chrome as a compatibility fallback.
 Each lane has
 a capacity-one token bucket at `PRODUCT_SYNC_REQUEST_RATE_PER_LANE`; every
 request then passes through a capacity-one shared bucket at `lane count x lane
@@ -105,7 +113,7 @@ remain immediately cancellable without losing their own solve budget. After
 dragging, the manager requests the home page again and requires the verification
 DOM, title, copy, and `http_custom` denial to be gone.
 
-When `PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG=true`, the headed Chrome window is
+When `PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG=true`, the headed Camoufox window is
 focused and the same trajectory is emitted through X11 with `xdotool`. The
 viewport-to-screen offset is estimated from the live window geometry and then
 calibrated with one harmless trusted native move (so X11 decorations/toolbars

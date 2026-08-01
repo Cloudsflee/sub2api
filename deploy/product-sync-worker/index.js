@@ -1,4 +1,4 @@
-const { chromium } = require('playwright-core')
+const { chromium, firefox } = require('playwright-core')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -64,7 +64,14 @@ const challengeNativeDragDebug = parseBoolean(
   false,
   'PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG_DEBUG'
 )
+const browserEngine = String(process.env.PRODUCT_SYNC_BROWSER || 'chromium').trim().toLowerCase()
+if (!['chromium', 'camoufox'].includes(browserEngine)) {
+  throw new Error(`PRODUCT_SYNC_BROWSER must be chromium or camoufox, got ${browserEngine}`)
+}
 const chromePath = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable'
+const camoufoxPath = process.env.CAMOUFOX_PATH || '/opt/camoufox/camoufox'
+const browserExecutablePath = browserEngine === 'camoufox' ? camoufoxPath : chromePath
+const browserType = browserEngine === 'camoufox' ? firefox : chromium
 const statusFile = process.env.STATUS_FILE || '/data/status.json'
 const challengeSessionDirectory = process.env.PRODUCT_SYNC_CHALLENGE_SESSION_DIR || '/data/challenge-sessions'
 const browserProfileDirectory = process.env.PRODUCT_SYNC_BROWSER_PROFILE_DIR || '/data/browser-profiles'
@@ -97,6 +104,7 @@ let workerStatus = {
   state: 'starting',
   proxy_enabled: configuredProxyCount > 0,
   proxy_count: configuredProxyCount,
+  browser_engine: browserEngine,
   sync_concurrency: syncConcurrency,
   request_rate_per_second_per_lane: requestRatePerLane,
   request_rate_per_second_global: globalRequestRate,
@@ -455,35 +463,69 @@ async function syncJob(lane, job) {
   }
 }
 
-function browserLaunchOptions() {
-  return {
-    executablePath: chromePath,
-    headless: false,
-    timeout: browserProtocolTimeoutMilliseconds,
-    args: [
-      '--no-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      '--disable-blink-features=AutomationControlled',
-      '--no-first-run',
-      '--lang=zh-CN',
-      '--window-size=1024,768',
-    ],
-  }
-}
-
 function browserContextOptions(proxy) {
   return {
-    viewport: { width: 1024, height: 768 },
+    // Camoufox's patched Firefox protocol does not accept Chromium's
+    // `isMobile` viewport field.  A null viewport lets the virtual display
+    // provide the real window dimensions instead.
+    viewport: browserEngine === 'camoufox' ? null : { width: 1024, height: 768 },
     locale: 'zh-CN',
     timezoneId: 'Asia/Shanghai',
     colorScheme: 'light',
     extraHTTPHeaders: { 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
     ...(proxy ? { proxy } : {}),
   }
+}
+
+function camoufoxEnvironment(lane) {
+  const environment = { ...process.env }
+  if (environment.CAMOU_CONFIG_1) return environment
+
+  // The stock Camoufox binary advertises a `Camoufox/<version>` UA when no
+  // fingerprint config is supplied.  Keep the browser's native Firefox
+  // fingerprinting patches, but use a normal Firefox UA so the site cannot
+  // reject the browser solely on the product token.  Deployments can provide
+  // a complete CAMOU_CONFIG_* set when they need a pinned fingerprint.
+  const firefoxVersion = String(process.env.CAMOUFOX_FIREFOX_VERSION || '152.0').trim()
+  const laneSeed = crypto.createHash('sha256')
+    .update(`${lane?.index || 0}\0${process.env.HOSTNAME || ''}`)
+    .digest('hex')
+    .slice(0, 8)
+  environment.CAMOU_CONFIG_1 = JSON.stringify({
+    'navigator.userAgent': process.env.CAMOUFOX_USER_AGENT
+      || `Mozilla/5.0 (X11; Linux x86_64; rv:${firefoxVersion}) Gecko/20100101 Firefox/${firefoxVersion}`,
+    'navigator.platform': 'Linux x86_64',
+    'navigator.oscpu': 'Linux x86_64',
+    'fonts:spacing_seed': Number.parseInt(laneSeed, 16) || 1,
+    'audio:seed': Number.parseInt(laneSeed.slice(0, 6), 16) || 1,
+    'canvas:seed': Number.parseInt(laneSeed.slice(2, 8), 16) || 1,
+  })
+  return environment
+}
+
+function browserLaunchArguments() {
+  if (browserEngine === 'camoufox') {
+    return [
+      '--no-remote',
+      '--lang=zh-CN',
+      '--width=1280',
+      '--height=900',
+    ]
+  }
+  return [
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-blink-features=AutomationControlled',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-sync',
+    '--lang=zh-CN',
+    '--window-size=1280,900',
+  ]
 }
 
 function profileIdentity(proxy) {
@@ -496,7 +538,9 @@ function profileIdentity(proxy) {
 
 function laneProfilePath(lane, proxy) {
   const digest = crypto.createHash('sha256')
-    .update(`${lane.index}\0${profileIdentity(proxy)}`)
+    // Keep Firefox and Chromium profiles separate.  Reusing a Chromium
+    // profile after switching engines makes Firefox fail before navigation.
+    .update(`${browserEngine}\0${lane.index}\0${profileIdentity(proxy)}`)
     .digest('hex')
   return path.join(browserProfileDirectory, `lane-${lane.index + 1}-${digest}`)
 }
@@ -568,11 +612,18 @@ async function restorePersistentStorage(context, page, storageState) {
 
 async function prepareLaneContext(lane, context, proxy, recovery = false, signal = workerStopController.signal) {
   context.setDefaultTimeout(browserProtocolTimeoutMilliseconds)
-  await context.addInitScript(() => {
-    Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => undefined, configurable: true })
-    Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['zh-CN', 'zh', 'en'], configurable: true })
-    if (!window.chrome) Object.defineProperty(window, 'chrome', { value: { runtime: {} } })
+  // Camoufox applies these values inside its patched Firefox engine.  Adding
+  // JavaScript property overrides on top would reintroduce detectable
+  // descriptors, so only Chromium receives the legacy compatibility shim.
+  if (browserEngine !== 'camoufox') {
+    await context.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => undefined, configurable: true })
+      Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['zh-CN', 'zh', 'en'], configurable: true })
+      if (!window.chrome) Object.defineProperty(window, 'chrome', { value: { runtime: {} } })
+    })
+  }
 
+  await context.addInitScript(() => {
     // Alibaba ESA's generated verification page passes button: "#button" to
     // initAliyunCaptcha even though the page does not render that button.  The
     // SDK refuses to initialise when the selector is missing, leaving only the
@@ -666,27 +717,19 @@ async function replaceLaneContext(lane, proxyIndex, recovery = false, signal = w
     // manager.  Only remove locks when no process still references this
     // profile, so a genuinely concurrent owner is never corrupted.
     clearStaleBrowserProfileLocks(profileDirectory)
-    context = await chromium.launchPersistentContext(profileDirectory, {
+    const launchOptions = {
       ...browserContextOptions(proxy),
-      executablePath: chromePath,
+      executablePath: browserExecutablePath,
       headless: false,
       timeout: browserProtocolTimeoutMilliseconds,
-      ignoreDefaultArgs: ['--enable-automation'],
-      args: [
-        '--no-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-        '--disable-blink-features=AutomationControlled',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-sync',
-        '--lang=zh-CN',
-        '--window-size=1280,900',
-      ],
-    })
+      args: browserLaunchArguments(),
+    }
+    if (browserEngine === 'camoufox') {
+      launchOptions.env = camoufoxEnvironment(lane)
+    } else {
+      launchOptions.ignoreDefaultArgs = ['--enable-automation']
+    }
+    context = await browserType.launchPersistentContext(profileDirectory, launchOptions)
     const restoredPage = context.pages()[0] || await context.newPage()
     await restorePersistentStorage(context, restoredPage, restored?.storageState)
     const page = await prepareLaneContext(lane, context, proxy, recovery, signal)
@@ -918,7 +961,7 @@ async function runBrowser() {
     // Persistent contexts are intentionally used instead of incognito
     // contexts. ESA fingerprints a fresh incognito profile and returns F001
     // even when the drag itself is valid. The small connection sentinel keeps
-    // the existing lane supervisor semantics while each lane owns its Chrome
+    // the existing lane supervisor semantics while each lane owns its browser
     // process/profile.
     browser = {
       isConnected: () => !stopping,
@@ -938,7 +981,7 @@ async function runBrowser() {
       })
     }
     publishStatus({
-      browser_engine: 'playwright',
+      browser_engine: browserEngine,
       sync_concurrency: syncConcurrency,
       quote_concurrency_per_lane: 1,
       request_rate_per_second_per_lane: requestRatePerLane,

@@ -204,14 +204,16 @@ services:
       context: ./product-sync-worker
     container_name: sub2api-product-sync-worker
     restart: unless-stopped
-    # Chrome launches a browser tree per lane.  Use Docker's tiny init so
-    # short-lived Chrome/crashpad descendants are reaped instead of becoming
+    # Each lane launches a persistent Camoufox/Firefox tree by default (or
+    # Chromium when PRODUCT_SYNC_BROWSER is explicitly set to chromium). Use
+    # Docker's tiny init so
+    # short-lived browser descendants are reaped instead of becoming
     # zombies under the Node PID 1 process and exhausting pids_limit.
     init: true
     cpus: "1.0"
     mem_limit: ${PRODUCT_SYNC_WORKER_MEMORY_LIMIT:-1g}
-    # Six headed, persistent Chrome profiles create substantially more than
-    # one process per lane (browser, renderers, utility and GPU processes).
+    # Six headed, persistent browser profiles create substantially more than
+    # one process per lane (browser, renderers and utility processes).
     # Keep enough PID headroom for all six lanes without allowing an
     # accidental fork storm to consume the host.
     pids_limit: ${PRODUCT_SYNC_WORKER_PIDS_LIMIT:-1024}
@@ -228,6 +230,9 @@ services:
       - PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG_DEBUG=${PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG_DEBUG:-false}
       - PRODUCT_SYNC_CHALLENGE_SESSION_DIR=${PRODUCT_SYNC_CHALLENGE_SESSION_DIR:-/data/challenge-sessions}
       - PRODUCT_SYNC_CHALLENGE_TIMEOUT_MILLISECONDS=${PRODUCT_SYNC_CHALLENGE_TIMEOUT_MILLISECONDS:-90000}
+      - PRODUCT_SYNC_BROWSER=${PRODUCT_SYNC_BROWSER:-camoufox}
+      - CAMOUFOX_PATH=${CAMOUFOX_PATH:-/opt/camoufox/camoufox}
+      - CAMOUFOX_FIREFOX_VERSION=${CAMOUFOX_FIREFOX_VERSION:-152.0}
       - PRODUCT_SYNC_BROWSER_PROFILE_DIR=${PRODUCT_SYNC_BROWSER_PROFILE_DIR:-/data/browser-profiles}
       - TZ=${TZ:-Asia/Shanghai}
     volumes:
