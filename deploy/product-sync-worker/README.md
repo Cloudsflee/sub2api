@@ -17,6 +17,8 @@ PRODUCT_SYNC_PROXY_URLS=http://172.18.0.1:17891,http://172.18.0.1:17892,http://1
 PRODUCT_SYNC_PROXY_FALLBACK_URLS=http://172.18.0.1:17897,http://172.18.0.1:17898,http://172.18.0.1:17899
 PRODUCT_SYNC_WORKER_MEMORY_LIMIT=1.75g
 PRODUCT_SYNC_CHALLENGE_AUTO_SOLVE=true
+PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG=true
+PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG_DEBUG=false
 PRODUCT_SYNC_CHALLENGE_SESSION_DIR=/data/challenge-sessions
 PRODUCT_SYNC_CHALLENGE_TIMEOUT_MILLISECONDS=90000
 ```
@@ -44,14 +46,19 @@ BACKEND_REQUEST_TIMEOUT_MILLISECONDS=10000
 PRODUCT_SYNC_CONCURRENCY=1
 PRODUCT_SYNC_REQUEST_RATE_PER_LANE=1
 PRODUCT_SYNC_CHALLENGE_AUTO_SOLVE=false
+PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG=false
+PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG_DEBUG=false
 PRODUCT_SYNC_CHALLENGE_SESSION_DIR=/data/challenge-sessions
 PRODUCT_SYNC_CHALLENGE_TIMEOUT_MILLISECONDS=90000
+PRODUCT_SYNC_BROWSER_PROFILE_DIR=/data/browser-profiles
 ```
 
 The shared token is required by both the worker and application. Automatic
 challenge recovery is disabled by default in deployment templates and must be
-explicitly enabled in production. Every mode uses one Chromium process with
-one isolated context and one page per lane. Each lane has
+explicitly enabled in production. Each lane uses one headed, persistent Chrome
+profile with one context and one page; the container supplies Xvfb so no host
+display is required. This avoids the incognito fingerprint that ESA rejects.
+Each lane has
 a capacity-one token bucket at `PRODUCT_SYNC_REQUEST_RATE_PER_LANE`; every
 request then passes through a capacity-one shared bucket at `lane count x lane
 rate`. Blocked lanes never transfer their unused allowance to active lanes, and
@@ -98,11 +105,21 @@ remain immediately cancellable without losing their own solve budget. After
 dragging, the manager requests the home page again and requires the verification
 DOM, title, copy, and `http_custom` denial to be gone.
 
+When `PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG=true`, the headed Chrome window is
+focused and the same trajectory is emitted through X11 with `xdotool`. The
+viewport-to-screen offset is estimated from the live window geometry and then
+calibrated with one harmless trusted native move (so X11 decorations/toolbars
+are accounted for); repeated pixel coordinates are skipped. If native input is
+unavailable, the worker falls back to Playwright's protocol mouse without
+dropping the lane.
+
 At startup, each context restores the storage state for its provider, target
 origin, and proxy identity before validating the home page. Successful states
 are written atomically under `/data/challenge-sessions` with directory mode
 `0700` and file mode `0600`; filenames are SHA-256 digests and never expose
-proxy credentials. Invalid files are removed and rebuilt. Images, fonts, and
+proxy credentials. Each state carries a non-secret summary of its provider,
+target origin, proxy server, and hashed proxy identity; invalid or mismatched
+files are removed and rebuilt. Images, fonts, and
 media are allowed only while solving, then the normal resource block is
 restored. If a shop API returns HTML during a sync, the lane solves in the same
 context and retries only that failed API call, preserving completed catalog
@@ -113,8 +130,9 @@ work. After two failed drags it moves directly to its lane-local fallback.
 `challenge_started_at`, `challenge_solved_at`, and `session_restored` for each
 lane.
 
-The local Compose profile applies a 1 CPU, configurable memory, and 256 PID
-limit, plus `10 MiB x 3` JSON log rotation. Its health check requires a fresh
+The local Compose profile applies a 1 CPU, configurable memory, and a 1024 PID
+limit (override with `PRODUCT_SYNC_WORKER_PIDS_LIMIT` for smaller deployments),
+plus `10 MiB x 3` JSON log rotation. Its health check requires a fresh
 status file and at least one ready browser context/page; stopped, globally
 errored, and stale workers are unhealthy. Zero-context status is accepted only
 while automatic challenge recovery is actively queued/solving or every lane is

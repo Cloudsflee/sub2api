@@ -1,5 +1,7 @@
 const { chromium } = require('playwright-core')
+const crypto = require('node:crypto')
 const fs = require('node:fs')
+const path = require('node:path')
 const { collectAuthoritativeSnapshot } = require('./catalog-sync')
 const {
   ChallengeManager,
@@ -51,9 +53,20 @@ const challengeAutoSolveEnabled = parseBoolean(
   false,
   'PRODUCT_SYNC_CHALLENGE_AUTO_SOLVE'
 )
-const chromePath = process.env.CHROME_PATH || '/usr/bin/chromium-browser'
+const challengeNativeDragEnabled = parseBoolean(
+  process.env.PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG,
+  false,
+  'PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG'
+)
+const challengeNativeDragDebug = parseBoolean(
+  process.env.PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG_DEBUG,
+  false,
+  'PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG_DEBUG'
+)
+const chromePath = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable'
 const statusFile = process.env.STATUS_FILE || '/data/status.json'
 const challengeSessionDirectory = process.env.PRODUCT_SYNC_CHALLENGE_SESSION_DIR || '/data/challenge-sessions'
+const browserProfileDirectory = process.env.PRODUCT_SYNC_BROWSER_PROFILE_DIR || '/data/browser-profiles'
 const configuredProxies = parseProxyConfigurations(
   process.env.PRODUCT_SYNC_PROXY_URLS,
   process.env.PRODUCT_SYNC_PROXY_URL
@@ -75,6 +88,8 @@ const challengeManager = new ChallengeManager({
   sessionDirectory: challengeSessionDirectory,
   timeoutMilliseconds: challengeTimeoutMilliseconds,
   navigationTimeoutMilliseconds: Math.min(20_000, browserProtocolTimeoutMilliseconds),
+  nativeDrag: challengeNativeDragEnabled,
+  nativeDragDebug: challengeNativeDragDebug,
   stopSignal: workerStopController.signal,
 })
 let workerStatus = {
@@ -85,6 +100,7 @@ let workerStatus = {
   request_rate_per_second_per_lane: requestRatePerLane,
   request_rate_per_second_global: globalRequestRate,
   challenge_auto_solve_enabled: challengeAutoSolveEnabled,
+  challenge_native_drag_enabled: challengeNativeDragEnabled,
   started_at: new Date().toISOString(),
 }
 const laneStatuses = Array.from({ length: syncConcurrency }, (_, index) => ({
@@ -338,7 +354,7 @@ async function initializeShopPage(lane, context, page, proxy, recovery = false, 
     }
     const snapshot = await collectChallengeSnapshot(page, response)
     throwIfAborted(signal)
-    if (snapshot.isChallenge) {
+    if (snapshot.isChallenge && !challengeCleared(snapshot)) {
       await solveChallengeForContext(lane, context, page, proxy, signal)
       if (recovery) console.log(`${new Date().toISOString()} lane ${lane.index + 1} shop session recovered after verification`)
     } else {
@@ -441,7 +457,7 @@ async function syncJob(lane, job) {
 function browserLaunchOptions() {
   return {
     executablePath: chromePath,
-    headless: true,
+    headless: false,
     timeout: browserProtocolTimeoutMilliseconds,
     args: [
       '--no-sandbox',
@@ -458,17 +474,62 @@ function browserLaunchOptions() {
   }
 }
 
-function browserContextOptions(proxy, storageState) {
+function browserContextOptions(proxy) {
   return {
     viewport: { width: 1024, height: 768 },
     locale: 'zh-CN',
     timezoneId: 'Asia/Shanghai',
     colorScheme: 'light',
-    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
     extraHTTPHeaders: { 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
     ...(proxy ? { proxy } : {}),
-    ...(storageState ? { storageState } : {}),
   }
+}
+
+function profileIdentity(proxy) {
+  return JSON.stringify({
+    server: String(proxy?.server || ''),
+    username: String(proxy?.username || ''),
+    password: String(proxy?.password || ''),
+  })
+}
+
+function laneProfilePath(lane, proxy) {
+  const digest = crypto.createHash('sha256')
+    .update(`${lane.index}\0${profileIdentity(proxy)}`)
+    .digest('hex')
+  return path.join(browserProfileDirectory, `lane-${lane.index + 1}-${digest}`)
+}
+
+function ensureBrowserProfileDirectory() {
+  fs.mkdirSync(browserProfileDirectory, { recursive: true, mode: 0o700 })
+  try { fs.chmodSync(browserProfileDirectory, 0o700) } catch (error) {
+    if (!['EPERM', 'EACCES'].includes(error?.code)) throw error
+  }
+}
+
+async function restorePersistentStorage(context, page, storageState) {
+  if (!storageState || typeof storageState !== 'object') return false
+  const cookies = Array.isArray(storageState.cookies) ? storageState.cookies : []
+  if (cookies.length) await context.addCookies(cookies)
+  const origins = Array.isArray(storageState.origins) ? storageState.origins : []
+  for (const originState of origins) {
+    if (!originState?.origin || !Array.isArray(originState.localStorage)) continue
+    try {
+      await page.goto(originState.origin, {
+        waitUntil: 'domcontentloaded',
+        timeout: Math.min(15_000, browserProtocolTimeoutMilliseconds),
+      })
+      await page.evaluate((entries) => {
+        for (const entry of entries) {
+          if (entry && typeof entry.name === 'string') localStorage.setItem(entry.name, String(entry.value ?? ''))
+        }
+      }, originState.localStorage)
+    } catch {
+      // A stale origin must not prevent the lane from opening; the challenge
+      // manager will rebuild the state after the first successful request.
+    }
+  }
+  return cookies.length > 0 || origins.length > 0
 }
 
 async function prepareLaneContext(lane, context, proxy, recovery = false, signal = workerStopController.signal) {
@@ -526,14 +587,44 @@ async function replaceLaneContext(lane, proxyIndex, recovery = false, signal = w
   const proxy = lane.proxyPool[proxyIndex]
   let context
   try {
+    ensureBrowserProfileDirectory()
     const restored = challengeManager.loadSession(proxy)
     publishLaneStatus(lane, {
       challenge_provider: restored?.provider || '',
       challenge_state: restored ? 'restored' : challengeAutoSolveEnabled ? 'idle' : 'disabled',
       challenge_attempt: 0,
+      challenge_started_at: '',
+      challenge_solved_at: '',
       session_restored: Boolean(restored),
     })
-    context = await activeBrowser.newContext(browserContextOptions(proxy, restored?.storageState))
+    const profileDirectory = laneProfilePath(lane, proxy)
+    fs.mkdirSync(profileDirectory, { recursive: true, mode: 0o700 })
+    try { fs.chmodSync(profileDirectory, 0o700) } catch (error) {
+      if (!['EPERM', 'EACCES'].includes(error?.code)) throw error
+    }
+    context = await chromium.launchPersistentContext(profileDirectory, {
+      ...browserContextOptions(proxy),
+      executablePath: chromePath,
+      headless: false,
+      timeout: browserProtocolTimeoutMilliseconds,
+      ignoreDefaultArgs: ['--enable-automation'],
+      args: [
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-blink-features=AutomationControlled',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-sync',
+        '--lang=zh-CN',
+        '--window-size=1280,900',
+      ],
+    })
+    const restoredPage = context.pages()[0] || await context.newPage()
+    await restorePersistentStorage(context, restoredPage, restored?.storageState)
     const page = await prepareLaneContext(lane, context, proxy, recovery, signal)
     throwIfAborted(signal)
     if (stopping) throw new Error('product sync worker is stopping')
@@ -760,7 +851,15 @@ async function runBrowser() {
   const lanes = []
   let browser
   try {
-    browser = await chromium.launch(browserLaunchOptions())
+    // Persistent contexts are intentionally used instead of incognito
+    // contexts. ESA fingerprints a fresh incognito profile and returns F001
+    // even when the drag itself is valid. The small connection sentinel keeps
+    // the existing lane supervisor semantics while each lane owns its Chrome
+    // process/profile.
+    browser = {
+      isConnected: () => !stopping,
+      close: async () => {},
+    }
     contexts = Array.from({ length: syncConcurrency }, () => null)
     activeBrowser = browser
     activeBrowserContexts = contexts
@@ -788,7 +887,6 @@ async function runBrowser() {
     if (activeBrowser === browser) activeBrowser = undefined
     if (activeBrowserContexts === contexts) activeBrowserContexts = []
     await Promise.all(contexts.filter(Boolean).map((context) => context.close().catch(() => {})))
-    await browser?.close().catch(() => {})
   }
 }
 

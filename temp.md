@@ -19,6 +19,7 @@
 - 每次按实际滑轨/滑块右边界计算距离，生成 36-60 步、900-1600ms 的非线性轨迹；移动按鼠标按下后的绝对时间点调度，浏览器协议耗时不会逐步叠加；每 context 最多两次，第二次前重新加载。
 - 六 lane 共用可取消锁，每个 context 的 90 秒预算从取得锁后开始，排队仍可立即取消且不消耗求解预算。挑战成功后重新访问首页并确认 DOM、文案和 `http_custom` 均消失；普通内容下的 `intelligent_cc_acl` 不误判。
 - 启动时按 provider、origin 和代理身份恢复 Playwright `storageState`。会话原子写入 `/data/challenge-sessions/<sha256>.json`，目录 `0700`、文件 `0600`，损坏文件自动删除重建。
+- 会话文件保留 provider、目标 origin、代理服务器和不可逆代理身份摘要，不写入代理用户名或密码；摘要不匹配时自动丢弃并重建。
 - 运行期 API 返回 HTML 时只暂停并重试失败的 API 调用，已完成的商品分类和报价不会重跑。当前 context 两次失败后立即尝试该 lane 的 fallback。
 - 验证失败使用独立的 15 分钟、60 分钟、6 小时退避；网络和限流仍使用 1、5、15 分钟。无法识别的验证直接使用 6 小时层级。
 
@@ -30,9 +31,13 @@ PRODUCT_SYNC_REQUEST_RATE_PER_LANE=0.75
 PRODUCT_SYNC_PROXY_URLS=http://172.18.0.1:17891,http://172.18.0.1:17892,http://172.18.0.1:17893,http://172.18.0.1:17894,http://172.18.0.1:17895,http://172.18.0.1:17896
 PRODUCT_SYNC_PROXY_FALLBACK_URLS=http://172.18.0.1:17897,http://172.18.0.1:17898,http://172.18.0.1:17899
 PRODUCT_SYNC_WORKER_MEMORY_LIMIT=1.75g
+PRODUCT_SYNC_WORKER_PIDS_LIMIT=1024
 PRODUCT_SYNC_CHALLENGE_AUTO_SOLVE=true
+PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG=true
+PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG_DEBUG=false
 PRODUCT_SYNC_CHALLENGE_SESSION_DIR=/data/challenge-sessions
 PRODUCT_SYNC_CHALLENGE_TIMEOUT_MILLISECONDS=90000
+PRODUCT_SYNC_BROWSER_PROFILE_DIR=/data/browser-profiles
 ```
 
 部署模板保持 `PRODUCT_SYNC_CHALLENGE_AUTO_SOLVE=false`，生产必须显式开启。验收和回滚步骤见 `deploy/product-sync-worker/README.md`。

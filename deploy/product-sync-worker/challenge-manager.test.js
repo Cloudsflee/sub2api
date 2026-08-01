@@ -15,6 +15,7 @@ const {
   computeDragDistance,
   defaultChallengeProviders,
   dragSlider,
+  dragSliderNative,
   generateDragTrajectory,
   isHTTPCustomDenial,
   readStoredSession,
@@ -204,6 +205,70 @@ test('slider drag uses absolute deadlines so mouse protocol time stays inside th
   assert.deepEqual(waits, [10, 3, 3])
   assert.equal(elapsed - pressedAt, 37)
   assert.deepEqual(events.map(([event]) => event), ['move', 'down', 'move', 'move', 'move', 'up'])
+})
+
+test('native slider drag focuses X11, skips duplicate pixels, and always releases the button', async () => {
+  const commands = []
+  const page = {
+    bringToFront: async () => commands.push(['front']),
+  }
+  await dragSliderNative(page, sliderGeometry(), {
+    points: [
+      { x: 0.2, y: 0, delayMilliseconds: 1 },
+      { x: 0.4, y: 0, delayMilliseconds: 1 },
+      { x: 10.2, y: 1, delayMilliseconds: 1 },
+      { x: 320, y: 0, delayMilliseconds: 1 },
+    ],
+  }, {
+    screenGeometry: { left: 100, top: 200, scale: 1 },
+    executeXdotool: async (args) => commands.push(args),
+    wait: async () => {},
+  })
+  assert.deepEqual(commands, [
+    ['front'],
+    ['mousemove', '--sync', 140, 260],
+    ['mousedown', '1'],
+    ['mousemove', 150, 261],
+    ['mousemove', 460, 260],
+    ['mouseup', '1'],
+  ])
+})
+
+test('native slider drag calibrates the headed Chrome viewport origin from a trusted move', async () => {
+  const commands = []
+  let evaluations = 0
+  const page = {
+    bringToFront: async () => {},
+    evaluate: async (_script, argument) => {
+      evaluations += 1
+      if (evaluations === 1) {
+        return {
+          screenX: 10,
+          screenY: 10,
+          outerWidth: 1032,
+          outerHeight: 899,
+          innerWidth: 1024,
+          innerHeight: 768,
+          devicePixelRatio: 1,
+        }
+      }
+      if (evaluations === 3) return { clientX: 8, clientY: 50, screenX: 108, screenY: 210 }
+      return undefined
+    },
+  }
+  await dragSliderNative(page, sliderGeometry(), {
+    points: [{ x: 320, y: 0, delayMilliseconds: 1 }],
+  }, {
+    executeXdotool: async (args) => commands.push(args),
+    wait: async () => {},
+  })
+  assert.deepEqual(commands, [
+    ['mousemove', '--sync', 22, 897],
+    ['mousemove', '--sync', 140, 220],
+    ['mousedown', '1'],
+    ['mousemove', 460, 220],
+    ['mouseup', '1'],
+  ])
 })
 
 test('challenge manager succeeds on the second drag, reloads first, and saves storage state', async (t) => {

@@ -1,11 +1,14 @@
 const crypto = require('node:crypto')
+const { execFile } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
 const { performance } = require('node:perf_hooks')
+const { promisify } = require('node:util')
 
 const DEFAULT_ORIGIN = 'https://pay.ldxp.cn'
 const MAX_DRAG_ATTEMPTS = 2
 const BLOCKED_RESOURCE_TYPES = new Set(['image', 'media', 'font'])
+const execFileAsync = promisify(execFile)
 
 class ChallengeError extends Error {
   constructor(state, message, options = {}) {
@@ -138,8 +141,9 @@ function isHTTPCustomDenial(value) {
 function challengeTextDetected(title, text) {
   const normalizedTitle = String(title || '').trim()
   const normalizedText = String(text || '').replace(/\s+/g, ' ').slice(0, 2_000)
-  return /^(?:verification|security verification|human verification|安全验证|人机验证)$/i.test(normalizedTitle)
-    || /please\s+(?:slide|drag).{0,50}(?:verify|right|end)/i.test(normalizedText)
+  return /^(?:verification|security verification|security check|human verification|verify you are human|安全验证|人机验证)$/i.test(normalizedTitle)
+    || /(?:please\s+)?(?:slide|drag|move).{0,80}(?:verify|verification|right\s*(?:end|edge)|to\s+the\s+end|finish)/i.test(normalizedText)
+    || /(?:verify|verification).{0,80}(?:slide|drag|move|slider)/i.test(normalizedText)
     || /verify\s+that\s+you\s+are\s+(?:a\s+)?real\s+person/i.test(normalizedText)
     || /(?:拖动|拖拽|滑动|滑块).{0,30}(?:验证|最右|右边|尽头)/i.test(normalizedText)
 }
@@ -151,12 +155,14 @@ function challengeSnapshotDetected(snapshot) {
     frame?.hasCaptchaDOM
     || frame?.hasAliyunDOM
     || frame?.hasAliyunScript
+    || isHTTPCustomDenial(frame?.text)
     || challengeTextDetected(frame?.title, frame?.text)
   ))
 }
 
 function challengeCleared(snapshot) {
-  if (!snapshot || typeof snapshot !== 'object' || isHTTPCustomDenial(snapshot.responseError)) return false
+  if (!snapshot || typeof snapshot !== 'object' || isHTTPCustomDenial(snapshot.responseError)
+    || !Array.isArray(snapshot.frames) || snapshot.frames.length === 0) return false
   return !(snapshot.frames || []).some((frame) => (
     frame?.hasCaptchaDOM
     || frame?.hasAliyunDOM
@@ -167,7 +173,7 @@ function challengeCleared(snapshot) {
 function aliyunSnapshotDetected(snapshot) {
   if (isHTTPCustomDenial(snapshot?.responseError)) return true
   return (snapshot?.frames || []).some((frame) => (
-    frame?.hasAliyunDOM || frame?.hasAliyunScript
+    frame?.hasAliyunDOM || frame?.hasAliyunScript || isHTTPCustomDenial(frame?.text)
   ))
 }
 
@@ -275,21 +281,52 @@ function generateDragTrajectory(distance, options = {}) {
   const durationMilliseconds = Number.isFinite(options.durationMilliseconds)
     ? Math.max(900, Math.min(1_600, Math.round(options.durationMilliseconds)))
     : boundedRandomInteger(900, 1_600, random)
-  const baseDelay = Math.floor(durationMilliseconds / steps)
-  let remainingDelay = durationMilliseconds - baseDelay * steps
   const correction = Math.max(1.25, Math.min(2.5, distance * 0.006))
+  // Humans do not emit a perfectly periodic stream of points.  Give the
+  // initial press a short hesitation, vary inter-event delays, and normalize
+  // the result back to the requested total so the caller still has a strict
+  // trajectory budget.
+  const delayWeights = Array.from({ length: steps }, (_, index) => {
+    if (index === 0) return boundedRandomInteger(2.5, 4.5, random)
+    if (index === steps - 1) return boundedRandomInteger(1.8, 3.4, random)
+    return 0.75 + Number(random()) * 0.7
+  })
+  const delayWeightTotal = delayWeights.reduce((sum, value) => sum + value, 0)
+  const delays = delayWeights.map((weight) => Math.max(1, Math.round(durationMilliseconds * weight / delayWeightTotal)))
+  let delayDelta = durationMilliseconds - delays.reduce((sum, value) => sum + value, 0)
+  for (let index = steps - 2; delayDelta !== 0 && index >= 0; index -= 1) {
+    if (delayDelta > 0) {
+      delays[index] += 1
+      delayDelta -= 1
+    } else if (delays[index] > 1) {
+      delays[index] -= 1
+      delayDelta += 1
+    }
+    if (index === 0 && delayDelta < 0) index = steps - 1
+  }
   const points = []
+  let previousX = 0
 
   for (let index = 1; index <= steps; index += 1) {
     const progress = index / steps
-    const eased = 1 - ((1 - progress) ** 3)
-    let x = distance * eased
+    // Accelerate, settle into the main movement, then decelerate into a
+    // deliberate final correction.  Small horizontal noise prevents every
+    // solve from having the same mathematical cubic signature while the
+    // monotonic clamp keeps the handle from making implausible reversals.
+    const eased = progress < 0.2
+      ? 0.2 * ((progress / 0.2) ** 1.7)
+      : progress < 0.75
+        ? 0.2 + 0.55 * (((progress - 0.2) / 0.55) ** 0.86)
+        : 0.75 + 0.25 * (1 - ((1 - (progress - 0.75) / 0.25) ** 2.4))
+    const noise = (Number(random()) - 0.5) * (progress > 0.85 ? 0.004 : 0.014)
+    let x = distance * Math.max(0, Math.min(1, eased + noise))
     if (index === steps - 2) x = distance - correction
     if (index === steps - 1) x = distance - 0.35
     if (index === steps) x = distance
+    if (index < steps - 2) x = Math.max(previousX + Math.min(0.25, distance / steps / 3), x)
+    previousX = x
     const y = index === steps ? 0 : (Number(random()) - 0.5) * 2.4
-    const delayMilliseconds = baseDelay + (remainingDelay > 0 ? 1 : 0)
-    remainingDelay -= remainingDelay > 0 ? 1 : 0
+    const delayMilliseconds = delays[index - 1]
     points.push({ x, y, delayMilliseconds })
   }
 
@@ -364,7 +401,11 @@ async function markSliderCandidate(frame, providerID, token) {
 
 async function locateSlider(page, providerID, options = {}) {
   const signal = options.signal
-  const deadlineAt = Number.isFinite(options.deadlineAt) ? options.deadlineAt : Date.now() + 15_000
+  // ESA injects the slider asynchronously after its challenge iframe and
+  // image assets have loaded.  Fifteen seconds is too short on a cold proxy
+  // connection (the DOM commonly appears around 10-12s), so use a 30s
+  // discovery budget unless the caller supplied an explicit deadline.
+  const deadlineAt = Number.isFinite(options.deadlineAt) ? options.deadlineAt : Date.now() + 30_000
   while (Date.now() < deadlineAt) {
     throwIfAborted(signal)
     for (const frame of page.frames()) {
@@ -384,7 +425,7 @@ async function locateSlider(page, providerID, options = {}) {
   return null
 }
 
-async function dragSlider(page, geometry, trajectory, options = {}) {
+async function dragSliderWithMouse(page, geometry, trajectory, options = {}) {
   const signal = options.signal
   const now = options.now || (() => performance.now())
   const wait = options.wait || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
@@ -408,6 +449,190 @@ async function dragSlider(page, geometry, trajectory, options = {}) {
   } finally {
     await page.mouse.up().catch(() => {})
   }
+}
+
+/**
+ * Convert Playwright viewport coordinates to the coordinates understood by
+ * xdotool.  Playwright's mouse API is relative to the content viewport while
+ * xdotool addresses the X11 root window.  The browser window decorations are
+ * therefore accounted for using the live outer/inner window dimensions rather
+ * than a fixed Chrome toolbar height.
+ */
+async function pageScreenGeometry(page) {
+  if (typeof page.evaluate !== 'function') {
+    throw new Error('native challenge drag requires page.evaluate')
+  }
+  const values = await page.evaluate(() => ({
+    screenX: Number(window.screenX ?? window.screenLeft ?? 0),
+    screenY: Number(window.screenY ?? window.screenTop ?? 0),
+    outerWidth: Number(window.outerWidth || 0),
+    outerHeight: Number(window.outerHeight || 0),
+    innerWidth: Number(window.innerWidth || 0),
+    innerHeight: Number(window.innerHeight || 0),
+    devicePixelRatio: Number(window.devicePixelRatio || 1),
+  }))
+  const finite = (value, fallback = 0) => Number.isFinite(value) ? value : fallback
+  const screenX = finite(values?.screenX)
+  const screenY = finite(values?.screenY)
+  const outerWidth = finite(values?.outerWidth)
+  const outerHeight = finite(values?.outerHeight)
+  const innerWidth = finite(values?.innerWidth)
+  const innerHeight = finite(values?.innerHeight)
+  const devicePixelRatio = Math.max(0.25, Math.min(4, finite(values?.devicePixelRatio, 1)))
+  if (innerWidth <= 0 || innerHeight <= 0) throw new Error('native challenge drag has no visible viewport')
+
+  // On X11 Chrome's content viewport starts after the left border and the top
+  // browser chrome.  With a maximized/frameless window the differences are
+  // zero, which is also handled by these calculations.
+  const chromeLeft = Math.max(0, (outerWidth - innerWidth) / 2)
+  const chromeTop = Math.max(0, outerHeight - innerHeight - chromeLeft)
+  return {
+    left: (screenX + chromeLeft) * devicePixelRatio,
+    top: (screenY + chromeTop) * devicePixelRatio,
+    scale: devicePixelRatio,
+    viewportWidth: innerWidth,
+    viewportHeight: innerHeight,
+  }
+}
+
+/**
+ * Chrome does not expose the native X11 frame/toolbar offset through
+ * `window.outerHeight` reliably.  In particular, a headed Chrome under Xvfb
+ * can report a 17px smaller top chrome than the root-window coordinate seen by
+ * xdotool.  Calibrate once with a harmless native move and use the trusted
+ * event's screen/client pair as the authoritative viewport origin.  If the
+ * probe cannot be delivered (for example in a unit test or a transiently
+ * unfocused window), retain the best browser-derived estimate.
+ */
+async function calibrateNativeScreenGeometry(page, screen, options = {}) {
+  if (options.calibrate === false || typeof page?.evaluate !== 'function') return screen
+  const scale = Number.isFinite(screen.scale) && screen.scale > 0 ? screen.scale : 1
+  const viewportWidth = Number.isFinite(screen.viewportWidth) ? screen.viewportWidth : 1024
+  const viewportHeight = Number.isFinite(screen.viewportHeight) ? screen.viewportHeight : 768
+  const probeViewportX = Math.max(2, Math.min(viewportWidth - 2, 8))
+  const probeViewportY = Math.max(2, viewportHeight - 8)
+  const probeX = Math.round(screen.left + probeViewportX * scale)
+  const probeY = Math.round(screen.top + probeViewportY * scale)
+  const marker = `__sub2apiNativeCalibration${Date.now()}${Math.random().toString(16).slice(2)}`
+  try {
+    await page.evaluate((name) => {
+      window[name] = null
+      const listener = (event) => {
+        window[name] = {
+          clientX: Number(event.clientX),
+          clientY: Number(event.clientY),
+          screenX: Number(event.screenX),
+          screenY: Number(event.screenY),
+        }
+        document.removeEventListener('mousemove', listener, true)
+      }
+      document.addEventListener('mousemove', listener, true)
+    }, marker)
+    await (options.execute || runXdotool)(['mousemove', '--sync', probeX, probeY], options)
+    const observed = await page.evaluate((name) => window[name], marker)
+    await page.evaluate((name) => { try { delete window[name] } catch {} }, marker).catch(() => {})
+    if (!observed || !Number.isFinite(observed.clientX) || !Number.isFinite(observed.clientY)) return screen
+    const observedScreenX = Number.isFinite(observed.screenX)
+      ? observed.screenX
+      : probeX
+    const observedScreenY = Number.isFinite(observed.screenY)
+      ? observed.screenY
+      : probeY
+    const left = observedScreenX - observed.clientX * scale
+    const top = observedScreenY - observed.clientY * scale
+    if (!Number.isFinite(left) || !Number.isFinite(top)) return screen
+    return { ...screen, left, top, calibration: { probeX, probeY, observed } }
+  } catch {
+    await page.evaluate((name) => { try { delete window[name] } catch {} }, marker).catch(() => {})
+    return screen
+  }
+}
+
+async function runXdotool(argumentsList, options = {}) {
+  const executable = options.executable || 'xdotool'
+  const timeout = Number.isFinite(options.timeout) ? Math.max(250, options.timeout) : 5_000
+  await execFileAsync(executable, argumentsList.map((value) => String(value)), {
+    timeout,
+    windowsHide: true,
+  })
+}
+
+/**
+ * Drag using native X11 input.  ESA's browser-side pointer accounting is more
+ * reliable with real X11 mouse events than with Playwright's protocol mouse
+ * when Chrome is running headed under Xvfb.  The executor is injectable for
+ * tests and the caller can fall back to the Playwright implementation when
+ * xdotool is unavailable.
+ */
+async function dragSliderNative(page, geometry, trajectory, options = {}) {
+  const signal = options.signal
+  const now = options.now || (() => performance.now())
+  const wait = options.wait || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
+  const execute = options.executeXdotool || runXdotool
+  throwIfAborted(signal)
+  if (typeof page.bringToFront === 'function') await page.bringToFront()
+  let screen = options.screenGeometry || await pageScreenGeometry(page)
+  if (!options.screenGeometry) {
+    screen = await calibrateNativeScreenGeometry(page, screen, {
+      ...options,
+      execute,
+    })
+  }
+  const scale = Number.isFinite(screen.scale) && screen.scale > 0 ? screen.scale : 1
+  const startViewportX = geometry.handleBox.x + geometry.handleBox.width / 2
+  const startViewportY = geometry.handleBox.y + geometry.handleBox.height / 2
+  const toScreen = (x, y) => [
+    Math.round(screen.left + x * scale),
+    Math.round(screen.top + y * scale),
+  ]
+  const [startX, startY] = toScreen(startViewportX, startViewportY)
+
+  options.onNativeDragStart?.({ screen, geometry, startX, startY })
+  throwIfAborted(signal)
+  // --sync is intentionally used only for the initial positioning.  Repeating
+  // it for trajectory points can block forever when two points round to the
+  // same pixel, especially on a 1x Xvfb display.
+  await execute(['mousemove', '--sync', startX, startY], options)
+  await execute(['mousedown', '1'], options)
+  let pressed = true
+  try {
+    const startedAt = now()
+    let scheduledAt = 0
+    let previousX = startX
+    let previousY = startY
+    for (const point of trajectory.points) {
+      scheduledAt += point.delayMilliseconds
+      const waitMilliseconds = scheduledAt - (now() - startedAt)
+      if (waitMilliseconds > 0) await waitForPromiseOrAbort(wait(waitMilliseconds), signal)
+      throwIfAborted(signal)
+      const [x, y] = toScreen(startViewportX + point.x, startViewportY + point.y)
+      // Filter duplicate integer coordinates.  A duplicate event contributes
+      // no information to the challenge and only adds process overhead.
+      if (x === previousX && y === previousY) continue
+      await execute(['mousemove', x, y], options)
+      previousX = x
+      previousY = y
+    }
+  } finally {
+    if (pressed) {
+      pressed = false
+      await execute(['mouseup', '1'], options).catch(() => {})
+    }
+  }
+}
+
+async function dragSlider(page, geometry, trajectory, options = {}) {
+  if (options.nativeDrag) {
+    try {
+      return await dragSliderNative(page, geometry, trajectory, options)
+    } catch (error) {
+      if (options.signal?.aborted) throw error
+      options.onNativeDragError?.(error)
+      // Keep a protocol-mouse fallback for environments where xdotool is not
+      // installed or the browser has temporarily lost its X11 window.
+    }
+  }
+  return dragSliderWithMouse(page, geometry, trajectory, options)
 }
 
 function defaultChallengeProviders() {
@@ -446,8 +671,44 @@ function sessionFilePath(sessionDirectory, providerID, origin, proxy) {
 }
 
 function validStorageState(value) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Array.isArray(value.cookies) && Array.isArray(value.origins)
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || !Array.isArray(value.cookies) || !Array.isArray(value.origins)) return false
+  const validCookie = (cookie) => cookie && typeof cookie === 'object' && !Array.isArray(cookie)
+    && typeof cookie.name === 'string' && cookie.name.length > 0
+    && typeof cookie.value === 'string'
+    && (typeof cookie.url === 'string' || typeof cookie.domain === 'string')
+  const validOrigin = (entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
+    && typeof entry.origin === 'string'
+    && Array.isArray(entry.localStorage)
+    && entry.localStorage.every((item) => item && typeof item === 'object'
+      && typeof item.name === 'string' && typeof item.value === 'string')
+  return value.cookies.every(validCookie) && value.origins.every(validOrigin)
+}
+
+function proxySessionSummary(proxy) {
+  const identity = proxyIdentity(proxy)
+  let server = ''
+  try {
+    const parsed = new URL(String(proxy?.server || ''))
+    server = `${parsed.protocol}//${parsed.host}`
+  } catch {
+    // A direct connection has no server. Invalid values are never expected
+    // from parseProxyConfiguration, but keeping the summary empty avoids
+    // leaking an arbitrary credential-bearing string if called directly.
+  }
+  return {
+    server,
+    identity: crypto.createHash('sha256').update(identity).digest('hex'),
+  }
+}
+
+function sessionMetadata(providerID, origin, proxy) {
+  return {
+    version: 1,
+    provider: String(providerID),
+    origin: String(origin),
+    proxy: proxySessionSummary(proxy),
+  }
 }
 
 function ensurePrivateDirectory(directory) {
@@ -461,8 +722,18 @@ function readStoredSession(sessionDirectory, providers, origin, proxy) {
     const file = sessionFilePath(sessionDirectory, provider.id, origin, proxy)
     if (!fs.existsSync(file)) continue
     try {
-      const storageState = JSON.parse(fs.readFileSync(file, 'utf8'))
-      if (!validStorageState(storageState)) throw new Error('invalid storage state')
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
+      if (!validStorageState(parsed)) throw new Error('invalid storage state')
+      const metadata = parsed._sub2api
+      if (metadata !== undefined) {
+        const expected = sessionMetadata(provider.id, origin, proxy)
+        if (!metadata || metadata.provider !== expected.provider
+          || metadata.origin !== expected.origin
+          || metadata.proxy?.identity !== expected.proxy.identity) {
+          throw new Error('session metadata does not match its lane identity')
+        }
+      }
+      const { _sub2api: ignoredMetadata, ...storageState } = parsed
       fs.chmodSync(file, 0o600)
       return { provider: provider.id, storageState }
     } catch {
@@ -477,8 +748,12 @@ function writeStoredSession(sessionDirectory, providerID, origin, proxy, storage
   ensurePrivateDirectory(sessionDirectory)
   const destination = sessionFilePath(sessionDirectory, providerID, origin, proxy)
   const temporary = `${destination}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`
+  const persistedState = {
+    ...storageState,
+    _sub2api: sessionMetadata(providerID, origin, proxy),
+  }
   try {
-    fs.writeFileSync(temporary, `${JSON.stringify(storageState, null, 2)}\n`, { mode: 0o600 })
+    fs.writeFileSync(temporary, `${JSON.stringify(persistedState, null, 2)}\n`, { mode: 0o600 })
     fs.chmodSync(temporary, 0o600)
     fs.renameSync(temporary, destination)
     fs.chmodSync(destination, 0o600)
@@ -525,6 +800,8 @@ class ChallengeManager {
     this.navigate = options.navigate || ((page, timeout) => navigateHome(page, this.origin, timeout))
     this.reload = options.reload || reloadChallenge
     this.drag = options.drag || dragSlider
+    this.nativeDrag = Boolean(options.nativeDrag)
+    this.nativeDragDebug = Boolean(options.nativeDragDebug)
     this.logger = options.logger || console
     this.contextAttempts = new WeakMap()
   }
@@ -590,7 +867,11 @@ class ChallengeManager {
     try {
       let response = await this.operation(this.navigate(page, this.navigationTimeoutMilliseconds, signal), signal)
       let snapshot = await this.operation(this.inspect(page, response), signal)
-      if (!challengeSnapshotDetected(snapshot)) {
+      // ESA's loader script can remain on an otherwise normal page after a
+      // successful verification.  Treat the page as clear when the challenge
+      // DOM/copy and the http_custom denial are gone; the script marker alone
+      // must not trigger an unsupported solve loop.
+      if (!challengeSnapshotDetected(snapshot) || challengeCleared(snapshot)) {
         report({ state: 'clear' })
         return { state: 'clear', provider: '' }
       }
@@ -614,7 +895,7 @@ class ChallengeManager {
           provider = selectChallengeProvider(snapshot, this.providers) || provider
         }
 
-        const deadlineAt = this.now() + Math.min(15_000, this.timeoutMilliseconds)
+        const deadlineAt = this.now() + Math.min(30_000, this.timeoutMilliseconds)
         const geometry = await this.operation(provider.locate(page, { signal, deadlineAt }), signal)
         if (!geometry) {
           throw new ChallengeError('unsupported', `${provider.id} challenge has no supported visible slide-to-end control`)
@@ -624,7 +905,14 @@ class ChallengeManager {
         attempt += 1
         this.contextAttempts.set(context, attempt)
         report({ state: 'solving', provider: provider.id, attempt })
-        await this.operation(this.drag(page, geometry, trajectory, { signal }), signal)
+        await this.operation(this.drag(page, geometry, trajectory, {
+          signal,
+          nativeDrag: this.nativeDrag,
+          onNativeDragStart: this.nativeDragDebug
+            ? (values) => this.logger.log?.(`${new Date().toISOString()} native challenge drag geometry: ${JSON.stringify(values)}`)
+            : undefined,
+          onNativeDragError: (error) => this.logger.warn?.(`${new Date().toISOString()} native challenge drag unavailable; falling back to Playwright mouse: ${String(error?.message || error)}`),
+        }), signal)
 
         response = await this.operation(this.navigate(page, this.navigationTimeoutMilliseconds, signal), signal)
         snapshot = await this.operation(this.inspect(page, response), signal)
@@ -724,6 +1012,7 @@ module.exports = {
   computeDragDistance,
   defaultChallengeProviders,
   dragSlider,
+  dragSliderNative,
   generateDragTrajectory,
   isChallengeError,
   isHTTPCustomDenial,

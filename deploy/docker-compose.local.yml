@@ -206,7 +206,11 @@ services:
     restart: unless-stopped
     cpus: "1.0"
     mem_limit: ${PRODUCT_SYNC_WORKER_MEMORY_LIMIT:-1g}
-    pids_limit: 256
+    # Six headed, persistent Chrome profiles create substantially more than
+    # one process per lane (browser, renderers, utility and GPU processes).
+    # Keep enough PID headroom for all six lanes without allowing an
+    # accidental fork storm to consume the host.
+    pids_limit: ${PRODUCT_SYNC_WORKER_PIDS_LIMIT:-1024}
     environment:
       - BACKEND_URL=http://sub2api:8080
       - PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN=${PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN:-}
@@ -216,8 +220,11 @@ services:
       - PRODUCT_SYNC_PROXY_URLS=${PRODUCT_SYNC_PROXY_URLS:-}
       - PRODUCT_SYNC_PROXY_FALLBACK_URLS=${PRODUCT_SYNC_PROXY_FALLBACK_URLS:-}
       - PRODUCT_SYNC_CHALLENGE_AUTO_SOLVE=${PRODUCT_SYNC_CHALLENGE_AUTO_SOLVE:-false}
+      - PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG=${PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG:-false}
+      - PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG_DEBUG=${PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG_DEBUG:-false}
       - PRODUCT_SYNC_CHALLENGE_SESSION_DIR=${PRODUCT_SYNC_CHALLENGE_SESSION_DIR:-/data/challenge-sessions}
       - PRODUCT_SYNC_CHALLENGE_TIMEOUT_MILLISECONDS=${PRODUCT_SYNC_CHALLENGE_TIMEOUT_MILLISECONDS:-90000}
+      - PRODUCT_SYNC_BROWSER_PROFILE_DIR=${PRODUCT_SYNC_BROWSER_PROFILE_DIR:-/data/browser-profiles}
       - TZ=${TZ:-Asia/Shanghai}
     volumes:
       - ./data/product-sync-worker:/data:Z
