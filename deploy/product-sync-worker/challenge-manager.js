@@ -783,6 +783,46 @@ async function reloadChallenge(page, timeoutMilliseconds) {
   }
 }
 
+/**
+ * Aliyun's ESA page does not report a successful drag through a DOM event.  Its
+ * success callback submits the one-time `u_atoken`/`u_asig` pair by navigating
+ * the current page back to the protected URL.  Starting a navigation waiter
+ * before the mouse-up and giving that submission a chance to finish is
+ * essential: issuing an immediate `page.goto(origin)` races the callback and
+ * aborts the verification request, which makes a valid drag look like F001.
+ *
+ * The helper intentionally returns `null` when no navigation happened (a
+ * failed drag or a test double without Playwright's navigation API).  The
+ * caller can then perform its normal reload/home navigation and try again.
+ */
+function startChallengeNavigationWait(page, timeoutMilliseconds) {
+  if (!page || typeof page.waitForNavigation !== 'function') return null
+  const timeout = Math.max(250, Math.min(10_000, Number(timeoutMilliseconds) || 8_000))
+  // Attach the rejection handler to the Playwright promise immediately.  A
+  // context can be closed while the drag is still in progress (lane restart,
+  // lease loss, or an aborted solve); in that case the waiter rejects after
+  // the caller has already left this attempt.  Leaving the raw promise
+  // unobserved would produce an unhandled-rejection warning in the worker.
+  // Every navigation failure is treated as "no callback navigation" so the
+  // normal home request remains the recovery path.  A page-close/abort is
+  // still surfaced by the drag or the subsequent home request itself.
+  let navigation
+  try {
+    // Invoke waitForNavigation synchronously so the listener is installed
+    // before the first mouse event is sent by the drag implementation.
+    navigation = page.waitForNavigation({
+      waitUntil: 'domcontentloaded',
+      timeout,
+    })
+  } catch {
+    return Promise.resolve(null)
+  }
+  return Promise.resolve(navigation).then(
+    (response) => response || null,
+    () => null
+  )
+}
+
 class ChallengeManager {
   constructor(options = {}) {
     this.enabled = Boolean(options.enabled)
@@ -904,6 +944,13 @@ class ChallengeManager {
         attempt += 1
         this.contextAttempts.set(context, attempt)
         report({ state: 'solving', provider: provider.id, attempt })
+        // ESA submits its verification token by navigating from the challenge
+        // page.  Arm the waiter before the drag so the navigation cannot be
+        // cancelled by the fallback home request below.
+        const submissionNavigation = startChallengeNavigationWait(
+          page,
+          Math.min(this.navigationTimeoutMilliseconds, this.timeoutMilliseconds)
+        )
         await this.operation(this.drag(page, geometry, trajectory, {
           signal,
           nativeDrag: this.nativeDrag,
@@ -913,7 +960,15 @@ class ChallengeManager {
           onNativeDragError: (error) => this.logger.warn?.(`${new Date().toISOString()} native challenge drag unavailable; falling back to Playwright mouse: ${String(error?.message || error)}`),
         }), signal)
 
-        response = await this.operation(this.navigate(page, this.navigationTimeoutMilliseconds, signal), signal)
+        // Prefer the response produced by the captcha callback.  Only issue a
+        // fresh home navigation when no callback navigation occurred (failed
+        // drag, an old SDK variant, or a lightweight test double).
+        response = submissionNavigation
+          ? await this.operation(submissionNavigation, signal)
+          : null
+        if (!response) {
+          response = await this.operation(this.navigate(page, this.navigationTimeoutMilliseconds, signal), signal)
+        }
         snapshot = await this.operation(this.inspect(page, response), signal)
         if (challengeCleared(snapshot)) {
           await this.persistSolvedSession(context, provider.id, proxy)

@@ -313,6 +313,85 @@ test('challenge manager succeeds on the second drag, reloads first, and saves st
   assert.equal(fs.readdirSync(directory).filter((name) => name.endsWith('.json')).length, 1)
 })
 
+test('challenge manager waits for the ESA success navigation before issuing a home request', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const snapshots = [aliyunSnapshot(), clearSnapshot()]
+  let navigateCalls = 0
+  let dragCalls = 0
+  let navigationArmed = false
+  const provider = {
+    id: 'aliyun-esa',
+    detect: () => true,
+    locate: async () => sliderGeometry(),
+  }
+  const manager = new ChallengeManager({
+    enabled: true,
+    providers: [provider],
+    sessionDirectory: directory,
+    navigate: async () => {
+      navigateCalls += 1
+      return {}
+    },
+    inspect: async () => snapshots.shift(),
+    drag: async () => {
+      assert.equal(navigationArmed, true)
+      dragCalls += 1
+    },
+    random: () => 0.5,
+  })
+  const page = {
+    // The real ESA callback navigates to the protected URL with u_atoken and
+    // u_asig.  Resolving this promise simulates that callback completing.
+    waitForNavigation: async () => {
+      navigationArmed = true
+      return {}
+    },
+  }
+  const result = await manager.solve({
+    context: { storageState: async () => ({ cookies: [], origins: [] }) },
+    page,
+  })
+  assert.equal(result.state, 'solved')
+  assert.equal(dragCalls, 1)
+  assert.equal(navigateCalls, 1)
+})
+
+test('challenge manager observes a closed-page navigation waiter and falls back without an unhandled rejection', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const snapshots = [aliyunSnapshot(), clearSnapshot()]
+  let navigateCalls = 0
+  const provider = {
+    id: 'aliyun-esa',
+    detect: () => true,
+    locate: async () => sliderGeometry(),
+  }
+  const manager = new ChallengeManager({
+    enabled: true,
+    providers: [provider],
+    sessionDirectory: directory,
+    navigate: async () => {
+      navigateCalls += 1
+      return {}
+    },
+    inspect: async () => snapshots.shift(),
+    drag: async () => {},
+    random: () => 0.5,
+  })
+  const page = {
+    waitForNavigation: async () => {
+      throw new Error('page closed')
+    },
+  }
+  const result = await manager.solve({
+    context: { storageState: async () => ({ cookies: [], origins: [] }) },
+    page,
+  })
+  assert.equal(result.state, 'solved')
+  assert.equal(navigateCalls, 2)
+})
+
 test('challenge manager enforces two drag attempts for the lifetime of a context', async (t) => {
   const directory = temporaryDirectory()
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
