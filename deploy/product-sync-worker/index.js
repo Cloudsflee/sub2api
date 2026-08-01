@@ -6,6 +6,7 @@ const { collectAuthoritativeSnapshot } = require('./catalog-sync')
 const {
   ChallengeManager,
   challengeBackoffMilliseconds,
+  challengeCleared,
   collectChallengeSnapshot,
   isChallengeError,
   recoverChallengeAcrossProxyPool,
