@@ -16,6 +16,7 @@ const {
 const {
   JobLeaseLostError,
   Semaphore,
+  ShopSyncError,
   TokenBucket,
   browserResourceCounts,
   createJobHeartbeat,
@@ -39,6 +40,8 @@ const {
 
 const backendURL = process.env.BACKEND_URL || 'http://sub2api:8080'
 const backendToken = String(process.env.PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN || '').trim()
+const shopOrigin = 'https://pay.ldxp.cn'
+const shopHomeURL = `${shopOrigin}/`
 const idlePollMilliseconds = 10_000
 const activePollMilliseconds = 10_000
 const heartbeatMilliseconds = 30_000
@@ -218,6 +221,8 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
   ensureJobDeadline(deadlineAt, signal)
   await takeRequestTokens(lane.requestLimiter, globalRequestLimiter, signal)
   ensureJobDeadline(deadlineAt, signal)
+  const requestURL = new URL(path, shopHomeURL)
+  if (requestURL.origin !== shopOrigin) throw new Error(`shop API path escapes ${shopOrigin}`)
   let result
   try {
     result = await lane.page.evaluate(async ({ requestPath, requestBody, requestTimeoutMilliseconds, visitorID }) => {
@@ -257,7 +262,7 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
         clearTimeout(timer)
       }
     }, {
-      requestPath: path,
+      requestPath: requestURL.href,
       requestBody: body,
       requestTimeoutMilliseconds: Math.min(shopRequestTimeoutMilliseconds, Math.max(1, deadlineAt - Date.now())),
       visitorID: `sub2api${shopToken.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}`,
@@ -356,12 +361,22 @@ async function initializeShopPage(lane, context, page, proxy, recovery = false, 
     throwIfAborted(signal)
     let response
     try {
-      response = await page.goto('https://pay.ldxp.cn/', { waitUntil: 'domcontentloaded', timeout: 20_000 })
+      response = await page.goto(shopHomeURL, { waitUntil: 'domcontentloaded', timeout: 20_000 })
     } catch (error) {
       if (error.name !== 'TimeoutError') throw error
-      console.log(`${new Date().toISOString()} shop session navigation timed out; continuing with the loaded document`)
+      console.log(`${new Date().toISOString()} shop session navigation timed out; checking the loaded document origin`)
     }
     const snapshot = await collectChallengeSnapshot(page, response)
+    const reachedShopOrigin = snapshot.frames.some((frame) => {
+      try {
+        return new URL(frame?.url).origin === shopOrigin
+      } catch {
+        return false
+      }
+    })
+    if (!reachedShopOrigin) {
+      throw new ShopSyncError('network', `shop session navigation did not reach ${shopOrigin}`)
+    }
     throwIfAborted(signal)
     if (snapshot.isChallenge && !challengeCleared(snapshot)) {
       await solveChallengeForContext(lane, context, page, proxy, signal)
