@@ -161,8 +161,7 @@ function challengeSnapshotDetected(snapshot) {
 }
 
 function challengeCleared(snapshot) {
-  if (!snapshot || typeof snapshot !== 'object' || isHTTPCustomDenial(snapshot.responseError)
-    || !Array.isArray(snapshot.frames) || snapshot.frames.length === 0) return false
+  if (!snapshot || typeof snapshot !== 'object' || isHTTPCustomDenial(snapshot.responseError)) return false
   return !(snapshot.frames || []).some((frame) => (
     frame?.hasCaptchaDOM
     || frame?.hasAliyunDOM
