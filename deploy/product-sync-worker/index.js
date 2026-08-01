@@ -539,6 +539,30 @@ async function prepareLaneContext(lane, context, proxy, recovery = false, signal
     Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => undefined, configurable: true })
     Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['zh-CN', 'zh', 'en'], configurable: true })
     if (!window.chrome) Object.defineProperty(window, 'chrome', { value: { runtime: {} } })
+
+    // Alibaba ESA's generated verification page passes button: "#button" to
+    // initAliyunCaptcha even though the page does not render that button.  The
+    // SDK refuses to initialise when the selector is missing, leaving only the
+    // static captcha-element and causing the worker to classify the challenge
+    // as unsupported.  Provide the selector before the page's load handler
+    // appends AliyunCaptcha.js.  Keep the element off-screen so it cannot alter
+    // the verification UI; it remains a real DOM element for the SDK's lookup.
+    const ensureAliyunCaptchaButton = () => {
+      if (document.getElementById('button')) return
+      const button = document.createElement('button')
+      button.id = 'button'
+      button.type = 'button'
+      button.tabIndex = -1
+      button.setAttribute('aria-hidden', 'true')
+      button.style.cssText = 'position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;opacity:0;pointer-events:none'
+      const parent = document.body || document.documentElement
+      if (parent) parent.appendChild(button)
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', ensureAliyunCaptchaButton, { once: true })
+    } else {
+      ensureAliyunCaptchaButton()
+    }
   })
   await context.route('**/*', async (route) => {
     if (shouldBlockResource(route.request().resourceType(), lane.challengeResourcesAllowed)) await route.abort()
