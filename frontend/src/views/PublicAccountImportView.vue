@@ -323,6 +323,7 @@
           <div
             v-for="shop in pagedShops"
             :key="shop.id"
+            :data-shop-id="shop.id"
             class="flex min-h-20 flex-wrap items-center gap-2 px-1 py-3 sm:flex-nowrap sm:px-3"
           >
             <a
@@ -731,10 +732,18 @@ const mainTabs = computed(() => [
   { value: 'shops' as const, label: t('publicAccountImport.shopModule') },
   { value: 'products' as const, label: t('publicAccountImport.productModule') },
 ])
-const shopPageCount = computed(() => Math.max(1, Math.ceil(shops.value.length / CATALOG_PAGE_SIZE)))
+const shopTrustSortOrder: Record<PublicAccountImportShopTrustLevel, number> = {
+  trusted: 0,
+  neutral: 1,
+  untrusted: 2,
+}
+const sortedShops = computed(() => [...shops.value].sort(
+  (left, right) => shopTrustSortOrder[left.trust_level] - shopTrustSortOrder[right.trust_level]
+))
+const shopPageCount = computed(() => Math.max(1, Math.ceil(sortedShops.value.length / CATALOG_PAGE_SIZE)))
 const pagedShops = computed(() => {
   const start = (shopPage.value - 1) * CATALOG_PAGE_SIZE
-  return shops.value.slice(start, start + CATALOG_PAGE_SIZE)
+  return sortedShops.value.slice(start, start + CATALOG_PAGE_SIZE)
 })
 const shopsByID = computed(() => new Map(shops.value.map((shop) => [shop.id, shop])))
 const filteredProducts = computed(() => filterAndSortPublicProducts(

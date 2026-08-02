@@ -225,6 +225,30 @@ describe('PublicAccountImportView per-shop product refresh', () => {
     wrapper.unmount()
   })
 
+  it('sorts trusted shops first and untrusted shops last while preserving group order', async () => {
+    getShops.mockResolvedValue([
+      { ...shops[2], id: 'untrusted-first', name: 'Untrusted first' },
+      { ...shops[1], id: 'neutral-first', name: 'Neutral first' },
+      { ...shops[0], id: 'trusted-first', name: 'Trusted first' },
+      { ...shops[0], id: 'trusted-second', name: 'Trusted second' },
+      { ...shops[1], id: 'neutral-second', name: 'Neutral second' },
+      { ...shops[2], id: 'untrusted-second', name: 'Untrusted second' },
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+    await openShopsTab(wrapper)
+
+    expect(wrapper.findAll('[data-shop-id]').map((row) => row.attributes('data-shop-id'))).toEqual([
+      'trusted-first',
+      'trusted-second',
+      'neutral-first',
+      'neutral-second',
+      'untrusted-first',
+      'untrusted-second',
+    ])
+    wrapper.unmount()
+  })
+
   it('lets administrators update one trust level and rolls back a failed update', async () => {
     authState.isAdmin = true
     updateTrust
