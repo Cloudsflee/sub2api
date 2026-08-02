@@ -77,9 +77,10 @@ COPY --from=camoufox /opt/camoufox /opt/camoufox
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
-COPY index.js challenge-manager.js catalog-sync.js worker-utils.js healthcheck.js ./
+COPY index.js challenge-manager.js catalog-sync.js worker-utils.js healthcheck.js start-worker.sh ./
 
 RUN mkdir -p /data/challenge-sessions /data/browser-profiles \
+    && chmod 0755 /app/start-worker.sh \
     && chown -R node:node /app /data \
     && chmod 0700 /data/challenge-sessions /data/browser-profiles
 USER node
@@ -88,4 +89,4 @@ ENV CHROME_PATH=/usr/bin/google-chrome-stable \
     CAMOUFOX_PATH=/opt/camoufox/camoufox \
     CAMOUFOX_FIREFOX_VERSION=152.0 \
     PRODUCT_SYNC_BROWSER=camoufox
-CMD ["sh", "-c", "Xvfb :99 -screen 0 2560x1600x24 -ac +extension RANDR -nolisten tcp >/tmp/xvfb.log 2>&1 & export DISPLAY=:99; exec node index.js"]
+CMD ["/app/start-worker.sh"]

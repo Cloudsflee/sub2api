@@ -65,7 +65,10 @@ explicitly enabled in production. Each lane uses one headed, persistent
 Camoufox profile with one context and one page; the container supplies Xvfb so
 no host display is required. This avoids the incognito fingerprint that ESA
 rejects. Set `PRODUCT_SYNC_BROWSER=chromium` only for a rollback; the image
-retains Chrome as a compatibility fallback.
+retains Chrome as a compatibility fallback. The worker entrypoint removes only
+display 99's stale Xvfb lock and socket, then waits for a successful X11 request
+before starting Node, so a Docker restart can safely reuse the container
+filesystem.
 Each lane has
 a capacity-one token bucket at `PRODUCT_SYNC_REQUEST_RATE_PER_LANE`; every
 request then passes through a capacity-one shared bucket at `lane count x lane

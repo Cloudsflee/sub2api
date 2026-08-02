@@ -12,6 +12,13 @@
 - 自动恢复能识别 `aliyun-esa`，并从当前 360px 滑轨和 40px 滑块动态计算出 320px 距离，但 ESA 官方 verify 接口对全部出口持续返回 `VerifyCode=F001`。Playwright、无 CDP 的 Xvfb Chromium 原生鼠标事件、真实 WebGL、CJK 字体及多种合理轨迹的结果一致，现有证据指向出口服务端风险判定，而不是固定距离或 DOM 定位错误。
 - 生产恢复仍需要一个已知可通过 ESA 的出口，或从同一出口完成可复用的真实验证会话。诊断用指纹篡改、一次性脚本、截图和实验容器均未纳入正式实现并已清除；在出口可用前不得宣称六 lane 已恢复。
 
+## 2026-08-02 Camoufox 生产复测
+
+- `50afef838` 已部署到生产。Worker 配置为 6 个持久 Camoufox lane，并会拒绝 Firefox 网络错误页；代理失败现在明确归类为未到达 `https://pay.ldxp.cn`，不再继续执行相对 URL `fetch`。
+- 九个 Mihomo listener 已恢复为九个独立 gate 映射，但当前订阅中的 44 个 Shadowsocks 节点全部汇聚到 `52.196.144.61:2377`。该地址从生产机和独立网络均 TCP 超时；订阅仍有效且未耗尽，因此当前 6 lane 首先被代理供应商入口故障阻断，尚未到达 ESA。
+- 停止正式 Worker 后，以全新 profile 做了两轮无代理、单 lane Camoufox 直连验证。两轮均识别 `aliyun-esa`，X11 校准成功，实时轨道为 360px、滑块为 40px、动态距离为 320px，且没有降级到 Playwright 协议鼠标；每轮两次原生拖动后挑战仍然存在。Camoufox 已排除明显的浏览器自动化标记和坐标错误，但尚未取得 ESA 放行会话。
+- 直连探测结束后已 force-recreate 正式 Worker；6 个 Camoufox 主进程和 Xvfb 均恢复。Worker 仍会在代理入口不可达时保持网络退避，不能将容器存活误报为商品同步恢复。
+
 ## 长期修复
 
 - 生产配置恢复为 6 lane：主出口 `17891-17896`，lane 1-3 的 fallback 为 `17897-17899`，每 lane `0.75 req/s`，全局 `4.5 req/s`，内存上限 `1.75g`。
