@@ -9,6 +9,7 @@ const {
   ChallengeManager,
   CancellableMutex,
   challengeBackoffMilliseconds,
+  challengeContentCleared,
   challengeCleared,
   challengeSnapshotDetected,
   collectChallengeSnapshot,
@@ -130,6 +131,15 @@ test('normal intelligent_cc_acl responses are accepted while http_custom is a ch
   assert.equal(challengeSnapshotDetected(clearedWithLibraryLoaded), true)
   assert.equal(challengeCleared(clearedWithLibraryLoaded), true)
   assert.equal(challengeCleared(clearSnapshot('denied by http_custom')), false)
+})
+
+test('post-drag normal document is accepted when ESA leaves a stale http_custom header', () => {
+  const snapshot = clearSnapshot('denied by http_custom')
+  snapshot.frames[0].url = 'https://pay.ldxp.cn/'
+  assert.equal(challengeCleared(snapshot), false)
+  assert.equal(challengeContentCleared(snapshot), true)
+  assert.equal(challengeContentCleared({ ...snapshot, frames: [{ ...snapshot.frames[0], text: '请按住滑块，拖动到最右边' }] }), false)
+  assert.equal(challengeContentCleared({ ...snapshot, frames: [{ ...snapshot.frames[0], url: 'about:blank' }] }), false)
 })
 
 test('slider distance is derived from the live track and handle right edges', () => {

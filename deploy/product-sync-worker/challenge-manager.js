@@ -169,6 +169,23 @@ function challengeCleared(snapshot) {
   ))
 }
 
+// ESA can leave the x-tengine-error header from the challenge response on the
+// navigation object which delivered the post-drag page. The subsequent
+// document (and API requests made by it) can already be the normal shop page.
+// Keep challengeCleared() strict for initial detection, but recognise this
+// post-drag state when a real HTTP document is present and no challenge DOM or
+// copy remains.
+function challengeContentCleared(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return false
+  const frames = Array.isArray(snapshot.frames) ? snapshot.frames : []
+  if (!frames.some((frame) => /^https?:\/\//i.test(String(frame?.url || '')))) return false
+  return !frames.some((frame) => (
+    frame?.hasCaptchaDOM
+    || frame?.hasAliyunDOM
+    || challengeTextDetected(frame?.title, frame?.text)
+  ))
+}
+
 function aliyunSnapshotDetected(snapshot) {
   if (isHTTPCustomDenial(snapshot?.responseError)) return true
   return (snapshot?.frames || []).some((frame) => (
@@ -1092,10 +1109,12 @@ class ChallengeManager {
       let response = await this.operation(this.navigate(page, this.navigationTimeoutMilliseconds, signal), signal)
       let snapshot = await this.operation(this.inspect(page, response), signal)
       // ESA's loader script can remain on an otherwise normal page after a
-      // successful verification.  Treat the page as clear when the challenge
-      // DOM/copy and the http_custom denial are gone; the script marker alone
-      // must not trigger an unsupported solve loop.
-      if (!challengeSnapshotDetected(snapshot) || challengeCleared(snapshot)) {
+      // successful verification. Treat the page as clear when the challenge
+      // DOM/copy is gone; a stale http_custom header on the navigation is
+      // accepted only when the resulting document is a real normal page.
+      if (!challengeSnapshotDetected(snapshot)
+        || challengeCleared(snapshot)
+        || challengeContentCleared(snapshot)) {
         report({ state: 'clear' })
         return { state: 'clear', provider: '' }
       }
@@ -1110,7 +1129,7 @@ class ChallengeManager {
         if (attempt > 0) {
           response = await this.operation(this.reload(page, this.navigationTimeoutMilliseconds, signal), signal)
           snapshot = await this.operation(this.inspect(page, response), signal)
-          if (challengeCleared(snapshot)) {
+          if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
             await this.persistSolvedSession(context, provider.id, proxy)
             const solvedAt = new Date(this.now()).toISOString()
             report({ state: 'solved', provider: provider.id, attempt, solvedAt })
@@ -1155,7 +1174,7 @@ class ChallengeManager {
           response = await this.operation(this.navigate(page, this.navigationTimeoutMilliseconds, signal), signal)
         }
         snapshot = await this.operation(this.inspect(page, response), signal)
-        if (challengeCleared(snapshot)) {
+        if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
           await this.persistSolvedSession(context, provider.id, proxy)
           const solvedAt = new Date(this.now()).toISOString()
           report({ state: 'solved', provider: provider.id, attempt, solvedAt })
@@ -1244,6 +1263,7 @@ module.exports = {
   MAX_DRAG_ATTEMPTS,
   aliyunSnapshotDetected,
   challengeBackoffMilliseconds,
+  challengeContentCleared,
   challengeCleared,
   challengeSnapshotDetected,
   challengeTextDetected,

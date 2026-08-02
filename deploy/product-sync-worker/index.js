@@ -655,10 +655,13 @@ async function prepareLaneContext(lane, context, proxy, recovery = false, signal
       const parent = document.body || document.documentElement
       if (parent) parent.appendChild(button)
     }
+    // Run immediately as well as at DOMContentLoaded. ESA's generated page can
+    // load and invoke initAliyunCaptcha before DOMContentLoaded; waiting for
+    // that event leaves the SDK with an invalid #button selector and no
+    // discoverable slider, which is then incorrectly reported as unsupported.
+    ensureAliyunCaptchaButton()
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', ensureAliyunCaptchaButton, { once: true })
-    } else {
-      ensureAliyunCaptchaButton()
     }
   })
   await context.route('**/*', async (route) => {
