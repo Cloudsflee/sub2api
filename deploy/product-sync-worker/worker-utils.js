@@ -1,3 +1,5 @@
+const crypto = require('node:crypto')
+
 const supportedProxyProtocols = new Set(['http:', 'https:', 'socks5:'])
 const inventorylessGoodsTypes = new Set(['article', 'resource', 'equity'])
 
@@ -182,6 +184,16 @@ function parseProxyConfigurations(value, legacyValue, name = 'PRODUCT_SYNC_PROXY
     : String(legacyValue || '').trim() ? [String(legacyValue).trim()] : []
   if (entries.length > 6) throw new Error(`${name} supports at most 6 proxies`)
   return entries.map((entry, index) => parseProxyConfiguration(entry, `${name} entry ${index + 1}`))
+}
+
+function browserFingerprintSeed(laneIndex, proxy) {
+  const identity = JSON.stringify({
+    lane: Number.isInteger(laneIndex) ? laneIndex : 0,
+    server: String(proxy?.server || ''),
+    username: String(proxy?.username || ''),
+    password: String(proxy?.password || ''),
+  })
+  return crypto.createHash('sha256').update(identity).digest('hex').slice(0, 8)
 }
 
 function proxyLanesForConcurrency(concurrency, configurations) {
@@ -635,6 +647,7 @@ module.exports = {
   Semaphore,
   ShopSyncError,
   TokenBucket,
+  browserFingerprintSeed,
   browserResourceCounts,
   catalogProductState,
   closeContextThenCreate,

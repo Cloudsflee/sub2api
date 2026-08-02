@@ -105,12 +105,19 @@ by `denied by intelligent_cc_acl` is accepted.
 
 The live slider geometry determines the drag distance. For example, a 360 px
 track with a 40 px handle produces a 320 px movement; no fixed distance is
-configured. Each attempt uses 36-60 nonlinear steps over 900-1600 ms with
-small vertical variation and an end correction. Movement uses absolute
-deadlines from mouse-down, so browser protocol latency stays inside that
-duration instead of accumulating once per step. A context gets at most two drag
-attempts and reloads the verification page before the second. All lanes share
-one cancellable lock, so only one lane can drag at a time. The 90-second
+configured. Before pressing, the pointer pauses near the right side of the
+track, approaches the handle through 30-42 native events over 1100-1700 ms,
+and settles on the handle for 800-1400 ms. The pressed movement supports 36-60
+steps (50-60 by default); its main 320 px phase takes 1000-1400 ms, follows a
+measured late-acceleration curve with smooth vertical variation, then moves
+24-42 px beyond the clamped track and holds for 550-850 ms before release.
+Movement uses absolute deadlines within each phase, so browser protocol
+latency does not accumulate once per step. These ranges come from a successful
+server-side noVNC recording: replaying the complete pre-drag history passed,
+and the parameterized model then passed fresh ESA challenges with two distinct
+Camoufox fingerprints. A context gets at most two drag attempts and reloads the
+verification page before the second. All lanes share one cancellable lock, so
+only one lane can drag at a time. The 90-second
 per-context recovery budget starts after that lock is acquired; queued lanes
 remain immediately cancellable without losing their own solve budget. After
 dragging, the manager requests the home page again and requires the verification
@@ -128,7 +135,10 @@ At startup, each context restores the storage state for its provider, target
 origin, and proxy identity before validating the home page. Successful states
 are written atomically under `/data/challenge-sessions` with directory mode
 `0700` and file mode `0600`; filenames are SHA-256 digests and never expose
-proxy credentials. Each state carries a non-secret summary of its provider,
+proxy credentials. Camoufox fingerprint seeds are derived from the lane and
+hashed proxy identity rather than the ephemeral container hostname, so a
+recreated worker keeps the profile identity it previously verified. Each state
+carries a non-secret summary of its provider,
 target origin, proxy server, and hashed proxy identity; invalid or mismatched
 files are removed and rebuilt. Images, fonts, and
 media are allowed only while solving, then the normal resource block is

@@ -18,6 +18,7 @@ const {
   Semaphore,
   ShopSyncError,
   TokenBucket,
+  browserFingerprintSeed,
   browserResourceCounts,
   createJobHeartbeat,
   initializeProxyPool,
@@ -492,7 +493,7 @@ function browserContextOptions(proxy) {
   }
 }
 
-function camoufoxEnvironment(lane) {
+function camoufoxEnvironment(lane, proxy) {
   const environment = { ...process.env }
   if (environment.CAMOU_CONFIG_1) return environment
 
@@ -502,10 +503,7 @@ function camoufoxEnvironment(lane) {
   // reject the browser solely on the product token.  Deployments can provide
   // a complete CAMOU_CONFIG_* set when they need a pinned fingerprint.
   const firefoxVersion = String(process.env.CAMOUFOX_FIREFOX_VERSION || '152.0').trim()
-  const laneSeed = crypto.createHash('sha256')
-    .update(`${lane?.index || 0}\0${process.env.HOSTNAME || ''}`)
-    .digest('hex')
-    .slice(0, 8)
+  const laneSeed = browserFingerprintSeed(lane?.index, proxy)
   environment.CAMOU_CONFIG_1 = JSON.stringify({
     'navigator.userAgent': process.env.CAMOUFOX_USER_AGENT
       || `Mozilla/5.0 (X11; Linux x86_64; rv:${firefoxVersion}) Gecko/20100101 Firefox/${firefoxVersion}`,
@@ -740,7 +738,7 @@ async function replaceLaneContext(lane, proxyIndex, recovery = false, signal = w
       args: browserLaunchArguments(),
     }
     if (browserEngine === 'camoufox') {
-      launchOptions.env = camoufoxEnvironment(lane)
+      launchOptions.env = camoufoxEnvironment(lane, proxy)
     } else {
       launchOptions.ignoreDefaultArgs = ['--enable-automation']
     }

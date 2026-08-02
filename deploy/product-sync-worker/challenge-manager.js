@@ -271,65 +271,191 @@ function boundedRandomInteger(minimum, maximum, random) {
   return minimum + Math.floor(value * (maximum - minimum + 1))
 }
 
+function boundedRandomNumber(minimum, maximum, random) {
+  const value = Math.max(0, Math.min(0.999999999, Number(random()) || 0))
+  return minimum + value * (maximum - minimum)
+}
+
+function distributedDelays(count, durationMilliseconds, random, weightForIndex) {
+  const weights = Array.from({ length: count }, (_, index) => (
+    Math.max(0.05, Number(weightForIndex(index)) || (0.7 + Number(random()) * 0.6))
+  ))
+  const weightTotal = weights.reduce((sum, value) => sum + value, 0)
+  const delays = weights.map((weight) => Math.max(1, Math.round(durationMilliseconds * weight / weightTotal)))
+  let delta = durationMilliseconds - delays.reduce((sum, value) => sum + value, 0)
+  for (let index = delays.length - 1; delta !== 0; index = (index - 1 + delays.length) % delays.length) {
+    if (delta > 0) {
+      delays[index] += 1
+      delta -= 1
+    } else if (delays[index] > 1) {
+      delays[index] -= 1
+      delta += 1
+    }
+  }
+  return delays
+}
+
+const HUMAN_PROGRESS_ANCHORS = [
+  [0, 0],
+  [0.1, 0.07],
+  [0.2, 0.165],
+  [0.3, 0.27],
+  [0.4, 0.34],
+  [0.5, 0.405],
+  [0.6, 0.447],
+  [0.7, 0.506],
+  [0.8, 0.566],
+  [0.85, 0.65],
+  [0.9, 0.716],
+  [0.93, 0.775],
+  [0.95, 0.838],
+  [1, 1],
+]
+
+function measuredHumanProgress(progress) {
+  const value = Math.max(0, Math.min(1, progress))
+  for (let index = 1; index < HUMAN_PROGRESS_ANCHORS.length; index += 1) {
+    const previous = HUMAN_PROGRESS_ANCHORS[index - 1]
+    const next = HUMAN_PROGRESS_ANCHORS[index]
+    if (value > next[0]) continue
+    const localProgress = (value - previous[0]) / (next[0] - previous[0])
+    return previous[1] + (next[1] - previous[1]) * localProgress
+  }
+  return 1
+}
+
+function cubicBezier(start, control1, control2, end, progress) {
+  const inverse = 1 - progress
+  return inverse ** 3 * start
+    + 3 * inverse ** 2 * progress * control1
+    + 3 * inverse * progress ** 2 * control2
+    + progress ** 3 * end
+}
+
 function generateDragTrajectory(distance, options = {}) {
   if (!Number.isFinite(distance) || distance <= 0) throw new Error('drag distance must be positive')
   const random = options.random || Math.random
   const steps = Number.isInteger(options.steps)
     ? Math.max(36, Math.min(60, options.steps))
-    : boundedRandomInteger(36, 60, random)
-  const durationMilliseconds = Number.isFinite(options.durationMilliseconds)
-    ? Math.max(900, Math.min(1_600, Math.round(options.durationMilliseconds)))
+    : boundedRandomInteger(50, 60, random)
+  const settleSteps = Math.min(8, Math.max(5, Math.round(steps * 0.11)))
+  const travelSteps = steps - settleSteps
+  const travelDurationMilliseconds = Number.isFinite(options.travelDurationMilliseconds)
+    ? Math.max(900, Math.min(1_600, Math.round(options.travelDurationMilliseconds)))
+    : Number.isFinite(options.durationMilliseconds)
+      ? Math.max(900, Math.min(1_600, Math.round(options.durationMilliseconds)))
+      : boundedRandomInteger(1_000, 1_400, random)
+  const settleDurationMilliseconds = Number.isFinite(options.settleDurationMilliseconds)
+    ? Math.max(300, Math.min(900, Math.round(options.settleDurationMilliseconds)))
+    : boundedRandomInteger(450, 750, random)
+  const hoverMilliseconds = Number.isFinite(options.hoverMilliseconds)
+    ? Math.max(0, Math.min(4_000, Math.round(options.hoverMilliseconds)))
+    : boundedRandomInteger(800, 1_400, random)
+  const approachStartHoldMilliseconds = Number.isFinite(options.approachStartHoldMilliseconds)
+    ? Math.max(0, Math.min(3_000, Math.round(options.approachStartHoldMilliseconds)))
     : boundedRandomInteger(900, 1_600, random)
-  const correction = Math.max(1.25, Math.min(2.5, distance * 0.006))
-  // Humans do not emit a perfectly periodic stream of points.  Give the
-  // initial press a short hesitation, vary inter-event delays, and normalize
-  // the result back to the requested total so the caller still has a strict
-  // trajectory budget.
-  const delayWeights = Array.from({ length: steps }, (_, index) => {
-    if (index === 0) return boundedRandomInteger(2.5, 4.5, random)
-    if (index === steps - 1) return boundedRandomInteger(1.8, 3.4, random)
-    return 0.75 + Number(random()) * 0.7
-  })
-  const delayWeightTotal = delayWeights.reduce((sum, value) => sum + value, 0)
-  const delays = delayWeights.map((weight) => Math.max(1, Math.round(durationMilliseconds * weight / delayWeightTotal)))
-  let delayDelta = durationMilliseconds - delays.reduce((sum, value) => sum + value, 0)
-  for (let index = steps - 2; delayDelta !== 0 && index >= 0; index -= 1) {
-    if (delayDelta > 0) {
-      delays[index] += 1
-      delayDelta -= 1
-    } else if (delays[index] > 1) {
-      delays[index] -= 1
-      delayDelta += 1
-    }
-    if (index === 0 && delayDelta < 0) index = steps - 1
+  const approachDurationMilliseconds = Number.isFinite(options.approachDurationMilliseconds)
+    ? Math.max(500, Math.min(2_500, Math.round(options.approachDurationMilliseconds)))
+    : boundedRandomInteger(1_100, 1_700, random)
+  const approachSteps = Number.isInteger(options.approachSteps)
+    ? Math.max(16, Math.min(48, options.approachSteps))
+    : boundedRandomInteger(30, 42, random)
+  const holdMilliseconds = Number.isFinite(options.holdMilliseconds)
+    ? Math.max(0, Math.min(2_000, Math.round(options.holdMilliseconds)))
+    : boundedRandomInteger(550, 850, random)
+  const overshootPixels = Number.isFinite(options.overshootPixels)
+    ? Math.max(12, Math.min(48, Number(options.overshootPixels)))
+    : Math.max(24, Math.min(42, distance * boundedRandomNumber(0.075, 0.13, random)))
+  const startOffsetX = Number.isFinite(options.startOffsetX)
+    ? Math.max(-8, Math.min(8, Number(options.startOffsetX)))
+    : boundedRandomNumber(-3, 5, random)
+  const startOffsetY = Number.isFinite(options.startOffsetY)
+    ? Math.max(-8, Math.min(8, Number(options.startOffsetY)))
+    : boundedRandomNumber(2, 7, random)
+  const travelDelays = distributedDelays(travelSteps, travelDurationMilliseconds, random, (index) => (
+    index === 0 ? 0.3 + Number(random()) * 0.25 : 0.7 + Number(random()) * 0.65
+  ))
+  const settleDelays = distributedDelays(settleSteps, settleDurationMilliseconds, random, (index) => (
+    index === 2 ? 4.2 + Number(random()) * 1.8 : 0.65 + Number(random()) * 0.7
+  ))
+  const horizontalPhase = boundedRandomNumber(-Math.PI, Math.PI, random)
+  const horizontalAmplitude = boundedRandomNumber(0.003, 0.011, random)
+  const verticalControl1 = boundedRandomNumber(-4, -2, random)
+  const verticalControl2 = boundedRandomNumber(2, 4.5, random)
+  const verticalEnd = boundedRandomNumber(-1, 1.5, random)
+  const settleVerticalEnd = boundedRandomNumber(-3, 0, random)
+  let elapsed = 0
+  const approachStartX = Number.isFinite(options.approachStartX)
+    ? Math.max(80, Math.min(300, Number(options.approachStartX)))
+    : distance * boundedRandomNumber(0.58, 0.75, random)
+  const approachStartY = Number.isFinite(options.approachStartY)
+    ? Math.max(-16, Math.min(16, Number(options.approachStartY)))
+    : boundedRandomNumber(-8, 4, random)
+  const approachControlY = boundedRandomNumber(-12, 8, random)
+  const approachDelays = distributedDelays(approachSteps, approachDurationMilliseconds, random, () => (
+    0.7 + Number(random()) * 0.75
+  ))
+  const approachPoints = []
+  elapsed = 0
+  for (let index = 0; index < approachSteps; index += 1) {
+    elapsed += approachDelays[index]
+    const progress = Math.min(1, elapsed / approachDurationMilliseconds)
+    const inverse = 1 - progress
+    const x = approachStartX * (inverse ** 4 + 0.055 * inverse)
+    const y = cubicBezier(approachStartY, approachControlY, -2, 0, progress)
+    approachPoints.push({
+      x: index === approachSteps - 1 ? 0 : x,
+      y: index === approachSteps - 1 ? 0 : y,
+      delayMilliseconds: approachDelays[index],
+    })
   }
   const points = []
   let previousX = 0
+  elapsed = 0
 
-  for (let index = 1; index <= steps; index += 1) {
-    const progress = index / steps
-    // Accelerate, settle into the main movement, then decelerate into a
-    // deliberate final correction.  Small horizontal noise prevents every
-    // solve from having the same mathematical cubic signature while the
-    // monotonic clamp keeps the handle from making implausible reversals.
-    const eased = progress < 0.2
-      ? 0.2 * ((progress / 0.2) ** 1.7)
-      : progress < 0.75
-        ? 0.2 + 0.55 * (((progress - 0.2) / 0.55) ** 0.86)
-        : 0.75 + 0.25 * (1 - ((1 - (progress - 0.75) / 0.25) ** 2.4))
-    const noise = (Number(random()) - 0.5) * (progress > 0.85 ? 0.004 : 0.014)
-    let x = distance * Math.max(0, Math.min(1, eased + noise))
-    if (index === steps - 2) x = distance - correction
-    if (index === steps - 1) x = distance - 0.35
-    if (index === steps) x = distance
-    if (index < steps - 2) x = Math.max(previousX + Math.min(0.25, distance / steps / 3), x)
+  for (let index = 0; index < travelSteps; index += 1) {
+    elapsed += travelDelays[index]
+    const progress = Math.min(1, elapsed / travelDurationMilliseconds)
+    const variation = horizontalAmplitude * Math.sin(Math.PI * progress)
+      * Math.sin(2 * Math.PI * progress + horizontalPhase)
+    let x = distance * Math.max(0, Math.min(1, measuredHumanProgress(progress) + variation))
+    if (index === travelSteps - 1) x = distance
+    else x = Math.max(previousX + Math.min(0.3, distance / travelSteps / 4), Math.min(distance - 0.5, x))
     previousX = x
-    const y = index === steps ? 0 : (Number(random()) - 0.5) * 2.4
-    const delayMilliseconds = delays[index - 1]
-    points.push({ x, y, delayMilliseconds })
+    const y = cubicBezier(0, verticalControl1, verticalControl2, verticalEnd, progress)
+    points.push({ x, y, delayMilliseconds: travelDelays[index] })
   }
 
-  return { steps, durationMilliseconds, points }
+  elapsed = 0
+  for (let index = 0; index < settleSteps; index += 1) {
+    elapsed += settleDelays[index]
+    const progress = Math.min(1, elapsed / settleDurationMilliseconds)
+    const x = distance + overshootPixels * (1 - (1 - progress) ** 2.2)
+    const y = verticalEnd + (settleVerticalEnd - verticalEnd) * (progress * (2 - progress))
+    points.push({
+      x: index === settleSteps - 1 ? distance + overshootPixels : x,
+      y: index === settleSteps - 1 ? settleVerticalEnd : y,
+      delayMilliseconds: settleDelays[index],
+    })
+  }
+
+  return {
+    steps,
+    durationMilliseconds: travelDurationMilliseconds + settleDurationMilliseconds,
+    travelDurationMilliseconds,
+    settleDurationMilliseconds,
+    approachStartX,
+    approachStartY,
+    approachStartHoldMilliseconds,
+    approachDurationMilliseconds,
+    approachPoints,
+    hoverMilliseconds,
+    holdMilliseconds,
+    overshootPixels,
+    startOffsetX,
+    startOffsetY,
+    points,
+  }
 }
 
 function sliderMarkerToken() {
@@ -428,10 +554,33 @@ async function dragSliderWithMouse(page, geometry, trajectory, options = {}) {
   const signal = options.signal
   const now = options.now || (() => performance.now())
   const wait = options.wait || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
-  const startX = geometry.handleBox.x + geometry.handleBox.width / 2
-  const startY = geometry.handleBox.y + geometry.handleBox.height / 2
+  const startX = geometry.handleBox.x + geometry.handleBox.width / 2 + (Number(trajectory.startOffsetX) || 0)
+  const startY = geometry.handleBox.y + geometry.handleBox.height / 2 + (Number(trajectory.startOffsetY) || 0)
   throwIfAborted(signal)
-  await page.mouse.move(startX, startY)
+  const approachPoints = Array.isArray(trajectory.approachPoints) ? trajectory.approachPoints : []
+  if (approachPoints.length > 0) {
+    await page.mouse.move(
+      startX + (Number(trajectory.approachStartX) || 0),
+      startY + (Number(trajectory.approachStartY) || 0)
+    )
+    if (trajectory.approachStartHoldMilliseconds > 0) {
+      await waitForPromiseOrAbort(wait(trajectory.approachStartHoldMilliseconds), signal)
+    }
+    const approachStartedAt = now()
+    let approachScheduledAt = 0
+    for (const point of approachPoints) {
+      approachScheduledAt += point.delayMilliseconds
+      const waitMilliseconds = approachScheduledAt - (now() - approachStartedAt)
+      if (waitMilliseconds > 0) await waitForPromiseOrAbort(wait(waitMilliseconds), signal)
+      throwIfAborted(signal)
+      await page.mouse.move(startX + point.x, startY + point.y)
+    }
+  } else {
+    await page.mouse.move(startX, startY)
+  }
+  if (trajectory.hoverMilliseconds > 0) {
+    await waitForPromiseOrAbort(wait(trajectory.hoverMilliseconds), signal)
+  }
   await page.mouse.down()
   try {
     const startedAt = now()
@@ -444,6 +593,9 @@ async function dragSliderWithMouse(page, geometry, trajectory, options = {}) {
       }
       throwIfAborted(signal)
       await page.mouse.move(startX + point.x, startY + point.y)
+    }
+    if (trajectory.holdMilliseconds > 0) {
+      await waitForPromiseOrAbort(wait(trajectory.holdMilliseconds), signal)
     }
   } finally {
     await page.mouse.up().catch(() => {})
@@ -578,8 +730,8 @@ async function dragSliderNative(page, geometry, trajectory, options = {}) {
     })
   }
   const scale = Number.isFinite(screen.scale) && screen.scale > 0 ? screen.scale : 1
-  const startViewportX = geometry.handleBox.x + geometry.handleBox.width / 2
-  const startViewportY = geometry.handleBox.y + geometry.handleBox.height / 2
+  const startViewportX = geometry.handleBox.x + geometry.handleBox.width / 2 + (Number(trajectory.startOffsetX) || 0)
+  const startViewportY = geometry.handleBox.y + geometry.handleBox.height / 2 + (Number(trajectory.startOffsetY) || 0)
   const toScreen = (x, y) => [
     Math.round(screen.left + x * scale),
     Math.round(screen.top + y * scale),
@@ -591,7 +743,37 @@ async function dragSliderNative(page, geometry, trajectory, options = {}) {
   // --sync is intentionally used only for the initial positioning.  Repeating
   // it for trajectory points can block forever when two points round to the
   // same pixel, especially on a 1x Xvfb display.
-  await execute(['mousemove', '--sync', startX, startY], options)
+  const approachPoints = Array.isArray(trajectory.approachPoints) ? trajectory.approachPoints : []
+  if (approachPoints.length > 0) {
+    const [approachX, approachY] = toScreen(
+      startViewportX + (Number(trajectory.approachStartX) || 0),
+      startViewportY + (Number(trajectory.approachStartY) || 0)
+    )
+    await execute(['mousemove', '--sync', approachX, approachY], options)
+    if (trajectory.approachStartHoldMilliseconds > 0) {
+      await waitForPromiseOrAbort(wait(trajectory.approachStartHoldMilliseconds), signal)
+    }
+    const approachStartedAt = now()
+    let approachScheduledAt = 0
+    let previousApproachX = approachX
+    let previousApproachY = approachY
+    for (const point of approachPoints) {
+      approachScheduledAt += point.delayMilliseconds
+      const waitMilliseconds = approachScheduledAt - (now() - approachStartedAt)
+      if (waitMilliseconds > 0) await waitForPromiseOrAbort(wait(waitMilliseconds), signal)
+      throwIfAborted(signal)
+      const [x, y] = toScreen(startViewportX + point.x, startViewportY + point.y)
+      if (x === previousApproachX && y === previousApproachY) continue
+      await execute(['mousemove', x, y], options)
+      previousApproachX = x
+      previousApproachY = y
+    }
+  } else {
+    await execute(['mousemove', '--sync', startX, startY], options)
+  }
+  if (trajectory.hoverMilliseconds > 0) {
+    await waitForPromiseOrAbort(wait(trajectory.hoverMilliseconds), signal)
+  }
   await execute(['mousedown', '1'], options)
   let pressed = true
   try {
@@ -611,6 +793,9 @@ async function dragSliderNative(page, geometry, trajectory, options = {}) {
       await execute(['mousemove', x, y], options)
       previousX = x
       previousY = y
+    }
+    if (trajectory.holdMilliseconds > 0) {
+      await waitForPromiseOrAbort(wait(trajectory.holdMilliseconds), signal)
     }
   } finally {
     if (pressed) {

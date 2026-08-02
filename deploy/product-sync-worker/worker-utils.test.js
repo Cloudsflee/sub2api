@@ -9,6 +9,7 @@ const {
   JobLeaseLostError,
   ShopSyncError,
   TokenBucket,
+  browserFingerprintSeed,
   browserResourceCounts,
   catalogProductState,
   closeContextThenCreate,
@@ -379,6 +380,18 @@ test('parseProxyConfigurations supports six isolated proxy lanes and the legacy 
     () => parseProxyConfigurations('http://a:1,http://b:2,http://c:3,http://d:4,http://e:5,http://f:6,http://g:7'),
     /at most 6 proxies/
   )
+})
+
+test('Camoufox fingerprint seeds remain stable across restarts and isolated by lane proxy identity', () => {
+  const proxy = parseProxyConfiguration('http://worker:p%40ss@proxy.example:17891')
+  const seed = browserFingerprintSeed(2, proxy)
+  assert.match(seed, /^[a-f0-9]{8}$/)
+  assert.equal(browserFingerprintSeed(2, { ...proxy }), seed)
+  assert.notEqual(browserFingerprintSeed(3, proxy), seed)
+  assert.notEqual(browserFingerprintSeed(2, { ...proxy, server: 'http://proxy.example:17892' }), seed)
+  assert.notEqual(browserFingerprintSeed(2, { ...proxy, password: 'different' }), seed)
+  assert.equal(seed.includes('worker'), false)
+  assert.equal(seed.includes('p@ss'), false)
 })
 
 test('proxyLanesForConcurrency rejects unsafe concurrency fallback to one exit IP', () => {

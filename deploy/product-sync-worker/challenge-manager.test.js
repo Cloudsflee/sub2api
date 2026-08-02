@@ -144,27 +144,91 @@ test('slider distance is derived from the live track and handle right edges', ()
   ), /unsupported/)
 })
 
-test('drag trajectories use 36-60 nonlinear steps, bounded duration, jitter, and end correction', () => {
+test('drag trajectories preserve the measured hover, late acceleration, overshoot, and release hold', () => {
   let state = 17
   const random = () => {
     state = (state * 48271) % 0x7fffffff
     return state / 0x7fffffff
   }
   const trajectory = generateDragTrajectory(320, { random })
-  assert.ok(trajectory.steps >= 36 && trajectory.steps <= 60)
-  assert.ok(trajectory.durationMilliseconds >= 900 && trajectory.durationMilliseconds <= 1_600)
+  assert.ok(trajectory.steps >= 50 && trajectory.steps <= 60)
+  assert.ok(trajectory.travelDurationMilliseconds >= 1_000 && trajectory.travelDurationMilliseconds <= 1_400)
+  assert.ok(trajectory.settleDurationMilliseconds >= 450 && trajectory.settleDurationMilliseconds <= 750)
+  assert.ok(trajectory.approachStartX >= 320 * 0.58 && trajectory.approachStartX <= 320 * 0.75)
+  assert.ok(trajectory.approachStartY >= -8 && trajectory.approachStartY <= 4)
+  assert.ok(trajectory.approachStartHoldMilliseconds >= 900 && trajectory.approachStartHoldMilliseconds <= 1_600)
+  assert.ok(trajectory.approachDurationMilliseconds >= 1_100 && trajectory.approachDurationMilliseconds <= 1_700)
+  assert.ok(trajectory.approachPoints.length >= 30 && trajectory.approachPoints.length <= 42)
+  assert.equal(
+    trajectory.approachPoints.reduce((sum, point) => sum + point.delayMilliseconds, 0),
+    trajectory.approachDurationMilliseconds
+  )
+  assert.deepEqual(trajectory.approachPoints.at(-1), {
+    x: 0,
+    y: 0,
+    delayMilliseconds: trajectory.approachPoints.at(-1).delayMilliseconds,
+  })
+  assert.ok(trajectory.hoverMilliseconds >= 800 && trajectory.hoverMilliseconds <= 1_400)
+  assert.ok(trajectory.holdMilliseconds >= 550 && trajectory.holdMilliseconds <= 850)
+  assert.ok(trajectory.overshootPixels >= 24 && trajectory.overshootPixels <= 42)
+  assert.ok(trajectory.startOffsetX >= -3 && trajectory.startOffsetX <= 5)
+  assert.ok(trajectory.startOffsetY >= 2 && trajectory.startOffsetY <= 7)
   assert.equal(trajectory.points.length, trajectory.steps)
   assert.equal(trajectory.points.reduce((sum, point) => sum + point.delayMilliseconds, 0), trajectory.durationMilliseconds)
-  assert.deepEqual(trajectory.points.at(-1), {
-    x: 320,
-    y: 0,
-    delayMilliseconds: trajectory.points.at(-1).delayMilliseconds,
-  })
-  assert.ok(trajectory.points.some((point) => Math.abs(point.y) > 0.1))
+  const trackEndIndex = trajectory.points.findIndex((point) => point.x >= 320)
+  assert.ok(trackEndIndex > 35)
+  assert.equal(trajectory.points[trackEndIndex].x, 320)
+  assert.equal(
+    trajectory.points.slice(0, trackEndIndex + 1).reduce((sum, point) => sum + point.delayMilliseconds, 0),
+    trajectory.travelDurationMilliseconds
+  )
+  assert.equal(trajectory.points.at(-1).x, 320 + trajectory.overshootPixels)
+  assert.ok(Math.abs(trajectory.points.at(-1).y) <= 3)
+  assert.ok(trajectory.points.some((point) => Math.abs(point.y) > 0.5))
   const deltas = trajectory.points.map((point, index) => point.x - (trajectory.points[index - 1]?.x || 0))
   assert.ok(new Set(deltas.map((value) => value.toFixed(3))).size > 5)
-  assert.ok(trajectory.points.at(-3).x < trajectory.points.at(-2).x)
+  assert.ok(deltas.every((delta) => delta > 0))
   assert.ok(trajectory.points.at(-2).x < trajectory.points.at(-1).x)
+  const verticalDeltas = trajectory.points.slice(1).map((point, index) => Math.abs(point.y - trajectory.points[index].y))
+  assert.ok(Math.max(...verticalDeltas) < 3)
+})
+
+test('slider drag applies a human approach, start offset, hover dwell, and release hold', async () => {
+  let elapsed = 0
+  const waits = []
+  const events = []
+  const page = {
+    mouse: {
+      move: async (x, y) => events.push(['move', x, y]),
+      down: async () => events.push(['down']),
+      up: async () => events.push(['up']),
+    },
+  }
+  await dragSlider(page, sliderGeometry(), {
+    startOffsetX: 4,
+    startOffsetY: 6,
+    approachStartX: 220,
+    approachStartY: -6,
+    approachStartHoldMilliseconds: 1_410,
+    approachPoints: [{ x: 0, y: 0, delayMilliseconds: 1_437 }],
+    hoverMilliseconds: 1_868,
+    holdMilliseconds: 751,
+    points: [{ x: 358, y: -2, delayMilliseconds: 1_120 }],
+  }, {
+    now: () => elapsed,
+    wait: async (milliseconds) => {
+      waits.push(milliseconds)
+      elapsed += milliseconds
+    },
+  })
+  assert.deepEqual(events, [
+    ['move', 264, 60],
+    ['move', 44, 66],
+    ['down'],
+    ['move', 402, 64],
+    ['up'],
+  ])
+  assert.deepEqual(waits, [1_410, 1_437, 1_868, 1_120, 751])
 })
 
 test('slider drag uses absolute deadlines so mouse protocol time stays inside the trajectory budget', async () => {
@@ -213,6 +277,14 @@ test('native slider drag focuses X11, skips duplicate pixels, and always release
     bringToFront: async () => commands.push(['front']),
   }
   await dragSliderNative(page, sliderGeometry(), {
+    approachStartX: 80,
+    approachStartY: -5,
+    approachStartHoldMilliseconds: 1,
+    approachPoints: [
+      { x: 40, y: -2, delayMilliseconds: 1 },
+      { x: 0, y: 0, delayMilliseconds: 1 },
+    ],
+    hoverMilliseconds: 1,
     points: [
       { x: 0.2, y: 0, delayMilliseconds: 1 },
       { x: 0.4, y: 0, delayMilliseconds: 1 },
@@ -226,7 +298,9 @@ test('native slider drag focuses X11, skips duplicate pixels, and always release
   })
   assert.deepEqual(commands, [
     ['front'],
-    ['mousemove', '--sync', 140, 260],
+    ['mousemove', '--sync', 220, 255],
+    ['mousemove', 180, 258],
+    ['mousemove', 140, 260],
     ['mousedown', '1'],
     ['mousemove', 150, 261],
     ['mousemove', 460, 260],
