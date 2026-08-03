@@ -4,6 +4,9 @@
 -- D is the requester's effective downstream multiplier at the request's
 -- pricing instant.
 ALTER TABLE groups
-    ADD COLUMN IF NOT EXISTS profit_control_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS profit_min_margin DECIMAL(10,4) NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS profit_safety_buffer DECIMAL(10,4) NOT NULL DEFAULT 0;
+    -- Keep this migration additive for the production migration gate.  The
+    -- defaults backfill existing rows while the generated Ent schema still
+    -- enforces the fields for all new writes.
+    ADD COLUMN IF NOT EXISTS profit_control_enabled BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS profit_min_margin DECIMAL(10,4) DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS profit_safety_buffer DECIMAL(10,4) DEFAULT 0;
