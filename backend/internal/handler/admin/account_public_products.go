@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -28,7 +29,9 @@ const (
 	publicAccountImportProductsFileEnv                 = "PUBLIC_ACCOUNT_IMPORT_PRODUCTS_FILE"
 	publicAccountImportProductSyncTokenEnv             = "PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN"
 	publicAccountImportProductStrictModeEnv            = "PUBLIC_ACCOUNT_IMPORT_PRODUCT_STRICT_MODE"
+	publicAccountImportProductSyncStatusFileEnv        = "PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_STATUS_FILE"
 	publicAccountImportProductsFile                    = "/app/data/public-account-import-products.json"
+	publicAccountImportProductSyncStatusFile           = "/app/data/product-sync-worker/status.json"
 	publicAccountImportProductStoreVersion             = 1
 	publicAccountImportProductSchemaVersion            = 2
 	publicAccountImportProductSyncInterval             = time.Second
@@ -47,7 +50,12 @@ const (
 	publicAccountImportProductMaxProducts              = 1000
 	publicAccountImportProductMaxBody                  = 8 << 20
 	publicAccountImportProductFailureMaxBody           = 8 << 10
+	publicAccountImportProductSyncStatusMaxBody        = 1 << 20
+	publicAccountImportProductExpectedLaneCount        = 6
+	publicAccountImportProductSyncStatusStaleAge       = 2 * time.Minute
 )
+
+var publicAccountImportProductSyncStatusCredentialPattern = regexp.MustCompile(`(?i)\b(https?|socks5):\/\/[^\s/@]+(?::[^\s/@]*)?@`)
 
 type PublicAccountImportProduct struct {
 	ID              string   `json:"id"`
@@ -70,15 +78,16 @@ type PublicAccountImportProduct struct {
 }
 
 type PublicAccountImportProductsResponse struct {
-	Products         []PublicAccountImportProduct           `json:"products"`
-	ShopCount        int                                    `json:"shop_count"`
-	PendingShops     int                                    `json:"pending_shops"`
-	QueuedShops      int                                    `json:"queued_shops"`
-	RefreshingShops  int                                    `json:"refreshing_shops"`
-	FailedShops      int                                    `json:"failed_shops"`
-	ExpiredShops     int                                    `json:"expired_shops"`
-	RefreshSeconds   int                                    `json:"refresh_seconds"`
-	ShopSyncStatuses []PublicAccountImportProductSyncStatus `json:"shop_sync_statuses"`
+	Products         []PublicAccountImportProduct               `json:"products"`
+	ShopCount        int                                        `json:"shop_count"`
+	PendingShops     int                                        `json:"pending_shops"`
+	QueuedShops      int                                        `json:"queued_shops"`
+	RefreshingShops  int                                        `json:"refreshing_shops"`
+	FailedShops      int                                        `json:"failed_shops"`
+	ExpiredShops     int                                        `json:"expired_shops"`
+	RefreshSeconds   int                                        `json:"refresh_seconds"`
+	ShopSyncStatuses []PublicAccountImportProductSyncStatus     `json:"shop_sync_statuses"`
+	WorkerStatus     PublicAccountImportProductSyncWorkerStatus `json:"worker_status"`
 }
 
 type PublicAccountImportProductSyncStatus struct {
@@ -89,6 +98,45 @@ type PublicAccountImportProductSyncStatus struct {
 	SnapshotUpdatedAt string `json:"snapshot_updated_at"`
 	SnapshotExpiresAt string `json:"snapshot_expires_at"`
 	RetryAfterSeconds int    `json:"retry_after_seconds"`
+}
+
+type PublicAccountImportProductSyncWorkerLaneStatus struct {
+	Lane           int    `json:"lane"`
+	Availability   string `json:"availability"`
+	Reason         string `json:"reason,omitempty"`
+	State          string `json:"state"`
+	UpdatedAt      string `json:"updated_at,omitempty"`
+	RetryAt        string `json:"retry_at,omitempty"`
+	ChallengeState string `json:"challenge_state,omitempty"`
+}
+
+type PublicAccountImportProductSyncWorkerStatus struct {
+	Availability         string                                           `json:"availability"`
+	Reason               string                                           `json:"reason,omitempty"`
+	UpdatedAt            string                                           `json:"updated_at,omitempty"`
+	ConfiguredLaneCount  int                                              `json:"configured_lane_count"`
+	ExpectedLaneCount    int                                              `json:"expected_lane_count"`
+	AvailableLaneCount   int                                              `json:"available_lane_count"`
+	UnavailableLaneCount int                                              `json:"unavailable_lane_count"`
+	Lanes                []PublicAccountImportProductSyncWorkerLaneStatus `json:"lanes"`
+}
+
+type publicAccountImportProductSyncWorkerStatusFile struct {
+	State           string                                               `json:"state"`
+	UpdatedAt       string                                               `json:"updated_at"`
+	SyncConcurrency int                                                  `json:"sync_concurrency"`
+	LastError       string                                               `json:"last_error"`
+	Lanes           []publicAccountImportProductSyncWorkerLaneStatusFile `json:"lanes"`
+}
+
+type publicAccountImportProductSyncWorkerLaneStatusFile struct {
+	Index          int    `json:"index"`
+	State          string `json:"state"`
+	ContextReady   bool   `json:"context_ready"`
+	UpdatedAt      string `json:"updated_at"`
+	RetryAt        string `json:"retry_at"`
+	LastError      string `json:"last_error"`
+	ChallengeState string `json:"challenge_state"`
 }
 
 type PublicAccountImportProductRefreshRequest struct {
@@ -213,6 +261,7 @@ func (h *AccountHandler) ListPublicAccountImportProducts(c *gin.Context) {
 	result := PublicAccountImportProductsResponse{
 		Products: products, ShopCount: len(shops), PendingShops: pending, QueuedShops: queued, RefreshingShops: refreshing, FailedShops: failed,
 		ExpiredShops: expired, RefreshSeconds: int(publicAccountImportProductRefreshAge.Seconds()), ShopSyncStatuses: publicAccountImportProductSyncStatuses(shops, store, now),
+		WorkerStatus: publicAccountImportProductSyncWorkerStatus(now),
 	}
 	writePublicAccountImportProductsResponse(c, result)
 }
@@ -1074,6 +1123,213 @@ func publicAccountImportProductSyncStatuses(shops []PublicAccountImportShop, sto
 	return statuses
 }
 
+func publicAccountImportProductSyncWorkerStatus(now time.Time) PublicAccountImportProductSyncWorkerStatus {
+	path := publicAccountImportProductSyncStatusPath()
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return unavailablePublicAccountImportProductSyncWorkerStatus("product sync worker has not reported a status yet")
+	}
+	if err != nil {
+		return unavailablePublicAccountImportProductSyncWorkerStatus("product sync worker status cannot be read")
+	}
+	if len(data) > publicAccountImportProductSyncStatusMaxBody {
+		return unavailablePublicAccountImportProductSyncWorkerStatus("product sync worker status is too large")
+	}
+
+	var file publicAccountImportProductSyncWorkerStatusFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return unavailablePublicAccountImportProductSyncWorkerStatus("product sync worker status is invalid")
+	}
+	updatedAt := parsePublicAccountImportProductTimestamp(file.UpdatedAt)
+	if updatedAt.IsZero() {
+		return unavailablePublicAccountImportProductSyncWorkerStatus("product sync worker has not published a valid timestamp")
+	}
+	if updatedAt.After(now.Add(time.Minute)) || now.Sub(updatedAt) > publicAccountImportProductSyncStatusStaleAge {
+		status := unavailablePublicAccountImportProductSyncWorkerStatus("product sync worker status is stale")
+		status.UpdatedAt = file.UpdatedAt
+		status.ConfiguredLaneCount = min(max(file.SyncConcurrency, 0), publicAccountImportProductMaxSyncJobs)
+		return status
+	}
+
+	configuredLaneCount := file.SyncConcurrency
+	if configuredLaneCount <= 0 {
+		configuredLaneCount = len(file.Lanes)
+	}
+	configuredLaneCount = min(max(configuredLaneCount, 0), publicAccountImportProductMaxSyncJobs)
+	reportedLanes := make([]publicAccountImportProductSyncWorkerLaneStatusFile, publicAccountImportProductExpectedLaneCount)
+	reportedLanePresent := make([]bool, publicAccountImportProductExpectedLaneCount)
+	for position, lane := range file.Lanes {
+		index := lane.Index
+		if index < 0 || index >= publicAccountImportProductExpectedLaneCount || reportedLanePresent[index] {
+			index = position
+			if index >= publicAccountImportProductExpectedLaneCount || reportedLanePresent[index] {
+				index = slices.Index(reportedLanePresent, false)
+			}
+		}
+		if index < 0 || index >= publicAccountImportProductExpectedLaneCount {
+			continue
+		}
+		reportedLanes[index] = lane
+		reportedLanePresent[index] = true
+	}
+	lanes := make([]PublicAccountImportProductSyncWorkerLaneStatus, 0, publicAccountImportProductExpectedLaneCount)
+	for index := 0; index < publicAccountImportProductExpectedLaneCount; index++ {
+		if !reportedLanePresent[index] {
+			lanes = append(lanes, PublicAccountImportProductSyncWorkerLaneStatus{
+				Lane:         index + 1,
+				Availability: "unavailable",
+				Reason:       fmt.Sprintf("lane %d has not reported a status", index+1),
+				State:        "missing",
+			})
+			continue
+		}
+		lanes = append(lanes, publicAccountImportProductSyncWorkerLaneStatus(reportedLanes[index], index+1))
+	}
+
+	availableCount := 0
+	for _, lane := range lanes {
+		if lane.Availability == "available" {
+			availableCount++
+		}
+	}
+	unavailableCount := len(lanes) - availableCount
+	status := PublicAccountImportProductSyncWorkerStatus{
+		Availability:         "available",
+		UpdatedAt:            file.UpdatedAt,
+		ConfiguredLaneCount:  configuredLaneCount,
+		ExpectedLaneCount:    publicAccountImportProductExpectedLaneCount,
+		AvailableLaneCount:   availableCount,
+		UnavailableLaneCount: unavailableCount,
+		Lanes:                lanes,
+	}
+	if unavailableCount > 0 {
+		status.Availability = "unavailable"
+		if file.State == "error" || file.State == "stopped" || file.State == "stopping" {
+			status.Reason = publicAccountImportProductSyncWorkerFailureReason(file)
+		} else {
+			status.Reason = fmt.Sprintf("%d of %d product sync lanes are unavailable", unavailableCount, len(lanes))
+		}
+	}
+	if file.State == "error" || file.State == "stopped" || file.State == "stopping" {
+		status.Availability = "unavailable"
+		status.Reason = publicAccountImportProductSyncWorkerFailureReason(file)
+		for index := range status.Lanes {
+			if status.Lanes[index].Availability == "available" {
+				status.Lanes[index].Availability = "unavailable"
+				status.Lanes[index].Reason = status.Reason
+				availableCount--
+				unavailableCount++
+			}
+		}
+		status.AvailableLaneCount = availableCount
+		status.UnavailableLaneCount = unavailableCount
+	}
+	return status
+}
+
+func publicAccountImportProductSyncWorkerLaneStatus(
+	lane publicAccountImportProductSyncWorkerLaneStatusFile,
+	position int,
+) PublicAccountImportProductSyncWorkerLaneStatus {
+	status := PublicAccountImportProductSyncWorkerLaneStatus{
+		Lane:           position,
+		Availability:   "unavailable",
+		State:          strings.TrimSpace(lane.State),
+		UpdatedAt:      strings.TrimSpace(lane.UpdatedAt),
+		RetryAt:        strings.TrimSpace(lane.RetryAt),
+		ChallengeState: strings.TrimSpace(lane.ChallengeState),
+	}
+	if status.State == "" {
+		status.State = "unknown"
+	}
+	if lane.ContextReady && (status.State == "idle" || status.State == "syncing") &&
+		!slices.Contains([]string{"queued", "detecting", "solving", "failed", "timeout", "unsupported"}, status.ChallengeState) {
+		status.Availability = "available"
+		return status
+	}
+
+	status.Reason = publicAccountImportProductSyncWorkerLaneFailureReason(lane, status.State, status.ChallengeState)
+	return status
+}
+
+func publicAccountImportProductSyncWorkerLaneFailureReason(
+	lane publicAccountImportProductSyncWorkerLaneStatusFile,
+	state string,
+	challengeState string,
+) string {
+	if reason := sanitizePublicAccountImportProductSyncWorkerReason(lane.LastError); reason != "" {
+		return reason
+	}
+	switch {
+	case slices.Contains([]string{"queued", "detecting", "solving"}, challengeState):
+		return "lane is handling a verification challenge"
+	case slices.Contains([]string{"failed", "timeout", "unsupported"}, challengeState):
+		return fmt.Sprintf("verification recovery is %s", challengeState)
+	case state == "starting":
+		return "lane is starting"
+	case state == "restarting":
+		return "lane is restarting"
+	case state == "blocked":
+		return "lane is backing off after an upstream failure"
+	case state == "error":
+		return "lane reported an error"
+	case !lane.ContextReady:
+		return "browser session is not ready"
+	case state == "missing":
+		return "lane has not reported a status"
+	default:
+		return fmt.Sprintf("lane is not ready (state: %s)", state)
+	}
+}
+
+func publicAccountImportProductSyncWorkerFailureReason(file publicAccountImportProductSyncWorkerStatusFile) string {
+	if reason := sanitizePublicAccountImportProductSyncWorkerReason(file.LastError); reason != "" {
+		return reason
+	}
+	switch file.State {
+	case "stopped":
+		return "product sync worker is stopped"
+	case "stopping":
+		return "product sync worker is stopping"
+	case "error":
+		return "product sync worker reported an error"
+	default:
+		return "product sync worker is unavailable"
+	}
+}
+
+func sanitizePublicAccountImportProductSyncWorkerReason(value string) string {
+	value = strings.TrimSpace(strings.Join(strings.Fields(value), " "))
+	if value == "" {
+		return ""
+	}
+	value = publicAccountImportProductSyncStatusCredentialPattern.ReplaceAllString(value, "$1://***@")
+	runes := []rune(value)
+	if len(runes) > 240 {
+		return string(runes[:240])
+	}
+	return value
+}
+
+func unavailablePublicAccountImportProductSyncWorkerStatus(reason string) PublicAccountImportProductSyncWorkerStatus {
+	lanes := make([]PublicAccountImportProductSyncWorkerLaneStatus, 0, publicAccountImportProductExpectedLaneCount)
+	for index := 0; index < publicAccountImportProductExpectedLaneCount; index++ {
+		lanes = append(lanes, PublicAccountImportProductSyncWorkerLaneStatus{
+			Lane:         index + 1,
+			Availability: "unavailable",
+			Reason:       reason,
+			State:        "unknown",
+		})
+	}
+	return PublicAccountImportProductSyncWorkerStatus{
+		Availability:         "unavailable",
+		Reason:               reason,
+		ExpectedLaneCount:    publicAccountImportProductExpectedLaneCount,
+		UnavailableLaneCount: publicAccountImportProductExpectedLaneCount,
+		Lanes:                lanes,
+	}
+}
+
 func publicAccountImportProductSyncStatusForShop(shop PublicAccountImportShop, cached publicAccountImportProductShopCache, now time.Time) PublicAccountImportProductSyncStatus {
 	state := "idle"
 	requested, failed := publicAccountImportProductRefreshState(cached, now)
@@ -1191,6 +1447,13 @@ func publicAccountImportProductsPath() string {
 		return path
 	}
 	return publicAccountImportProductsFile
+}
+
+func publicAccountImportProductSyncStatusPath() string {
+	if path := strings.TrimSpace(os.Getenv(publicAccountImportProductSyncStatusFileEnv)); path != "" {
+		return path
+	}
+	return publicAccountImportProductSyncStatusFile
 }
 
 func publicAccountImportShopToken(raw string) (string, error) {

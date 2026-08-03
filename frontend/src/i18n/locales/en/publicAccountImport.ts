@@ -109,5 +109,12 @@ export default {
     shopProductsAlreadyQueuedNotice: 'Products for "{name}" are queued or updating',
     shopProductsCooldownNotice: '"{name}" was just updated. Try again in {seconds}s',
     shopProductsRefreshFailed: 'Failed to request a product update for "{name}"',
+    productSyncWorkerTitle: 'Product update lanes',
+    productSyncWorkerSummary: '{available}/{total} update lanes available',
+    productSyncLane: 'Lane {lane}',
+    productSyncAvailable: 'Available',
+    productSyncUnavailable: 'Unavailable',
+    productSyncLaneUnavailable: 'No specific reason was reported',
+    productSyncStatusUnavailable: 'Unable to read product update lane status',
   },
 }

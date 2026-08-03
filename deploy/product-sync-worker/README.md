@@ -40,6 +40,16 @@ the required shared token first:
 PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN=<shared-random-token>
 ```
 
+The application reads the same host-mounted file at
+`/app/data/product-sync-worker/status.json` and includes a sanitized six-lane
+summary in the public `/api/v1/public/account-import/products` response. The
+shop page shows every lane to anonymous visitors as **Available** or
+**Unavailable**; unavailable lanes include the worker error, challenge state,
+or missing/stale heartbeat reason. Set
+`PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_STATUS_FILE` on the application only when
+the shared mount uses a different path. Proxy credentials are never included
+in the public summary.
+
 Relevant optional settings are:
 
 ```env

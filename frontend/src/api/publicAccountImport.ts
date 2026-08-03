@@ -80,6 +80,28 @@ export interface PublicAccountImportProduct {
 
 export type PublicAccountImportProductSyncState = 'idle' | 'queued' | 'refreshing' | 'failed'
 export type PublicAccountImportProductSnapshotState = 'pending' | 'legacy' | 'fresh' | 'stale' | 'expired'
+export type PublicAccountImportProductSyncLaneAvailability = 'available' | 'unavailable'
+
+export interface PublicAccountImportProductSyncWorkerLaneStatus {
+  lane: number
+  availability: PublicAccountImportProductSyncLaneAvailability
+  reason: string
+  state: string
+  updated_at?: string
+  retry_at?: string
+  challenge_state?: string
+}
+
+export interface PublicAccountImportProductSyncWorkerStatus {
+  availability: PublicAccountImportProductSyncLaneAvailability
+  reason: string
+  updated_at: string
+  configured_lane_count: number
+  expected_lane_count: number
+  available_lane_count: number
+  unavailable_lane_count: number
+  lanes: PublicAccountImportProductSyncWorkerLaneStatus[]
+}
 
 export interface PublicAccountImportProductSyncStatus {
   shop_id: string
@@ -105,6 +127,7 @@ export interface PublicAccountImportProductsResponse {
   expired_shops: number
   refresh_seconds: number
   shop_sync_statuses: PublicAccountImportProductSyncStatus[]
+  worker_status?: PublicAccountImportProductSyncWorkerStatus
 }
 
 export interface PublicAccountImportProductsETagResult {
@@ -212,6 +235,38 @@ function normalizePublicAccountImportProductsResponse(
     shop_sync_statuses: Array.isArray(data.shop_sync_statuses)
       ? data.shop_sync_statuses.map((status) => normalizePublicAccountImportProductSyncStatus(status))
       : [],
+    worker_status: normalizePublicAccountImportProductSyncWorkerStatus(data.worker_status),
+  }
+}
+
+function normalizePublicAccountImportProductSyncWorkerStatus(
+  value: Partial<PublicAccountImportProductSyncWorkerStatus> | null | undefined
+): PublicAccountImportProductSyncWorkerStatus {
+  const expectedLaneCount = Math.min(normalizePositiveInteger(value?.expected_lane_count, 6), 6)
+  const rawLanes = Array.isArray(value?.lanes) ? value.lanes : []
+  const lanes = Array.from({ length: expectedLaneCount }, (_, index) => {
+    const raw = rawLanes[index]
+    const availability = raw?.availability === 'available' ? 'available' : 'unavailable'
+    return {
+      lane: normalizePositiveInteger(raw?.lane, index + 1),
+      availability,
+      reason: typeof raw?.reason === 'string' ? raw.reason : '',
+      state: typeof raw?.state === 'string' ? raw.state : 'unknown',
+      updated_at: typeof raw?.updated_at === 'string' ? raw.updated_at : '',
+      retry_at: typeof raw?.retry_at === 'string' ? raw.retry_at : '',
+      challenge_state: typeof raw?.challenge_state === 'string' ? raw.challenge_state : '',
+    } satisfies PublicAccountImportProductSyncWorkerLaneStatus
+  })
+  const availability = value?.availability === 'available' ? 'available' : 'unavailable'
+  return {
+    availability,
+    reason: typeof value?.reason === 'string' ? value.reason : '',
+    updated_at: typeof value?.updated_at === 'string' ? value.updated_at : '',
+    configured_lane_count: normalizeNonNegativeInteger(value?.configured_lane_count),
+    expected_lane_count: expectedLaneCount,
+    available_lane_count: normalizeNonNegativeInteger(value?.available_lane_count),
+    unavailable_lane_count: normalizeNonNegativeInteger(value?.unavailable_lane_count),
+    lanes,
   }
 }
 
@@ -252,6 +307,11 @@ function normalizePublicAccountImportProductSyncStatus(
 function normalizeNonNegativeInteger(value: unknown): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
 }
 
 function normalizePublicAccountImportShop(

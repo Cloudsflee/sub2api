@@ -10,6 +10,7 @@ import type {
   PublicAccountImportProductSyncStatus,
   PublicAccountImportProductsResponse,
   PublicAccountImportShop,
+  PublicAccountImportProductSyncWorkerStatus,
 } from '@/api/publicAccountImport'
 
 const {
@@ -114,6 +115,31 @@ function catalog(statuses: PublicAccountImportProductSyncStatus[]): PublicAccoun
 		expired_shops: statuses.filter((item) => item.snapshot_state === 'expired').length,
     refresh_seconds: 900,
     shop_sync_statuses: statuses,
+  }
+}
+
+function workerStatus(
+  unavailableLanes: number[] = [],
+  reason = ''
+): PublicAccountImportProductSyncWorkerStatus {
+  const lanes = Array.from({ length: 6 }, (_, index) => {
+    const unavailable = unavailableLanes.includes(index + 1)
+    return {
+      lane: index + 1,
+      availability: unavailable ? 'unavailable' : 'available',
+      reason: unavailable ? reason : '',
+      state: unavailable ? 'error' : 'idle',
+    }
+  })
+  return {
+    availability: unavailableLanes.length ? 'unavailable' : 'available',
+    reason,
+    updated_at: '2026-08-04T04:00:00Z',
+    configured_lane_count: 6,
+    expected_lane_count: 6,
+    available_lane_count: 6 - unavailableLanes.length,
+    unavailable_lane_count: unavailableLanes.length,
+    lanes,
   }
 }
 
@@ -225,10 +251,31 @@ describe('PublicAccountImportView per-shop product refresh', () => {
     wrapper.unmount()
   })
 
+  it('shows all six update lanes and failure reasons to anonymous visitors', async () => {
+    getProducts.mockResolvedValue({
+      ...catalog([status('one'), status('two')]),
+      worker_status: workerStatus([2, 5], 'ESA verification failed (VerifyCode=F001)'),
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await openShopsTab(wrapper)
+
+    expect(wrapper.findAll('[data-product-sync-lane]')).toHaveLength(6)
+    expect(wrapper.findAll('[data-product-sync-lane-availability="available"]')).toHaveLength(4)
+    expect(wrapper.findAll('[data-product-sync-lane-availability="unavailable"]')).toHaveLength(2)
+    expect(wrapper.find('[data-product-sync-lane="2"]').text()).toContain('ESA verification failed (VerifyCode=F001)')
+    expect(wrapper.find('[data-product-sync-worker-availability]').text()).toBe('publicAccountImport.productSyncUnavailable')
+    expect(wrapper.find('[data-shop-admin-controls]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('sorts trusted shops first and untrusted shops last while preserving group order', async () => {
     getShops.mockResolvedValue([
       { ...shops[2], id: 'untrusted-first', name: 'Untrusted first' },
       { ...shops[1], id: 'neutral-first', name: 'Neutral first' },
+      // A legacy value must be treated as neutral by the view as a defensive
+      // fallback even though the API normalizes it before returning.
+      { ...shops[1], id: 'legacy-neutral', name: 'Legacy neutral', trust_level: 'legacy' as PublicAccountImportShop['trust_level'] },
       { ...shops[0], id: 'trusted-first', name: 'Trusted first' },
       { ...shops[0], id: 'trusted-second', name: 'Trusted second' },
       { ...shops[1], id: 'neutral-second', name: 'Neutral second' },
@@ -242,6 +289,7 @@ describe('PublicAccountImportView per-shop product refresh', () => {
       'trusted-first',
       'trusted-second',
       'neutral-first',
+      'legacy-neutral',
       'neutral-second',
       'untrusted-first',
       'untrusted-second',

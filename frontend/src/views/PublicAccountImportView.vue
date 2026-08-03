@@ -256,6 +256,68 @@
           </span>
         </div>
 
+        <section
+          class="mt-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-900 sm:p-5"
+          data-product-sync-worker-status
+        >
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-semibold">{{ t('publicAccountImport.productSyncWorkerTitle') }}</h3>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                {{ t('publicAccountImport.productSyncWorkerSummary', {
+                  available: productSyncWorkerAvailableLaneCount,
+                  total: productSyncWorkerStatus.lanes.length,
+                }) }}
+              </p>
+            </div>
+            <span
+              class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold"
+              :class="productSyncWorkerStatus.availability === 'available'
+                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+                : 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300'"
+              :data-product-sync-worker-availability="productSyncWorkerStatus.availability"
+            >
+              {{ productSyncWorkerStatus.availability === 'available'
+                ? t('publicAccountImport.productSyncAvailable')
+                : t('publicAccountImport.productSyncUnavailable') }}
+            </span>
+          </div>
+          <p
+            v-if="productSyncWorkerStatus.availability === 'unavailable' && productSyncWorkerStatus.reason"
+            class="mt-3 border-t border-red-100 pt-3 text-xs text-red-700 dark:border-red-950 dark:text-red-300"
+            data-product-sync-worker-reason
+          >
+            {{ productSyncWorkerStatus.reason }}
+          </p>
+          <div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            <div
+              v-for="lane in productSyncWorkerStatus.lanes"
+              :key="lane.lane"
+              class="rounded-lg border px-3 py-2"
+              :class="lane.availability === 'available'
+                ? 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-900 dark:bg-emerald-950/20'
+                : 'border-red-200 bg-red-50/60 dark:border-red-900 dark:bg-red-950/20'"
+              :data-product-sync-lane="lane.lane"
+              :data-product-sync-lane-availability="lane.availability"
+            >
+              <div class="flex items-center justify-between gap-2 text-xs font-semibold">
+                <span>{{ t('publicAccountImport.productSyncLane', { lane: lane.lane }) }}</span>
+                <span :class="lane.availability === 'available' ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'">
+                  {{ lane.availability === 'available'
+                    ? t('publicAccountImport.productSyncAvailable')
+                    : t('publicAccountImport.productSyncUnavailable') }}
+                </span>
+              </div>
+              <p
+                v-if="lane.availability === 'unavailable'"
+                class="mt-1 break-words text-[11px] leading-4 text-red-700 dark:text-red-300"
+              >
+                {{ lane.reason || t('publicAccountImport.productSyncLaneUnavailable') }}
+              </p>
+            </div>
+          </div>
+        </section>
+
         <form
           class="mt-4 grid gap-4 border-y border-gray-200 py-5 dark:border-dark-700 sm:grid-cols-2 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)_auto] lg:items-end"
           @submit.prevent="handleShopSubmit"
@@ -642,6 +704,8 @@ import {
   type PublicAccountImportResult,
   type PublicAccountImportShop,
   type PublicAccountImportShopTrustLevel,
+  type PublicAccountImportProductSyncWorkerLaneStatus,
+  type PublicAccountImportProductSyncWorkerStatus,
 } from '@/api/publicAccountImport'
 import {
   filterAndSortPublicProducts,
@@ -667,12 +731,38 @@ const CATALOG_PAGE_SIZE = 10
 const PRODUCT_PRICE_VERIFICATION_TTL_MS = 60_000
 const PRODUCT_PRICE_FAILURE_RETRY_MS = 15_000
 const PRODUCT_UNAVAILABLE_TTL_MS = 15 * 60_000
+const PRODUCT_SYNC_EXPECTED_LANE_COUNT = 6
 
 type ProductPriceStatus = 'checking' | 'verified' | 'unavailable' | 'failed'
 
 interface ProductPriceVerification {
   status: ProductPriceStatus
   checkedAt: number
+}
+
+function unavailableProductSyncWorkerStatus(reason = ''): PublicAccountImportProductSyncWorkerStatus {
+  const lanes: PublicAccountImportProductSyncWorkerLaneStatus[] = Array.from(
+    { length: PRODUCT_SYNC_EXPECTED_LANE_COUNT },
+    (_, index) => ({
+      lane: index + 1,
+      availability: 'unavailable',
+      reason,
+      state: 'unknown',
+      updated_at: '',
+      retry_at: '',
+      challenge_state: '',
+    })
+  )
+  return {
+    availability: 'unavailable',
+    reason,
+    updated_at: '',
+    configured_lane_count: 0,
+    expected_lane_count: PRODUCT_SYNC_EXPECTED_LANE_COUNT,
+    available_lane_count: 0,
+    unavailable_lane_count: PRODUCT_SYNC_EXPECTED_LANE_COUNT,
+    lanes,
+  }
 }
 
 const { t } = useI18n()
@@ -702,6 +792,7 @@ const loadingProducts = ref(true)
 const productErrorMessage = ref('')
 const productVerificationMessage = ref('')
 const productPriceVerifications = ref<Record<string, ProductPriceVerification>>({})
+const productSyncWorkerStatus = ref<PublicAccountImportProductSyncWorkerStatus>(unavailableProductSyncWorkerStatus())
 const queuedProductShops = ref(0)
 const refreshingProductShops = ref(0)
 const failedProductShops = ref(0)
@@ -732,13 +823,15 @@ const mainTabs = computed(() => [
   { value: 'shops' as const, label: t('publicAccountImport.shopModule') },
   { value: 'products' as const, label: t('publicAccountImport.productModule') },
 ])
-const shopTrustSortOrder: Record<PublicAccountImportShopTrustLevel, number> = {
-  trusted: 0,
-  neutral: 1,
-  untrusted: 2,
+function shopTrustRank(level: string | null | undefined): number {
+  // Keep malformed/legacy values in the neutral bucket instead of allowing an
+  // undefined comparator result to leave them in an arbitrary position.
+  if (level === 'trusted') return 0
+  if (level === 'untrusted') return 2
+  return 1
 }
 const sortedShops = computed(() => [...shops.value].sort(
-  (left, right) => shopTrustSortOrder[left.trust_level] - shopTrustSortOrder[right.trust_level]
+  (left, right) => shopTrustRank(left.trust_level) - shopTrustRank(right.trust_level)
 ))
 const shopPageCount = computed(() => Math.max(1, Math.ceil(sortedShops.value.length / CATALOG_PAGE_SIZE)))
 const pagedShops = computed(() => {
@@ -746,6 +839,9 @@ const pagedShops = computed(() => {
   return sortedShops.value.slice(start, start + CATALOG_PAGE_SIZE)
 })
 const shopsByID = computed(() => new Map(shops.value.map((shop) => [shop.id, shop])))
+const productSyncWorkerAvailableLaneCount = computed(() => productSyncWorkerStatus.value.lanes.filter(
+  (lane) => lane.availability === 'available'
+).length)
 const filteredProducts = computed(() => filterAndSortPublicProducts(
   products.value,
   productSearch.value,
@@ -948,6 +1044,9 @@ async function loadPublicProducts(showLoading: boolean) {
     const nextProducts = catalog.products
       .filter((product) => !recentProductVerification(product.id, 'unavailable'))
     products.value = nextProducts
+    productSyncWorkerStatus.value = catalog.worker_status || unavailableProductSyncWorkerStatus(
+      t('publicAccountImport.productSyncStatusUnavailable')
+    )
     queuedProductShops.value = catalog.queued_shops
     refreshingProductShops.value = catalog.refreshing_shops
     failedProductShops.value = catalog.failed_shops
@@ -955,6 +1054,9 @@ async function loadPublicProducts(showLoading: boolean) {
     mergeShopProductSyncStatuses(catalog.shop_sync_statuses, true)
     productErrorMessage.value = ''
   } catch (error: any) {
+    productSyncWorkerStatus.value = unavailableProductSyncWorkerStatus(
+      error?.message || t('publicAccountImport.productSyncStatusUnavailable')
+    )
     if (showLoading || products.value.length === 0) {
       productErrorMessage.value = error?.message || t('publicAccountImport.productLoadFailed')
     }

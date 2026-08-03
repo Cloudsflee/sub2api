@@ -539,6 +539,8 @@ func TestPublicAccountImportProductSingleShopRefreshFlow(t *testing.T) {
 	require.Equal(t, []string{"manual", "automatic"}, []string{listData.ShopSyncStatuses[0].ShopID, listData.ShopSyncStatuses[1].ShopID})
 	require.Equal(t, "queued", listData.ShopSyncStatuses[0].State)
 	require.Equal(t, "idle", listData.ShopSyncStatuses[1].State)
+	require.Equal(t, "unavailable", listData.WorkerStatus.Availability)
+	require.Len(t, listData.WorkerStatus.Lanes, publicAccountImportProductExpectedLaneCount)
 
 	jobResponse := performPublicProductRequest(t, router, http.MethodGet, "/products/sync-job?limit=1", nil)
 	require.Equal(t, http.StatusOK, jobResponse.Code, jobResponse.Body.String())
@@ -1024,6 +1026,91 @@ func TestListPublicAccountImportProductsSupportsETag(t *testing.T) {
 	require.Equal(t, etag, second.Header().Get("ETag"))
 }
 
+func TestPublicAccountImportProductsExposeAnonymousWorkerLaneAvailability(t *testing.T) {
+	now := time.Date(2026, 8, 4, 4, 0, 0, 0, time.UTC)
+	statusPath := filepath.Join(t.TempDir(), "status.json")
+	t.Setenv(publicAccountImportProductSyncStatusFileEnv, statusPath)
+	status := publicAccountImportProductSyncWorkerStatusFile{
+		State:           "degraded",
+		UpdatedAt:       now.Format(time.RFC3339Nano),
+		SyncConcurrency: 6,
+		Lanes: []publicAccountImportProductSyncWorkerLaneStatusFile{
+			{Index: 0, State: "idle", ContextReady: true, UpdatedAt: now.Format(time.RFC3339Nano)},
+			{Index: 1, State: "error", LastError: "shop API failed via http://user:secret@proxy.example:17892 VerifyCode=F001"},
+		},
+	}
+	data, err := json.Marshal(status)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(statusPath, data, 0o600))
+
+	result := publicAccountImportProductSyncWorkerStatus(now)
+	require.Equal(t, "unavailable", result.Availability)
+	require.Equal(t, 6, result.ExpectedLaneCount)
+	require.Equal(t, 1, result.AvailableLaneCount)
+	require.Equal(t, 5, result.UnavailableLaneCount)
+	require.Len(t, result.Lanes, 6)
+	require.Equal(t, "available", result.Lanes[0].Availability)
+	require.Equal(t, "unavailable", result.Lanes[1].Availability)
+	require.Contains(t, result.Lanes[1].Reason, "VerifyCode=F001")
+	require.Contains(t, result.Lanes[1].Reason, "http://***@proxy.example:17892")
+	require.NotContains(t, result.Lanes[1].Reason, "secret")
+	require.Equal(t, "unavailable", result.Lanes[5].Availability)
+	require.Contains(t, result.Lanes[5].Reason, "lane 6")
+}
+
+func TestPublicAccountImportProductsMarkStaleWorkerStatusUnavailable(t *testing.T) {
+	now := time.Date(2026, 8, 4, 4, 0, 0, 0, time.UTC)
+	statusPath := filepath.Join(t.TempDir(), "status.json")
+	t.Setenv(publicAccountImportProductSyncStatusFileEnv, statusPath)
+	status := publicAccountImportProductSyncWorkerStatusFile{
+		State:           "idle",
+		UpdatedAt:       now.Add(-publicAccountImportProductSyncStatusStaleAge - time.Second).Format(time.RFC3339Nano),
+		SyncConcurrency: 6,
+	}
+	data, err := json.Marshal(status)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(statusPath, data, 0o600))
+
+	result := publicAccountImportProductSyncWorkerStatus(now)
+	require.Equal(t, "unavailable", result.Availability)
+	require.Equal(t, "product sync worker status is stale", result.Reason)
+	require.Len(t, result.Lanes, publicAccountImportProductExpectedLaneCount)
+	for _, lane := range result.Lanes {
+		require.Equal(t, "unavailable", lane.Availability)
+		require.Equal(t, result.Reason, lane.Reason)
+	}
+}
+
+func TestListPublicAccountImportProductsWorkerStatusIsPublic(t *testing.T) {
+	shops := []PublicAccountImportShop{{ID: "shop", Name: "Shop", URL: "https://pay.ldxp.cn/shop/token"}}
+	router := newPublicProductTestRouter(t, shops, publicAccountImportProductStore{})
+	statusPath := os.Getenv(publicAccountImportProductSyncStatusFileEnv)
+	now := time.Now().UTC()
+	status := publicAccountImportProductSyncWorkerStatusFile{
+		State:           "idle",
+		UpdatedAt:       now.Format(time.RFC3339Nano),
+		SyncConcurrency: publicAccountImportProductExpectedLaneCount,
+		Lanes:           make([]publicAccountImportProductSyncWorkerLaneStatusFile, publicAccountImportProductExpectedLaneCount),
+	}
+	for index := range status.Lanes {
+		status.Lanes[index] = publicAccountImportProductSyncWorkerLaneStatusFile{
+			Index: index, State: "idle", ContextReady: true, UpdatedAt: now.Format(time.RFC3339Nano),
+		}
+	}
+	data, err := json.Marshal(status)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(statusPath, data, 0o600))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/products", nil)
+	// Deliberately omit Authorization: this is the public catalog route.
+	router.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	result := decodePublicProductResponse[PublicAccountImportProductsResponse](t, recorder.Body.Bytes())
+	require.Equal(t, "available", result.WorkerStatus.Availability)
+	require.Len(t, result.WorkerStatus.Lanes, publicAccountImportProductExpectedLaneCount)
+}
+
 func authoritativeProductCache(shopID string, updatedAt time.Time, unitPrice float64) publicAccountImportProductShopCache {
 	payablePrice := unitPrice
 	return publicAccountImportProductShopCache{
@@ -1063,6 +1150,7 @@ func newPublicProductTestRouter(t *testing.T, shops []PublicAccountImportShop, s
 	t.Setenv(publicAccountImportEnabledEnv, "true")
 	t.Setenv(publicAccountImportProductSyncTokenEnv, "test-product-sync-token")
 	t.Setenv(publicAccountImportProductStrictModeEnv, "false")
+	t.Setenv(publicAccountImportProductSyncStatusFileEnv, filepath.Join(t.TempDir(), "status.json"))
 	t.Setenv(publicAccountImportShopLinksFileEnv, filepath.Join(t.TempDir(), "shops.json"))
 	t.Setenv(publicAccountImportProductsFileEnv, filepath.Join(t.TempDir(), "products.json"))
 	require.NoError(t, savePublicAccountImportShops(publicAccountImportShopLinksPath(), shops))

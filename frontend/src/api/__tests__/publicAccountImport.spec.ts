@@ -91,6 +91,42 @@ describe('public account import product API', () => {
     ])
   })
 
+  it('normalizes six public product update lane statuses and keeps their reasons', async () => {
+    get.mockResolvedValue({
+      data: {
+        worker_status: {
+          availability: 'unavailable',
+          reason: '2 of 6 product sync lanes are unavailable',
+          updated_at: '2026-08-04T04:00:00Z',
+          configured_lane_count: 6,
+          expected_lane_count: 6,
+          available_lane_count: 4,
+          unavailable_lane_count: 2,
+          lanes: [
+            { lane: 1, availability: 'available', state: 'idle' },
+            { lane: 2, availability: 'invalid', reason: 'VerifyCode=F001', state: 'error' },
+          ],
+        },
+      },
+    })
+
+    const catalog = await getPublicAccountImportProducts()
+
+    expect(catalog.worker_status).toMatchObject({
+      availability: 'unavailable',
+      reason: '2 of 6 product sync lanes are unavailable',
+      expected_lane_count: 6,
+    })
+    expect(catalog.worker_status?.lanes).toHaveLength(6)
+    expect(catalog.worker_status?.lanes[0]).toMatchObject({ lane: 1, availability: 'available' })
+    expect(catalog.worker_status?.lanes[1]).toMatchObject({
+      lane: 2,
+      availability: 'unavailable',
+      reason: 'VerifyCode=F001',
+    })
+    expect(catalog.worker_status?.lanes[5].availability).toBe('unavailable')
+  })
+
   it('keeps old product responses compatible when shop statuses are absent', async () => {
     get.mockResolvedValue({ data: { products: [] } })
 
@@ -98,6 +134,8 @@ describe('public account import product API', () => {
 
     expect(catalog.shop_sync_statuses).toEqual([])
     expect(catalog.refresh_seconds).toBe(900)
+    expect(catalog.worker_status?.availability).toBe('unavailable')
+    expect(catalog.worker_status?.lanes).toHaveLength(6)
   })
 
   it('posts one shop id and normalizes the refresh response', async () => {

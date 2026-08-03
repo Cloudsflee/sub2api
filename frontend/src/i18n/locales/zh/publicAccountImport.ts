@@ -109,5 +109,12 @@ export default {
     shopProductsAlreadyQueuedNotice: '“{name}”的商品正在等待更新或更新中',
     shopProductsCooldownNotice: '“{name}”刚完成更新，请在 {seconds} 秒后重试',
     shopProductsRefreshFailed: '请求更新“{name}”的商品失败',
+    productSyncWorkerTitle: '商品更新通道',
+    productSyncWorkerSummary: '{available}/{total} 个更新通道可用',
+    productSyncLane: '通道 {lane}',
+    productSyncAvailable: '可用',
+    productSyncUnavailable: '不可用',
+    productSyncLaneUnavailable: '暂未报告具体原因',
+    productSyncStatusUnavailable: '暂时无法获取更新通道状态',
   },
 }
