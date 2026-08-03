@@ -21,6 +21,7 @@ const {
   isHTTPCustomDenial,
   readStoredSession,
   recoverChallengeAcrossProxyPool,
+  resizeNativeBrowserWindow,
   retryFailedChallengeOperation,
   selectChallengeProvider,
   sessionFilePath,
@@ -285,6 +286,7 @@ test('native slider drag focuses X11, skips duplicate pixels, and always release
   const commands = []
   const page = {
     bringToFront: async () => commands.push(['front']),
+    title: async () => '滑动验证页面',
   }
   await dragSliderNative(page, sliderGeometry(), {
     approachStartX: 80,
@@ -303,11 +305,24 @@ test('native slider drag focuses X11, skips duplicate pixels, and always release
     ],
   }, {
     screenGeometry: { left: 100, top: 200, scale: 1 },
-    executeXdotool: async (args) => commands.push(args),
+    nativeWindowPID: 42,
+    executeXdotool: async (args) => {
+      commands.push(args)
+      if (args[0] === 'search') return { stdout: '101\n102\n' }
+      if (args[0] === 'getwindowname') {
+        return { stdout: args[1] === '102' ? '滑动验证页面 — Camoufox\n' : 'Camoufox\n' }
+      }
+      return { stdout: '' }
+    },
     wait: async () => {},
   })
   assert.deepEqual(commands, [
     ['front'],
+    ['search', '--onlyvisible', '--pid', 42],
+    ['getwindowname', '101'],
+    ['getwindowname', '102'],
+    ['windowraise', '102'],
+    ['windowfocus', '--sync', '102'],
     ['mousemove', '--sync', 220, 255],
     ['mousemove', 180, 258],
     ['mousemove', 140, 260],
@@ -316,6 +331,47 @@ test('native slider drag focuses X11, skips duplicate pixels, and always release
     ['mousemove', 460, 260],
     ['mouseup', '1'],
   ])
+})
+
+test('native browser resize finds its PID window without stealing focus', async () => {
+  const commands = []
+  const windowID = await resizeNativeBrowserWindow(42, 1024, 824, {
+    executeXdotool: async (args) => {
+      commands.push(args)
+      if (args[0] === 'search') return { stdout: '101\n102\n' }
+      return { stdout: '' }
+    },
+  })
+
+  assert.equal(windowID, 101)
+  assert.deepEqual(commands, [
+    ['search', '--onlyvisible', '--pid', 42],
+    ['windowsize', '--sync', '101', 1024, 824],
+  ])
+})
+
+test('native slider drag with no target PID falls back before sending X11 input', async () => {
+  const x11Commands = []
+  const mouseEvents = []
+  const page = {
+    bringToFront: async () => {},
+    mouse: {
+      move: async (x, y) => mouseEvents.push(['move', x, y]),
+      down: async () => mouseEvents.push(['down']),
+      up: async () => mouseEvents.push(['up']),
+    },
+  }
+
+  await dragSlider(page, sliderGeometry(), {
+    points: [{ x: 320, y: 0, delayMilliseconds: 0 }],
+  }, {
+    nativeDrag: true,
+    executeXdotool: async (args) => x11Commands.push(args),
+    wait: async () => {},
+  })
+
+  assert.deepEqual(x11Commands, [])
+  assert.deepEqual(mouseEvents.map(([event]) => event), ['move', 'down', 'move', 'up'])
 })
 
 test('native slider drag calibrates the headed Chrome viewport origin from a trusted move', async () => {
@@ -343,10 +399,18 @@ test('native slider drag calibrates the headed Chrome viewport origin from a tru
   await dragSliderNative(page, sliderGeometry(), {
     points: [{ x: 320, y: 0, delayMilliseconds: 1 }],
   }, {
-    executeXdotool: async (args) => commands.push(args),
+    nativeWindowPID: 77,
+    executeXdotool: async (args) => {
+      commands.push(args)
+      if (args[0] === 'search') return { stdout: '701\n' }
+      return { stdout: '' }
+    },
     wait: async () => {},
   })
   assert.deepEqual(commands, [
+    ['search', '--onlyvisible', '--pid', 77],
+    ['windowraise', '701'],
+    ['windowfocus', '--sync', '701'],
     ['mousemove', '--sync', 22, 897],
     ['mousemove', '--sync', 140, 220],
     ['mousedown', '1'],
@@ -404,6 +468,7 @@ test('challenge manager waits for the ESA success navigation before issuing a ho
   let navigateCalls = 0
   let dragCalls = 0
   let navigationArmed = false
+  let navigationTimeout = 0
   const provider = {
     id: 'aliyun-esa',
     detect: () => true,
@@ -427,8 +492,9 @@ test('challenge manager waits for the ESA success navigation before issuing a ho
   const page = {
     // The real ESA callback navigates to the protected URL with u_atoken and
     // u_asig.  Resolving this promise simulates that callback completing.
-    waitForNavigation: async () => {
+    waitForNavigation: async (options) => {
       navigationArmed = true
+      navigationTimeout = options.timeout
       return {}
     },
   }
@@ -439,6 +505,49 @@ test('challenge manager waits for the ESA success navigation before issuing a ho
   assert.equal(result.state, 'solved')
   assert.equal(dragCalls, 1)
   assert.equal(navigateCalls, 1)
+  assert.equal(navigationTimeout, 15_000)
+})
+
+test('challenge manager reinspects the ESA page when its callback aborts the fallback navigation', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const snapshots = [aliyunSnapshot(), clearSnapshot()]
+  let gotoCalls = 0
+  let loadStateCalls = 0
+  const manager = new ChallengeManager({
+    enabled: true,
+    providers: [{
+      id: 'aliyun-esa',
+      detect: () => true,
+      locate: async () => sliderGeometry(),
+    }],
+    sessionDirectory: directory,
+    inspect: async () => snapshots.shift(),
+    drag: async () => {},
+    random: () => 0.5,
+  })
+  const page = {
+    goto: async () => {
+      gotoCalls += 1
+      if (gotoCalls === 1) return {}
+      throw new Error('page.goto: NS_BINDING_ABORTED')
+    },
+    waitForNavigation: async () => {
+      throw new Error('navigation timeout')
+    },
+    waitForLoadState: async () => {
+      loadStateCalls += 1
+    },
+  }
+
+  const result = await manager.solve({
+    context: { storageState: async () => ({ cookies: [], origins: [] }) },
+    page,
+  })
+
+  assert.equal(result.state, 'solved')
+  assert.equal(gotoCalls, 2)
+  assert.equal(loadStateCalls, 1)
 })
 
 test('challenge manager observes a closed-page navigation waiter and falls back without an unhandled rejection', async (t) => {

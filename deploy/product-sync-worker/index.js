@@ -10,6 +10,7 @@ const {
   collectChallengeSnapshot,
   isChallengeError,
   recoverChallengeAcrossProxyPool,
+  resizeNativeBrowserWindow,
   retryFailedChallengeOperation,
   shouldBlockResource,
 } = require('./challenge-manager')
@@ -19,6 +20,7 @@ const {
   ShopSyncError,
   TokenBucket,
   browserFingerprintSeed,
+  browserProcessIDForProfile,
   browserResourceCounts,
   camoufoxFirefoxUserPrefs,
   createJobHeartbeat,
@@ -80,6 +82,7 @@ const browserType = browserEngine === 'camoufox' ? firefox : chromium
 const statusFile = process.env.STATUS_FILE || '/data/status.json'
 const challengeSessionDirectory = process.env.PRODUCT_SYNC_CHALLENGE_SESSION_DIR || '/data/challenge-sessions'
 const browserProfileDirectory = process.env.PRODUCT_SYNC_BROWSER_PROFILE_DIR || '/data/browser-profiles'
+const camoufoxWindow = { width: 1024, height: 824 }
 const configuredProxies = parseProxyConfigurations(
   process.env.PRODUCT_SYNC_PROXY_URLS,
   process.env.PRODUCT_SYNC_PROXY_URL
@@ -291,6 +294,7 @@ async function solveChallengeForContext(lane, context, page, proxy, signal) {
     context,
     page,
     proxy,
+    nativeWindowPID: lane.browserProcessID,
     signal,
     onState: (event) => publishChallengeState(lane, event),
     setResourcesAllowed: (allowed) => { lane.challengeResourcesAllowed = allowed },
@@ -520,8 +524,6 @@ function browserLaunchArguments() {
     return [
       '--no-remote',
       '--lang=zh-CN',
-      '--width=1280',
-      '--height=900',
     ]
   }
   return [
@@ -681,6 +683,7 @@ function createLane(index, proxyPool) {
     index,
     context: null,
     page: null,
+    browserProcessID: 0,
     proxyPool,
     proxyIndex: 0,
     proxy: proxyPool[0],
@@ -696,6 +699,7 @@ async function closeLaneContext(lane) {
   const context = lane.context
   lane.context = null
   lane.page = null
+  lane.browserProcessID = 0
   lane.challengeResourcesAllowed = false
   if (activeBrowserContexts[lane.index] === context) activeBrowserContexts[lane.index] = null
   await context?.close().catch(() => {})
@@ -746,6 +750,20 @@ async function replaceLaneContext(lane, proxyIndex, recovery = false, signal = w
       launchOptions.ignoreDefaultArgs = ['--enable-automation']
     }
     context = await browserType.launchPersistentContext(profileDirectory, launchOptions)
+    lane.browserProcessID = browserEngine === 'camoufox'
+      ? browserProcessIDForProfile(profileDirectory)
+      : 0
+    if (browserEngine === 'camoufox') {
+      try {
+        await resizeNativeBrowserWindow(
+          lane.browserProcessID,
+          camoufoxWindow.width,
+          camoufoxWindow.height
+        )
+      } catch (error) {
+        console.warn(`${new Date().toISOString()} lane ${lane.index + 1} could not resize its Camoufox window: ${errorMessage(error)}`)
+      }
+    }
     const restoredPage = context.pages()[0] || await context.newPage()
     await restorePersistentStorage(context, restoredPage, restored?.storageState)
     const page = await prepareLaneContext(lane, context, proxy, recovery, signal)
@@ -759,6 +777,7 @@ async function replaceLaneContext(lane, proxyIndex, recovery = false, signal = w
     activeBrowserContexts[lane.index] = context
     publishStatus({})
   } catch (error) {
+    lane.browserProcessID = 0
     await context?.close().catch(() => {})
     if (activeBrowserContexts[lane.index] === context) activeBrowserContexts[lane.index] = null
     throw error

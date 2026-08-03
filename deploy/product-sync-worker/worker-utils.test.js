@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
@@ -10,6 +11,7 @@ const {
   ShopSyncError,
   TokenBucket,
   browserFingerprintSeed,
+  browserProcessIDForProfile,
   browserResourceCounts,
   camoufoxFirefoxUserPrefs,
   catalogProductState,
@@ -196,6 +198,10 @@ test('Camoufox drops solved challenge documents and bounds its memory cache', ()
     'browser.sessionhistory.max_total_viewers': 0,
     'browser.cache.memory.capacity': 16 * 1024,
     'dom.ipc.processPrelaunch.enabled': false,
+    'dom.ipc.forkserver.enable': false,
+    'extensions.webextensions.remote': false,
+    'media.rdd-process.enabled': false,
+    'media.utility-process.enabled': false,
   })
   assert.notEqual(camoufoxFirefoxUserPrefs(), preferences)
 })
@@ -415,6 +421,22 @@ test('Camoufox fingerprint seeds remain stable across restarts and isolated by l
   assert.notEqual(browserFingerprintSeed(2, { ...proxy, password: 'different' }), seed)
   assert.equal(seed.includes('worker'), false)
   assert.equal(seed.includes('p@ss'), false)
+})
+
+test('browserProcessIDForProfile resolves the browser owning a persistent profile', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sub2api-proc-'))
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const profileDirectory = path.join(directory, 'lane-profile')
+  const processDirectory = path.join(directory, '314')
+  fs.mkdirSync(processDirectory)
+  fs.writeFileSync(
+    path.join(processDirectory, 'cmdline'),
+    Buffer.from(['/opt/camoufox/camoufox', '-profile', profileDirectory, 'about:blank', ''].join('\0'))
+  )
+
+  assert.equal(browserProcessIDForProfile(profileDirectory, directory), 314)
+  assert.equal(browserProcessIDForProfile(path.join(directory, 'other-profile'), directory), 0)
+  assert.equal(browserProcessIDForProfile('', directory), 0)
 })
 
 test('proxyLanesForConcurrency rejects unsafe concurrency fallback to one exit IP', () => {

@@ -10,7 +10,7 @@ log_file=/tmp/xvfb.log
 # previous process left its lock or socket behind, so remove only display 99's
 # stale files before launching the worker-owned server.
 rm -f "$lock_file" "$socket_file"
-Xvfb "$display" -screen 0 2560x1600x24 -ac +extension RANDR -nolisten tcp >"$log_file" 2>&1 &
+Xvfb "$display" -screen 0 1280x1024x24 -ac +extension RANDR -nolisten tcp >"$log_file" 2>&1 &
 xvfb_pid=$!
 
 # Do not race Camoufox against Xvfb startup. xdotool makes a real X11 request,

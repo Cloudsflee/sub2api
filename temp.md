@@ -6,7 +6,7 @@
 
 生产 Worker 曾被误配为 5 lane，且 `pay.ldxp.cn` 的阿里云 ESA 对全部代理出口返回浏览器滑块挑战。代理 TCP 链路、Worker 内存、主应用、PostgreSQL 与 Redis 均正常。挑战响应为 HTTP 200，但包含 ESA DOM/脚本以及 `x-tengine-error: denied by http_custom`，旧 Worker 只能将其判为错误并进入通用退避，因而所有 lane 最终失去浏览器 context。
 
-## 生产诊断与未满足验收
+## 历史生产诊断与未满足验收
 
 - 2026-07-31 的生产配置已正确加载 6 lane、9 个 endpoint、每 lane `0.75 req/s` 和全局 `4.5 req/s`。Worker 保持 `healthy`、零重启，RSS 约 283 MiB，但状态仍为 `ready_lane_count=0`、`browser_context_count=0`、`browser_page_count=0`，六个 lane 均处于验证专用长退避；商品同步恢复、过期快照清除和两个完整周期验收尚未完成。
 - 旧自动恢复能识别 `aliyun-esa`，并从当前 360px 滑轨和 40px 滑块动态计算出 320px 距离，但缺少按下前连续鼠标历史，因此 ESA 官方 verify 接口持续返回 `VerifyCode=F001`。2026-08-02 的同浏览器 A/B 已确认固定距离、DOM 定位、Camoufox 指纹及 X11 `isTrusted` 均不是剩余根因。
@@ -20,6 +20,12 @@
 - 使用同一 Camoufox 指纹精确重放成功输入的 57 个拖动点及按下前路径后，ESA 自动放行。将其参数化为随机接近路径、平滑纵向弧线、后段加速、24-42px 越界移动和 550-850ms 释放前停留后，两个全新 profile（包含不同指纹种子）均在第一次自动拖动中通过，并加载正常商品接口。
 - 正式 Worker 在人工验证实验期间暂停以控制内存峰值；部署新镜像后需要恢复。代理入口不可达时 Worker 仍会保持网络退避，不能将容器存活或直连挑战通过误报为商品同步恢复。
 
+## 2026-08-03 六 lane 自动恢复
+
+- 后续生产复测确认主要输入故障不是轨迹本身，而是六个 Camoufox X11 窗口完全重叠。`page.bringToFront()` 没有把原生鼠标绑定到当前 lane，焦点曾停留在 X11 根窗口或另一 lane。Worker 现在从持久 profile 扫描 `/proc` 得到父浏览器 PID，再用 `xdotool search --pid`、`windowraise` 和 `windowfocus --sync` 精确投递拖动；调试日志中的每次拖动均包含非零 `nativeWindowID`。
+- 精确聚焦上线后，Worker 多次达到 `ready_lane_count=6`、`browser_context_count=6`、`browser_page_count=6`，全局速率为 `4.5 req/s`，`last_success_at` 持续推进。2026-08-03 22:41，lane 6 在 15 分钟独立退避后第一次自动拖动即恢复，证明失败 lane 能在不重启其他五条 lane 的情况下自行再次通过。
+- 初次 6/6 稳态的 RSS 为 `1.726-1.747 GiB`，虽未 OOM 且低于 `1.75g` 限制，但不满足 `<1.60 GiB` 峰值目标。隔离测试确认实时将每个 PID 对应的 X11 外框从 `1280x1040` 调整为 `1024x824`，会把真实 viewport 从 `1280x984` 降为 `1024x768`，单浏览器 cgroup 用量降低约 39.1 MB。启动 resize 不执行 raise/focus，不会打断挑战锁持有者的原生输入。
+
 ## 长期修复
 
 - 生产配置恢复为 6 lane：主出口 `17891-17896`，lane 1-3 的 fallback 为 `17897-17899`，每 lane `0.75 req/s`，全局 `4.5 req/s`，内存上限 `1.75g`。
@@ -32,6 +38,7 @@
 - 运行期 API 返回 HTML 时只暂停并重试失败的 API 调用，已完成的商品分类和报价不会重跑。当前 context 两次失败后立即尝试该 lane 的 fallback。
 - 商品任务超过 30 分钟租约时只取消并丢弃过期任务，不再销毁已通过 ESA 的 lane context；当前浏览器请求在自身最多 30 秒的超时后结束，再轮询新任务，避免租约边界反复制造新挑战。
 - Camoufox 关闭 Firefox BFCache 的旧文档驻留和内容进程预启动，并将浏览器内存缓存限制为 16 MiB，避免已解决的 ESA 页面与正常商品页同时常驻，给六个持久 lane 留出内存余量。
+- 每个 Camoufox context 创建后按 profile 对应的 PID 无焦点调整 X11 外框为 `1024x824`，实际内容 viewport 为 `1024x768`；挑战拖动前再独立执行精确窗口聚焦。Firefox 的 `--width`/`--height` 和持久 `xulstore.json` 在当前无窗口管理器的 Xvfb 环境中不会控制实际窗口，因此不再依赖这两种方式。
 - 验证失败使用独立的 15 分钟、60 分钟、6 小时退避；网络和限流仍使用 1、5、15 分钟。无法识别的验证直接使用 6 小时层级。
 
 ## 生产变量

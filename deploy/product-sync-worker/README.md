@@ -128,12 +128,24 @@ dragging, the manager requests the home page again and requires the verification
 DOM, title, copy, and `http_custom` denial to be gone.
 
 When `PRODUCT_SYNC_CHALLENGE_NATIVE_DRAG=true`, the headed Camoufox window is
-focused and the same trajectory is emitted through X11 with `xdotool`. The
-viewport-to-screen offset is estimated from the live window geometry and then
-calibrated with one harmless trusted native move (so X11 decorations/toolbars
-are accounted for); repeated pixel coordinates are skipped. If native input is
-unavailable, the worker falls back to Playwright's protocol mouse without
-dropping the lane.
+focused and the same trajectory is emitted through X11 with `xdotool`. All six
+Xvfb windows occupy the same screen coordinates, so `page.bringToFront()` alone
+is not sufficient: the worker maps the persistent profile to its parent
+Camoufox PID through `/proc`, finds that PID's visible X11 window, raises it,
+and waits for focus before pressing the mouse. The viewport-to-screen offset is
+estimated from the live window geometry and then calibrated with one harmless
+trusted native move (so X11 decorations/toolbars are accounted for); repeated
+pixel coordinates are skipped. If native input is unavailable, the worker
+falls back to Playwright's protocol mouse without dropping the lane.
+
+Immediately after launch, each PID-owned window is resized to `1024x824`
+without raising or focusing it, producing a real `1024x768` content viewport.
+This operation remains outside the challenge input path and cannot steal focus
+from the lane holding the challenge lock. Firefox ignores both persisted
+`xulstore.json` geometry and `--width`/`--height` under the worker's Xvfb setup,
+so the resize is applied to the live X11 window. An isolated cgroup measurement
+reduced one representative browser from 312.6 MB above baseline to 273.5 MB,
+about 39.1 MB per lane.
 
 At startup, each context restores the storage state for its provider, target
 origin, and proxy identity before validating the home page. Successful states
@@ -149,6 +161,10 @@ media are allowed only while solving, then the normal resource block is
 restored. If a shop API returns HTML during a sync, the lane solves in the same
 context and retries only that failed API call, preserving completed catalog
 work. After two failed drags it moves directly to its lane-local fallback.
+ESA callback navigation is allowed up to 15 seconds. Firefox
+`NS_BINDING_ABORTED` during a callback handoff is treated as an ESA-owned
+navigation and followed by a fresh document inspection instead of an immediate
+lane failure.
 
 `/data/status.json` exposes `challenge_auto_solve_enabled` globally and
 `challenge_provider`, `challenge_state`, `challenge_attempt`,

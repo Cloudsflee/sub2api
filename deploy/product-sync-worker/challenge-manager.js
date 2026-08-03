@@ -719,10 +719,56 @@ async function calibrateNativeScreenGeometry(page, screen, options = {}) {
 async function runXdotool(argumentsList, options = {}) {
   const executable = options.executable || 'xdotool'
   const timeout = Number.isFinite(options.timeout) ? Math.max(250, options.timeout) : 5_000
-  await execFileAsync(executable, argumentsList.map((value) => String(value)), {
+  return execFileAsync(executable, argumentsList.map((value) => String(value)), {
     timeout,
     windowsHide: true,
   })
+}
+
+async function focusNativeBrowserWindow(page, processID, execute, options = {}) {
+  if (!Number.isInteger(processID) || processID <= 0) {
+    throw new Error('native challenge browser pid is unavailable')
+  }
+  const searchResult = await execute(['search', '--onlyvisible', '--pid', processID], options)
+  const windowIDs = String(searchResult?.stdout || searchResult || '')
+    .split(/\s+/)
+    .filter((value) => /^\d+$/.test(value))
+  if (windowIDs.length === 0) throw new Error(`native challenge browser window was not found for pid ${processID}`)
+
+  let windowID = windowIDs[0]
+  const pageTitle = typeof page.title === 'function' ? await page.title().catch(() => '') : ''
+  if (pageTitle && windowIDs.length > 1) {
+    for (const candidate of windowIDs) {
+      const nameResult = await execute(['getwindowname', candidate], options).catch(() => null)
+      if (String(nameResult?.stdout || nameResult || '').includes(pageTitle)) {
+        windowID = candidate
+        break
+      }
+    }
+  }
+  await execute(['windowraise', windowID], options)
+  await execute(['windowfocus', '--sync', windowID], options)
+  return Number(windowID)
+}
+
+async function resizeNativeBrowserWindow(processID, width, height, options = {}) {
+  if (!Number.isInteger(processID) || processID <= 0) {
+    throw new Error('native browser pid is unavailable')
+  }
+  if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
+    throw new Error('native browser window dimensions must be positive integers')
+  }
+  const execute = options.executeXdotool || runXdotool
+  const searchResult = await execute(['search', '--onlyvisible', '--pid', processID], options)
+  const windowID = String(searchResult?.stdout || searchResult || '')
+    .split(/\s+/)
+    .find((value) => /^\d+$/.test(value))
+  if (!windowID) throw new Error(`native browser window was not found for pid ${processID}`)
+
+  // Resizing does not raise or focus the window. Later lanes can therefore be
+  // prepared while another lane owns the challenge lock and native pointer.
+  await execute(['windowsize', '--sync', windowID, width, height], options)
+  return Number(windowID)
 }
 
 /**
@@ -739,6 +785,12 @@ async function dragSliderNative(page, geometry, trajectory, options = {}) {
   const execute = options.executeXdotool || runXdotool
   throwIfAborted(signal)
   if (typeof page.bringToFront === 'function') await page.bringToFront()
+  const nativeWindowID = await focusNativeBrowserWindow(
+    page,
+    Number(options.nativeWindowPID),
+    execute,
+    options
+  )
   let screen = options.screenGeometry || await pageScreenGeometry(page)
   if (!options.screenGeometry) {
     screen = await calibrateNativeScreenGeometry(page, screen, {
@@ -755,7 +807,7 @@ async function dragSliderNative(page, geometry, trajectory, options = {}) {
   ]
   const [startX, startY] = toScreen(startViewportX, startViewportY)
 
-  options.onNativeDragStart?.({ screen, geometry, startX, startY })
+  options.onNativeDragStart?.({ screen, geometry, startX, startY, nativeWindowID })
   throwIfAborted(signal)
   // --sync is intentionally used only for the initial positioning.  Repeating
   // it for trajectory points can block forever when two points round to the
@@ -971,7 +1023,12 @@ async function navigateHome(page, origin, timeoutMilliseconds) {
       timeout: timeoutMilliseconds,
     })
   } catch (error) {
-    if (error?.name !== 'TimeoutError') throw error
+    if (error?.name !== 'TimeoutError' && !/NS_BINDING_ABORTED/i.test(String(error?.message || ''))) throw error
+    if (error?.name !== 'TimeoutError' && typeof page.waitForLoadState === 'function') {
+      await page.waitForLoadState('domcontentloaded', {
+        timeout: Math.min(5_000, timeoutMilliseconds),
+      }).catch(() => {})
+    }
     return null
   }
 }
@@ -980,7 +1037,12 @@ async function reloadChallenge(page, timeoutMilliseconds) {
   try {
     return await page.reload({ waitUntil: 'domcontentloaded', timeout: timeoutMilliseconds })
   } catch (error) {
-    if (error?.name !== 'TimeoutError') throw error
+    if (error?.name !== 'TimeoutError' && !/NS_BINDING_ABORTED/i.test(String(error?.message || ''))) throw error
+    if (error?.name !== 'TimeoutError' && typeof page.waitForLoadState === 'function') {
+      await page.waitForLoadState('domcontentloaded', {
+        timeout: Math.min(5_000, timeoutMilliseconds),
+      }).catch(() => {})
+    }
     return null
   }
 }
@@ -999,7 +1061,10 @@ async function reloadChallenge(page, timeoutMilliseconds) {
  */
 function startChallengeNavigationWait(page, timeoutMilliseconds) {
   if (!page || typeof page.waitForNavigation !== 'function') return null
-  const timeout = Math.max(250, Math.min(10_000, Number(timeoutMilliseconds) || 8_000))
+  // Production ESA callbacks have occasionally started just after ten
+  // seconds. Waiting a little longer avoids racing that callback with the
+  // fallback home request while remaining inside the 90-second solve budget.
+  const timeout = Math.max(250, Math.min(15_000, Number(timeoutMilliseconds) || 8_000))
   // Attach the rejection handler to the Playwright promise immediately.  A
   // context can be closed while the drag is still in progress (lane restart,
   // lease loss, or an aborted solve); in that case the waiter rejects after
@@ -1158,6 +1223,7 @@ class ChallengeManager {
         await this.operation(this.drag(page, geometry, trajectory, {
           signal,
           nativeDrag: this.nativeDrag,
+          nativeWindowPID: options.nativeWindowPID,
           onNativeDragStart: this.nativeDragDebug
             ? (values) => this.logger.log?.(`${new Date().toISOString()} native challenge drag geometry: ${JSON.stringify(values)}`)
             : undefined,
@@ -1277,6 +1343,7 @@ module.exports = {
   isHTTPCustomDenial,
   readStoredSession,
   recoverChallengeAcrossProxyPool,
+  resizeNativeBrowserWindow,
   retryFailedChallengeOperation,
   selectChallengeProvider,
   sessionDigest,

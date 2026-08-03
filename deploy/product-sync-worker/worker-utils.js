@@ -1,4 +1,6 @@
 const crypto = require('node:crypto')
+const fs = require('node:fs')
+const path = require('node:path')
 
 const supportedProxyProtocols = new Set(['http:', 'https:', 'socks5:'])
 const inventorylessGoodsTypes = new Set(['article', 'resource', 'equity'])
@@ -18,6 +20,34 @@ class JobLeaseLostError extends Error {
     this.kind = 'lease_lost'
     this.restartLane = Boolean(options.restartLane)
   }
+}
+
+function browserProcessIDForProfile(profileDirectory, procDirectory = '/proc') {
+  const profileValue = String(profileDirectory || '')
+  if (!profileValue || !path.isAbsolute(profileValue)) return 0
+  const expectedProfile = path.resolve(profileValue)
+  let entries
+  try {
+    entries = fs.readdirSync(procDirectory, { withFileTypes: true })
+  } catch {
+    return 0
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue
+    try {
+      const argumentsList = fs.readFileSync(path.join(procDirectory, entry.name, 'cmdline'))
+        .toString('utf8')
+        .split('\0')
+        .filter(Boolean)
+      const profileIndex = argumentsList.indexOf('-profile')
+      if (profileIndex >= 0 && path.resolve(argumentsList[profileIndex + 1] || '') === expectedProfile) {
+        return Number(entry.name)
+      }
+    } catch {
+      // Processes can exit while /proc is being scanned.
+    }
+  }
+  return 0
 }
 
 function abortReason(signal) {
@@ -204,6 +234,13 @@ function camoufoxFirefoxUserPrefs() {
     'browser.sessionhistory.max_total_viewers': 0,
     'browser.cache.memory.capacity': 16 * 1024,
     'dom.ipc.processPrelaunch.enabled': false,
+    // Each lane owns a dedicated browser and the shop does not use extensions
+    // or media decoders. Keep networking and web content isolated, but avoid
+    // four otherwise idle helper processes per lane.
+    'dom.ipc.forkserver.enable': false,
+    'extensions.webextensions.remote': false,
+    'media.rdd-process.enabled': false,
+    'media.utility-process.enabled': false,
   }
 }
 
@@ -659,6 +696,7 @@ module.exports = {
   ShopSyncError,
   TokenBucket,
   browserFingerprintSeed,
+  browserProcessIDForProfile,
   browserResourceCounts,
   camoufoxFirefoxUserPrefs,
   catalogProductState,
