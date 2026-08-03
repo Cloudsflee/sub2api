@@ -230,7 +230,7 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
   if (requestURL.origin !== shopOrigin) throw new Error(`shop API path escapes ${shopOrigin}`)
   let result
   try {
-    result = await lane.page.evaluate(async ({ requestPath, requestBody, requestTimeoutMilliseconds, visitorID }) => {
+    result = await evaluateShopRequest(lane.page, async ({ requestPath, requestBody, requestTimeoutMilliseconds, visitorID }) => {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), requestTimeoutMilliseconds)
       try {
@@ -271,13 +271,64 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
       requestBody: body,
       requestTimeoutMilliseconds: Math.min(shopRequestTimeoutMilliseconds, Math.max(1, deadlineAt - Date.now())),
       visitorID: `sub2api${shopToken.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}`,
-    })
+    }, Math.min(shopRequestTimeoutMilliseconds + 5_000, Math.max(1, deadlineAt - Date.now())), signal)
   } catch (error) {
     throwIfAborted(signal)
+    // A browser-side fetch can occasionally leave page.evaluate pending even
+    // after its AbortController fired (for example while response.text() is
+    // waiting on a broken proxy connection).  The request wrapper marks this
+    // condition so the lane supervisor closes and recreates the affected
+    // context instead of holding a lease forever.
+    if (error?.restartLane) throw error
     throw shopRequestError(path, error)
   }
   throwIfAborted(signal)
   return parseShopHTTPResponse(result)
+}
+
+/**
+ * Evaluate a shop request with a Node-side deadline and cancellation race.
+ *
+ * Playwright's page.evaluate timeout only applies to the protocol command;
+ * it does not necessarily interrupt a browser-side fetch that is stuck in
+ * response.text().  Keep an independent timer here and tag timeout failures
+ * for lane recreation.  The original protocol promise is observed after the
+ * race so a late rejection cannot become an unhandled rejection.
+ */
+async function evaluateShopRequest(page, callback, args, timeoutMilliseconds, signal) {
+  if (!page || typeof page.evaluate !== 'function') throw new Error('shop page is unavailable')
+  const timeout = Math.max(1, Number(timeoutMilliseconds) || 1)
+  let timer
+  let abortHandler
+  let operation
+  try {
+    operation = Promise.resolve().then(() => page.evaluate(callback, args))
+    const timeoutPromise = new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        const error = new ShopSyncError('network', `shop API browser evaluation timed out after ${timeout}ms`)
+        error.restartLane = true
+        reject(error)
+      }, timeout)
+      timer.unref?.()
+    })
+    const cancellationPromise = signal
+      ? new Promise((resolve, reject) => {
+        if (signal.aborted) {
+          reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason || 'operation aborted')))
+          return
+        }
+        abortHandler = () => reject(signal.reason instanceof Error
+          ? signal.reason
+          : new Error(String(signal.reason || 'operation aborted')))
+        signal.addEventListener('abort', abortHandler, { once: true })
+      })
+      : new Promise(() => {})
+    return await Promise.race([operation, timeoutPromise, cancellationPromise])
+  } finally {
+    if (timer) clearTimeout(timer)
+    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
+    operation?.catch(() => {})
+  }
 }
 
 function publishChallengeState(lane, event) {
