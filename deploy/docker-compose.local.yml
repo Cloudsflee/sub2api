@@ -38,6 +38,11 @@ services:
     volumes:
       # Local directory mapping for easy migration
       - ./data:/app/data:Z
+      # The product-sync worker publishes its sanitized health/status snapshot
+      # outside the application data tree. Mount the shared directory into
+      # every application slot so the public product endpoint can report the
+      # worker's live lane state (read-only from the application container).
+      - ${PRODUCT_SYNC_WORKER_DATA_DIR:-./data/product-sync-worker}:/app/data/product-sync-worker:ro,Z
       # Optional: Mount custom config.yaml (uncomment and create the file first)
       # Copy config.example.yaml to config.yaml, modify it, then uncomment:
       # - ./config.yaml:/app/data/config.yaml
@@ -239,7 +244,7 @@ services:
       - PRODUCT_SYNC_BROWSER_PROFILE_DIR=${PRODUCT_SYNC_BROWSER_PROFILE_DIR:-/data/browser-profiles}
       - TZ=${TZ:-Asia/Shanghai}
     volumes:
-      - ./data/product-sync-worker:/data:Z
+      - ${PRODUCT_SYNC_WORKER_DATA_DIR:-./data/product-sync-worker}:/data:Z
     depends_on:
       sub2api:
         condition: service_healthy
