@@ -508,6 +508,39 @@ test('challenge manager waits for the ESA success navigation before issuing a ho
   assert.equal(navigationTimeout, 15_000)
 })
 
+test('challenge manager refreshes once when the ESA shell has not painted its slider yet', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  let locateCalls = 0
+  let reloads = 0
+  const snapshots = [aliyunSnapshot(), aliyunSnapshot(), clearSnapshot()]
+  const provider = {
+    id: 'aliyun-esa',
+    detect: () => true,
+    locate: async () => {
+      locateCalls += 1
+      return locateCalls === 1 ? null : sliderGeometry()
+    },
+  }
+  const manager = new ChallengeManager({
+    enabled: true,
+    providers: [provider],
+    sessionDirectory: directory,
+    navigate: async () => ({}),
+    reload: async () => { reloads += 1; return {} },
+    inspect: async () => snapshots.shift(),
+    drag: async () => {},
+  })
+
+  const result = await manager.solve({
+    context: { storageState: async () => ({ cookies: [], origins: [] }) },
+    page: {},
+  })
+  assert.equal(result.state, 'solved')
+  assert.equal(locateCalls, 2)
+  assert.equal(reloads, 1)
+})
+
 test('challenge manager reinspects the ESA page when its callback aborts the fallback navigation', async (t) => {
   const directory = temporaryDirectory()
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))

@@ -545,9 +545,10 @@ async function locateSlider(page, providerID, options = {}) {
   const signal = options.signal
   // ESA injects the slider asynchronously after its challenge iframe and
   // image assets have loaded.  Fifteen seconds is too short on a cold proxy
-  // connection (the DOM commonly appears around 10-12s), so use a 30s
-  // discovery budget unless the caller supplied an explicit deadline.
-  const deadlineAt = Number.isFinite(options.deadlineAt) ? options.deadlineAt : Date.now() + 30_000
+  // connection (the DOM commonly appears around 10-12s), and a busy proxy
+  // can take another round-trip before the SDK paints the control. Keep a
+  // generous discovery budget while still leaving time for the drag itself.
+  const deadlineAt = Number.isFinite(options.deadlineAt) ? options.deadlineAt : Date.now() + 45_000
   while (Date.now() < deadlineAt) {
     throwIfAborted(signal)
     for (const frame of page.frames()) {
@@ -1203,8 +1204,29 @@ class ChallengeManager {
           provider = selectChallengeProvider(snapshot, this.providers) || provider
         }
 
-        const deadlineAt = this.now() + Math.min(30_000, this.timeoutMilliseconds)
-        const geometry = await this.operation(provider.locate(page, { signal, deadlineAt }), signal)
+        let geometry = await this.operation(provider.locate(page, {
+          signal,
+          deadlineAt: this.now() + Math.min(45_000, this.timeoutMilliseconds),
+        }), signal)
+        // A valid ESA page can briefly expose only the verification shell
+        // while its SDK replaces the shell with the slider. Refresh once on
+        // the first miss so that this transient state is not misclassified as
+        // an unsupported challenge and parked for the six-hour backoff.
+        if (!geometry && attempt === 0) {
+          response = await this.operation(this.reload(page, this.navigationTimeoutMilliseconds, signal), signal)
+          snapshot = await this.operation(this.inspect(page, response), signal)
+          if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
+            await this.persistSolvedSession(context, provider.id, proxy)
+            const solvedAt = new Date(this.now()).toISOString()
+            report({ state: 'solved', provider: provider.id, attempt, solvedAt })
+            return { state: 'solved', provider: provider.id, attempt }
+          }
+          provider = selectChallengeProvider(snapshot, this.providers) || provider
+          geometry = await this.operation(provider.locate(page, {
+            signal,
+            deadlineAt: this.now() + Math.min(45_000, this.timeoutMilliseconds),
+          }), signal)
+        }
         if (!geometry) {
           throw new ChallengeError('unsupported', `${provider.id} challenge has no supported visible slide-to-end control`)
         }
