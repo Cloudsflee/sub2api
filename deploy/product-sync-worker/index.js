@@ -20,6 +20,7 @@ const {
   TokenBucket,
   browserFingerprintSeed,
   browserResourceCounts,
+  camoufoxFirefoxUserPrefs,
   createJobHeartbeat,
   initializeProxyPool,
   isPressureError,
@@ -402,16 +403,14 @@ function startJobHeartbeat(lane, job, controller) {
       publishLaneStatus(lane, { last_heartbeat_at: new Date().toISOString() })
     },
     onLeaseLost: async () => {
-      const error = new JobLeaseLostError('product sync job lease expired', { restartLane: true })
+      const error = new JobLeaseLostError('product sync job lease expired')
       controller.abort(error)
-      console.warn(`${new Date().toISOString()} lease lost for ${job.shop_name}; cancelling lane ${lane.index + 1}`)
+      console.warn(`${new Date().toISOString()} lease lost for ${job.shop_name}; cancelling the stale job on lane ${lane.index + 1}`)
       publishLaneStatus(lane, {
-        state: 'restarting',
         lease_lost_at: new Date().toISOString(),
         last_error: '',
         retry_at: '',
       })
-      await closeLaneContext(lane)
     },
     onError: (error) => {
       console.error(`${new Date().toISOString()} heartbeat failed for ${job.shop_name}: ${errorMessage(error)}`)
@@ -742,6 +741,7 @@ async function replaceLaneContext(lane, proxyIndex, recovery = false, signal = w
     }
     if (browserEngine === 'camoufox') {
       launchOptions.env = camoufoxEnvironment(lane, proxy)
+      launchOptions.firefoxUserPrefs = camoufoxFirefoxUserPrefs()
     } else {
       launchOptions.ignoreDefaultArgs = ['--enable-automation']
     }

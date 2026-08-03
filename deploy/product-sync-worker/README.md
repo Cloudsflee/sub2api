@@ -68,7 +68,9 @@ rejects. Set `PRODUCT_SYNC_BROWSER=chromium` only for a rollback; the image
 retains Chrome as a compatibility fallback. The worker entrypoint removes only
 display 99's stale Xvfb lock and socket, then waits for a successful X11 request
 before starting Node, so a Docker restart can safely reuse the container
-filesystem.
+filesystem. Camoufox disables Firefox's back/forward document cache and content
+process prelaunch and caps its memory cache at 16 MiB, preventing a solved ESA
+document from remaining resident beside each lane's normal shop page.
 Each lane has
 a capacity-one token bucket at `PRODUCT_SYNC_REQUEST_RATE_PER_LANE`; every
 request then passes through a capacity-one shared bucket at `lane count x lane
@@ -79,8 +81,10 @@ after every source product is classified as sellable or explicitly unavailable.
 Jobs send a heartbeat every 30 seconds and refresh the worker status timestamp.
 Missing heartbeats release a lease after 90 seconds, while a single attempt can
 run for at most 30 minutes. A heartbeat HTTP 409 immediately cancels the stale
-attempt, closes only that lane context to interrupt an in-flight browser call,
-and rebuilds the lane. Stale attempts are never submitted as failures. HTTP
+attempt and retains that lane's browser context and verified ESA session. An
+in-flight shop request may take up to its own 30-second timeout to return, after
+which the expired result is discarded before the lane polls another job. Stale
+attempts are never submitted as failures. HTTP
 429/502/520, proxy failures, and browser transport failures back off
 independently per lane for 1, 5, then 15 minutes with jitter. Verification
 failures use a separate 15-minute, 60-minute, then 6-hour backoff. Unsupported

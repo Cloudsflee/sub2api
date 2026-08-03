@@ -11,6 +11,7 @@ const {
   TokenBucket,
   browserFingerprintSeed,
   browserResourceCounts,
+  camoufoxFirefoxUserPrefs,
   catalogProductState,
   closeContextThenCreate,
   createJobHeartbeat,
@@ -175,6 +176,28 @@ test('job heartbeat converts HTTP 409 into one terminal lease-loss callback', as
   assert.equal(sends, 1)
   assert.equal(leaseLosses, 1)
   assert.equal(heartbeat.leaseLost, true)
+})
+
+test('job lease loss cancels stale work without requiring a lane restart', () => {
+  const controller = new AbortController()
+  const error = new JobLeaseLostError()
+
+  controller.abort(error)
+
+  assert.equal(controller.signal.reason, error)
+  assert.equal(error.kind, 'lease_lost')
+  assert.equal(error.restartLane, false)
+})
+
+test('Camoufox drops solved challenge documents and bounds its memory cache', () => {
+  const preferences = camoufoxFirefoxUserPrefs()
+
+  assert.deepEqual(preferences, {
+    'browser.sessionhistory.max_total_viewers': 0,
+    'browser.cache.memory.capacity': 16 * 1024,
+    'dom.ipc.processPrelaunch.enabled': false,
+  })
+  assert.notEqual(camoufoxFirefoxUserPrefs(), preferences)
 })
 
 test('job heartbeat logs a transient failure and keeps renewing', async () => {

@@ -196,6 +196,17 @@ function browserFingerprintSeed(laneIndex, proxy) {
   return crypto.createHash('sha256').update(identity).digest('hex').slice(0, 8)
 }
 
+function camoufoxFirefoxUserPrefs() {
+  return {
+    // A solved ESA document must not remain resident in Firefox's back/forward
+    // cache beside the normal shop page. Six persistent browser processes
+    // otherwise exceed the worker's production memory budget.
+    'browser.sessionhistory.max_total_viewers': 0,
+    'browser.cache.memory.capacity': 16 * 1024,
+    'dom.ipc.processPrelaunch.enabled': false,
+  }
+}
+
 function proxyLanesForConcurrency(concurrency, configurations) {
   if (!Array.isArray(configurations)) throw new Error('proxy configurations must be an array')
   if (configurations.length > 0 && configurations.length !== concurrency) {
@@ -649,6 +660,7 @@ module.exports = {
   TokenBucket,
   browserFingerprintSeed,
   browserResourceCounts,
+  camoufoxFirefoxUserPrefs,
   catalogProductState,
   closeContextThenCreate,
   createJobHeartbeat,
