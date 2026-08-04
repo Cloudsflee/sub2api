@@ -101,7 +101,27 @@ type openAI5hWakeWorkerRepo struct {
 	mu              sync.Mutex
 	task            *OpenAI5hWakeTask
 	items           []*OpenAI5hWakeTaskItem
+	events          []*OpenAI5hWakeTaskEvent
+	completeErr     error
 	cancelRequested bool
+}
+
+func (r *openAI5hWakeWorkerRepo) AppendTaskEvent(_ context.Context, params OpenAI5hWakeTaskEventParams) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	event := &OpenAI5hWakeTaskEvent{
+		ID: int64(len(r.events) + 1), TaskID: params.TaskID, ItemID: params.ItemID,
+		Level: params.Level, Code: params.Code, Message: params.Message, CreatedAt: time.Now().UTC(),
+	}
+	r.events = append(r.events, event)
+	return nil
+}
+
+func (r *openAI5hWakeWorkerRepo) ListTaskEvents(_ context.Context, _ int64, _, _ int) ([]*OpenAI5hWakeTaskEvent, int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := append([]*OpenAI5hWakeTaskEvent(nil), r.events...)
+	return result, int64(len(result)), nil
 }
 
 func (r *openAI5hWakeWorkerRepo) ResetRunningItems(context.Context, int64, string) error {
@@ -134,6 +154,9 @@ func (r *openAI5hWakeWorkerRepo) ClaimNextItem(_ context.Context, _ int64, _ str
 func (r *openAI5hWakeWorkerRepo) CompleteItem(_ context.Context, _ int64, _ string, params OpenAI5hWakeCompleteItemParams) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.completeErr != nil {
+		return false, r.completeErr
+	}
 	for _, item := range r.items {
 		if item.ID != params.ItemID || item.Status != OpenAI5hWakeItemStatusRunning {
 			continue
@@ -550,6 +573,30 @@ func TestOpenAI5hWakeWorkerLimitsConcurrencyToEight(t *testing.T) {
 	require.Equal(t, openAI5hWakeConcurrency, int(upstream.maxActive.Load()))
 	require.Equal(t, OpenAI5hWakeTaskStatusSucceeded, repo.task.Status)
 	require.Equal(t, 24, repo.task.ProcessedItems)
+}
+
+func TestOpenAI5hWakeWorkerPersistsCompletionFailureInTaskEvents(t *testing.T) {
+	upstream := &openAI5hWakeObservedUpstream{}
+	wake, repo := newOpenAI5hWakeWorkerFixture(1, upstream)
+	repo.completeErr = errors.New(`pq: violates check constraint "attempted_ids_array_check"`)
+
+	wake.processTask(repo.task)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Equal(t, 1, repo.items[0].AttemptCount)
+	require.Equal(t, OpenAI5hWakeItemStatusRunning, repo.items[0].Status)
+	codes := make([]string, 0, len(repo.events))
+	for _, event := range repo.events {
+		codes = append(codes, event.Code)
+		if event.Code == "item_complete_failed" {
+			require.Equal(t, OpenAI5hWakeEventLevelError, event.Level)
+			require.Contains(t, event.Message, "attempted_ids_array_check")
+		}
+	}
+	require.Contains(t, codes, "item_started")
+	require.Contains(t, codes, "item_complete_failed")
+	require.Contains(t, codes, "task_processing_failed")
 }
 
 func TestOpenAI5hWakeCancellationStopsDispatchAndCancelsInFlightRequests(t *testing.T) {

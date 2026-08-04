@@ -26,6 +26,7 @@ type openAI5hWakeHandlerTaskRepo struct {
 	service.OpenAI5hWakeTaskRepository
 	task         *service.OpenAI5hWakeTask
 	items        []*service.OpenAI5hWakeTaskItem
+	events       []*service.OpenAI5hWakeTaskEvent
 	createParams service.OpenAI5hWakeCreateParams
 }
 
@@ -45,11 +46,40 @@ func (r *openAI5hWakeHandlerTaskRepo) GetTask(_ context.Context, id int64) (*ser
 	return nil, service.ErrOpenAI5hWakeTaskNotFound
 }
 
+func (r *openAI5hWakeHandlerTaskRepo) CountRunningTaskItems(_ context.Context, taskID int64) (int, error) {
+	if r.task == nil || taskID != r.task.ID {
+		return 0, service.ErrOpenAI5hWakeTaskNotFound
+	}
+	count := 0
+	for _, item := range r.items {
+		if item.Status == service.OpenAI5hWakeItemStatusRunning {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (r *openAI5hWakeHandlerTaskRepo) ListTaskItems(_ context.Context, taskID int64, _, _ int) ([]*service.OpenAI5hWakeTaskItem, int64, error) {
 	if r.task == nil || taskID != r.task.ID {
 		return nil, 0, service.ErrOpenAI5hWakeTaskNotFound
 	}
 	return r.items, int64(len(r.items)), nil
+}
+
+func (r *openAI5hWakeHandlerTaskRepo) ListTaskEvents(_ context.Context, taskID int64, _, _ int) ([]*service.OpenAI5hWakeTaskEvent, int64, error) {
+	if r.task == nil || taskID != r.task.ID {
+		return nil, 0, service.ErrOpenAI5hWakeTaskNotFound
+	}
+	return r.events, int64(len(r.events)), nil
+}
+
+func (r *openAI5hWakeHandlerTaskRepo) AppendTaskEvent(_ context.Context, params service.OpenAI5hWakeTaskEventParams) error {
+	event := &service.OpenAI5hWakeTaskEvent{
+		ID: int64(len(r.events) + 1), TaskID: params.TaskID, ItemID: params.ItemID,
+		Level: params.Level, Code: params.Code, Message: params.Message, CreatedAt: time.Now().UTC(),
+	}
+	r.events = append([]*service.OpenAI5hWakeTaskEvent{event}, r.events...)
+	return nil
 }
 
 func (r *openAI5hWakeHandlerTaskRepo) RequestCancel(_ context.Context, taskID int64, now time.Time) (*service.OpenAI5hWakeTask, error) {
@@ -140,6 +170,14 @@ func TestOpenAI5hWakeHandlerContracts(t *testing.T) {
 	itemList, ok := items["items"].([]any)
 	require.True(t, ok)
 	require.Len(t, itemList, 1)
+
+	status, payload = invokeOpenAI5hWakeHandler(t, http.MethodGet, "/tasks/31/events?page=1&page_size=50", params, handler.ListOpenAI5hWakeTaskEvents)
+	require.Equal(t, http.StatusOK, status)
+	events := requireOpenAI5hWakeMap(t, payload["data"])
+	require.Equal(t, float64(1), events["total"])
+	eventList, ok := events["items"].([]any)
+	require.True(t, ok)
+	require.Equal(t, "task_created", requireOpenAI5hWakeMap(t, eventList[0])["code"])
 
 	status, payload = invokeOpenAI5hWakeHandler(t, http.MethodPost, "/tasks/31/cancel", params, handler.CancelOpenAI5hWakeTask)
 	require.Equal(t, http.StatusOK, status)

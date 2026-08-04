@@ -360,6 +360,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/openai-5h-wake/tasks/latest", h.Admin.Account.GetLatestOpenAI5hWakeTask)
 		accounts.GET("/openai-5h-wake/tasks/:id", h.Admin.Account.GetOpenAI5hWakeTask)
 		accounts.GET("/openai-5h-wake/tasks/:id/items", h.Admin.Account.ListOpenAI5hWakeTaskItems)
+		accounts.GET("/openai-5h-wake/tasks/:id/events", h.Admin.Account.ListOpenAI5hWakeTaskEvents)
 		accounts.POST("/openai-5h-wake/tasks/:id/cancel", h.Admin.Account.CancelOpenAI5hWakeTask)
 		accounts.GET("/:id", h.Admin.Account.GetByID)
 		accounts.POST("", h.Admin.Account.Create)

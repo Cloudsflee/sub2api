@@ -71,6 +71,7 @@ export interface OpenAI5hWakeTask {
   estimated_request_count: number
   total_items: number
   processed_items: number
+  running_item_count: number
   woken_count: number
   skipped_active_count: number
   failed_count: number
@@ -100,6 +101,18 @@ export interface OpenAI5hWakeTaskItem {
   finished_at?: string
   created_at: string
   updated_at: string
+}
+
+export type OpenAI5hWakeEventLevel = 'info' | 'warn' | 'error'
+
+export interface OpenAI5hWakeTaskEvent {
+  id: number
+  task_id: number
+  item_id?: number
+  level: OpenAI5hWakeEventLevel
+  code: string
+  message?: string
+  created_at: string
 }
 
 export interface OpenAI5hWakeCreateResult {
@@ -1082,6 +1095,18 @@ export async function listOpenAI5hWakeTaskItems(
   return data
 }
 
+export async function listOpenAI5hWakeTaskEvents(
+  id: number,
+  page = 1,
+  pageSize = 100
+): Promise<PaginatedResponse<OpenAI5hWakeTaskEvent>> {
+  const { data } = await apiClient.get<PaginatedResponse<OpenAI5hWakeTaskEvent>>(
+    `/admin/accounts/openai-5h-wake/tasks/${id}/events`,
+    { params: { page, page_size: pageSize } }
+  )
+  return data
+}
+
 export async function cancelOpenAI5hWakeTask(id: number): Promise<OpenAI5hWakeTask> {
   const { data } = await apiClient.post<OpenAI5hWakeTask>(`/admin/accounts/openai-5h-wake/tasks/${id}/cancel`)
   return data
@@ -1152,6 +1177,7 @@ export const accountsAPI = {
   getLatestOpenAI5hWakeTask,
   getOpenAI5hWakeTask,
   listOpenAI5hWakeTaskItems,
+  listOpenAI5hWakeTaskEvents,
   cancelOpenAI5hWakeTask
 }
 

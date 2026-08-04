@@ -21,6 +21,10 @@ const (
 	OpenAI5hWakeItemStatusSkippedActive = "skipped_active"
 	OpenAI5hWakeItemStatusFailed        = "failed"
 	OpenAI5hWakeItemStatusCancelled     = "cancelled"
+
+	OpenAI5hWakeEventLevelInfo  = "info"
+	OpenAI5hWakeEventLevelWarn  = "warn"
+	OpenAI5hWakeEventLevelError = "error"
 )
 
 var ErrOpenAI5hWakeTaskNotFound = infraerrors.NotFound("OPENAI_5H_WAKE_TASK_NOT_FOUND", "OpenAI 5h wake task not found")
@@ -55,6 +59,7 @@ type OpenAI5hWakeTask struct {
 	EstimatedRequestCount int        `json:"estimated_request_count"`
 	TotalItems            int        `json:"total_items"`
 	ProcessedItems        int        `json:"processed_items"`
+	RunningItemCount      int        `json:"running_item_count"`
 	WokenCount            int        `json:"woken_count"`
 	SkippedActiveCount    int        `json:"skipped_active_count"`
 	FailedCount           int        `json:"failed_count"`
@@ -115,6 +120,25 @@ type OpenAI5hWakeTaskItem struct {
 	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
+// OpenAI5hWakeTaskEvent is a durable, administrator-visible execution event.
+type OpenAI5hWakeTaskEvent struct {
+	ID        int64     `json:"id"`
+	TaskID    int64     `json:"task_id"`
+	ItemID    *int64    `json:"item_id,omitempty"`
+	Level     string    `json:"level"`
+	Code      string    `json:"code"`
+	Message   string    `json:"message,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type OpenAI5hWakeTaskEventParams struct {
+	TaskID  int64
+	ItemID  *int64
+	Level   string
+	Code    string
+	Message string
+}
+
 type OpenAI5hWakeTaskItemSeed struct {
 	IdentityHash     string
 	MemberAccountIDs []int64
@@ -142,7 +166,10 @@ type OpenAI5hWakeTaskRepository interface {
 	CreateOrGetActive(ctx context.Context, params OpenAI5hWakeCreateParams) (*OpenAI5hWakeTask, bool, error)
 	GetTask(ctx context.Context, id int64) (*OpenAI5hWakeTask, error)
 	GetLatestTask(ctx context.Context) (*OpenAI5hWakeTask, error)
+	CountRunningTaskItems(ctx context.Context, taskID int64) (int, error)
 	ListTaskItems(ctx context.Context, taskID int64, page, pageSize int) ([]*OpenAI5hWakeTaskItem, int64, error)
+	ListTaskEvents(ctx context.Context, taskID int64, page, pageSize int) ([]*OpenAI5hWakeTaskEvent, int64, error)
+	AppendTaskEvent(ctx context.Context, params OpenAI5hWakeTaskEventParams) error
 	ClaimTask(ctx context.Context, owner string, now, leaseUntil time.Time) (*OpenAI5hWakeTask, error)
 	HeartbeatTask(ctx context.Context, taskID int64, owner string, now, leaseUntil time.Time) (bool, error)
 	ResetRunningItems(ctx context.Context, taskID int64, owner string) error

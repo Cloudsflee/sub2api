@@ -14,6 +14,7 @@ import {
   createOpenAI5hWakeTask,
   getLatestOpenAI5hWakeTask,
   getOpenAI5hWakeTask,
+	listOpenAI5hWakeTaskEvents,
   listOpenAI5hWakeTaskItems,
   previewOpenAI5hWake
 } from '@/api/admin/accounts'
@@ -51,15 +52,21 @@ describe('admin OpenAI 5h wake API', () => {
 
   it('uses paginated item and cancellation endpoints', async () => {
     const page = { items: [], total: 0, page: 2, page_size: 10, pages: 1 }
+	const eventPage = { items: [], total: 0, page: 1, page_size: 100, pages: 1 }
     get.mockResolvedValueOnce({ data: page })
+	get.mockResolvedValueOnce({ data: eventPage })
     post.mockResolvedValueOnce({ data: { ...task, cancel_requested_at: '2026-07-30T00:00:00Z' } })
 
     await expect(listOpenAI5hWakeTaskItems(9, 2, 10)).resolves.toEqual(page)
+	await expect(listOpenAI5hWakeTaskEvents(9)).resolves.toEqual(eventPage)
     await cancelOpenAI5hWakeTask(9)
 
     expect(get).toHaveBeenCalledWith('/admin/accounts/openai-5h-wake/tasks/9/items', {
       params: { page: 2, page_size: 10 }
     })
+	expect(get).toHaveBeenCalledWith('/admin/accounts/openai-5h-wake/tasks/9/events', {
+	  params: { page: 1, page_size: 100 }
+	})
     expect(post).toHaveBeenCalledWith('/admin/accounts/openai-5h-wake/tasks/9/cancel')
   })
 })

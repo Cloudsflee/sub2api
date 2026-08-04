@@ -33,6 +33,10 @@ SELECT id, task_id, identity_hash, member_account_ids, attempted_account_ids,
        started_at, finished_at, created_at, updated_at
 FROM openai_5h_wake_task_items`
 
+const openAI5hWakeEventSelect = `
+SELECT id, task_id, item_id, level, code, message, created_at
+FROM openai_5h_wake_task_events`
+
 type sqlScanner interface {
 	Scan(dest ...any) error
 }
@@ -107,6 +111,21 @@ func scanOpenAI5hWakeItem(scanner sqlScanner) (*service.OpenAI5hWakeTaskItem, er
 	item.StartedAt = nullTimePtr(startedAt)
 	item.FinishedAt = nullTimePtr(finishedAt)
 	return &item, nil
+}
+
+func scanOpenAI5hWakeEvent(scanner sqlScanner) (*service.OpenAI5hWakeTaskEvent, error) {
+	var event service.OpenAI5hWakeTaskEvent
+	var itemID sql.NullInt64
+	if err := scanner.Scan(
+		&event.ID, &event.TaskID, &itemID, &event.Level, &event.Code, &event.Message, &event.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	if itemID.Valid {
+		value := itemID.Int64
+		event.ItemID = &value
+	}
+	return &event, nil
 }
 
 func nullTimePtr(value sql.NullTime) *time.Time {
@@ -209,6 +228,13 @@ func (r *openAI5hWakeRepository) GetLatestTask(ctx context.Context) (*service.Op
 	return task, err
 }
 
+func (r *openAI5hWakeRepository) CountRunningTaskItems(ctx context.Context, taskID int64) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM openai_5h_wake_task_items WHERE task_id = $1 AND status = 'running'`, taskID).Scan(&count)
+	return count, err
+}
+
 func (r *openAI5hWakeRepository) ListTaskItems(ctx context.Context, taskID int64, page, pageSize int) ([]*service.OpenAI5hWakeTaskItem, int64, error) {
 	if page < 1 {
 		page = 1
@@ -240,6 +266,47 @@ func (r *openAI5hWakeRepository) ListTaskItems(ctx context.Context, taskID int64
 		items = append(items, item)
 	}
 	return items, total, rows.Err()
+}
+
+func (r *openAI5hWakeRepository) ListTaskEvents(ctx context.Context, taskID int64, page, pageSize int) ([]*service.OpenAI5hWakeTaskEvent, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 50
+	}
+	var total int64
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM openai_5h_wake_task_events WHERE task_id = $1`, taskID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if total == 0 {
+		if _, err := r.GetTask(ctx, taskID); err != nil {
+			return nil, 0, err
+		}
+	}
+	rows, err := r.db.QueryContext(ctx, openAI5hWakeEventSelect+`
+ WHERE task_id = $1 ORDER BY id DESC LIMIT $2 OFFSET $3`, taskID, pageSize, (page-1)*pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	events := make([]*service.OpenAI5hWakeTaskEvent, 0, pageSize)
+	for rows.Next() {
+		event, scanErr := scanOpenAI5hWakeEvent(rows)
+		if scanErr != nil {
+			return nil, 0, scanErr
+		}
+		events = append(events, event)
+	}
+	return events, total, rows.Err()
+}
+
+func (r *openAI5hWakeRepository) AppendTaskEvent(ctx context.Context, params service.OpenAI5hWakeTaskEventParams) error {
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO openai_5h_wake_task_events (task_id, item_id, level, code, message, created_at)
+VALUES ($1, $2, $3, $4, $5, NOW())`,
+		params.TaskID, params.ItemID, params.Level, params.Code, params.Message)
+	return err
 }
 
 func (r *openAI5hWakeRepository) ClaimTask(ctx context.Context, owner string, now, leaseUntil time.Time) (*service.OpenAI5hWakeTask, error) {

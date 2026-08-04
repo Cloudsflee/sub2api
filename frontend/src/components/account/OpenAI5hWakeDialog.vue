@@ -70,6 +70,16 @@
               :style="{ width: `${progressPercent}%` }"
             ></div>
           </div>
+          <div class="mt-2 flex flex-wrap items-center justify-between gap-x-6 gap-y-1 text-xs text-gray-500 dark:text-dark-400">
+            <span>
+              {{ t('admin.accounts.openAI5hWake.lastActivity') }}:
+              <span class="font-medium text-gray-700 dark:text-dark-200">{{ formatTimestamp(lastActivityAt) }}</span>
+            </span>
+            <span>
+              {{ t('admin.accounts.openAI5hWake.runningPools') }}:
+              <span class="font-medium tabular-nums text-gray-700 dark:text-dark-200">{{ runningItemCount }}</span>
+            </span>
+          </div>
         </div>
 
         <div class="grid grid-cols-2 divide-x divide-y divide-gray-200 overflow-hidden rounded-md border border-gray-200 dark:divide-dark-700 dark:border-dark-700 sm:grid-cols-4 sm:divide-y-0">
@@ -103,6 +113,54 @@
           <div>
             <div class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.accounts.openAI5hWake.alignmentSpan') }}</div>
             <div class="mt-1 font-medium text-gray-800 dark:text-gray-100">{{ alignmentSpan }}</div>
+          </div>
+        </div>
+
+        <div data-testid="openai-5h-wake-events">
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h4 class="text-sm font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.accounts.openAI5hWake.executionLog') }}
+            </h4>
+            <div class="flex flex-wrap items-center gap-3">
+              <span v-if="pollError" class="text-xs text-amber-600 dark:text-amber-400">{{ pollError }}</span>
+              <span class="text-xs tabular-nums text-gray-500 dark:text-dark-400">
+                {{ t('admin.accounts.openAI5hWake.logCount', { count: eventsTotal }) }}
+              </span>
+            </div>
+          </div>
+
+          <div class="max-h-[260px] min-h-[120px] overflow-y-auto rounded-md border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-950">
+            <div v-if="eventsLoading && events.length === 0" class="flex min-h-[118px] items-center justify-center text-sm text-gray-500 dark:text-dark-400">
+              {{ t('admin.accounts.openAI5hWake.loadingLogs') }}
+            </div>
+            <div v-else-if="events.length === 0" class="flex min-h-[118px] items-center justify-center text-sm text-gray-500 dark:text-dark-400">
+              {{ t('admin.accounts.openAI5hWake.noLogs') }}
+            </div>
+            <div v-else class="divide-y divide-gray-200 dark:divide-dark-700">
+              <div
+                v-for="event in events"
+                :key="event.id"
+                class="grid gap-1 px-3 py-2.5 text-xs sm:grid-cols-[140px_72px_minmax(0,1fr)] sm:gap-3"
+                :class="event.level === 'error' ? 'bg-red-50 dark:bg-red-950/30' : 'bg-white dark:bg-dark-900'"
+              >
+                <time class="whitespace-nowrap tabular-nums text-gray-500 dark:text-dark-400">
+                  {{ formatTimestamp(event.created_at) }}
+                </time>
+                <span :class="eventLevelClass(event.level)" class="font-medium">
+                  {{ eventLevelLabel(event.level) }}
+                </span>
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span class="font-medium text-gray-800 dark:text-gray-100">{{ eventCodeLabel(event.code) }}</span>
+                    <span v-if="event.item_id" class="font-mono text-gray-500 dark:text-dark-400">#{{ event.item_id }}</span>
+                    <span class="font-mono text-gray-400 dark:text-dark-500">{{ event.code }}</span>
+                  </div>
+                  <p v-if="event.message" class="mt-1 break-words whitespace-pre-wrap font-mono leading-5 text-gray-600 dark:text-dark-300">
+                    {{ event.message }}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -150,7 +208,7 @@
                     </span>
                   </td>
                   <td class="whitespace-nowrap px-3 py-2.5 tabular-nums text-gray-600 dark:text-dark-300">
-                    {{ item.attempted_account_ids.length }}
+                    {{ item.attempt_count }}
                   </td>
                   <td class="whitespace-nowrap px-3 py-2.5 text-xs text-gray-600 dark:text-dark-300">
                     {{ formatTimestamp(item.reset_at) }}
@@ -254,6 +312,16 @@
             {{ t('common.close') }}
           </button>
           <button
+            v-if="task && isTaskTerminal"
+            type="button"
+            class="btn btn-primary"
+            data-testid="openai-5h-wake-new-task"
+            @click="prepareNewTask"
+          >
+            <Icon name="clock" size="sm" class="mr-1.5" />
+            {{ t('admin.accounts.openAI5hWake.newTask') }}
+          </button>
+          <button
             v-if="preview && !task"
             type="button"
             class="btn btn-primary"
@@ -287,9 +355,11 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { accountsAPI } from '@/api/admin/accounts'
 import type {
+  OpenAI5hWakeEventLevel,
   OpenAI5hWakeItemStatus,
   OpenAI5hWakePreview,
   OpenAI5hWakeTask,
+  OpenAI5hWakeTaskEvent,
   OpenAI5hWakeTaskItem
 } from '@/api/admin/accounts'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -314,13 +384,17 @@ const { t } = useI18n()
 const preview = ref<OpenAI5hWakePreview | null>(null)
 const task = ref<OpenAI5hWakeTask | null>(null)
 const items = ref<OpenAI5hWakeTaskItem[]>([])
+const events = ref<OpenAI5hWakeTaskEvent[]>([])
 const itemsPage = ref(1)
 const itemsPageSize = 10
 const itemsTotal = ref(0)
+const eventsPageSize = 100
+const eventsTotal = ref(0)
 const initializing = ref(false)
 const starting = ref(false)
 const cancelling = ref(false)
 const itemsLoading = ref(false)
+const eventsLoading = ref(false)
 const loadError = ref('')
 const pollError = ref('')
 const showCancelConfirm = ref(false)
@@ -340,11 +414,14 @@ const isActiveTask = (value: OpenAI5hWakeTask | null | undefined) =>
   Boolean(value && (value.status === 'pending' || value.status === 'running'))
 
 const isTaskActive = computed(() => isActiveTask(task.value))
+const isTaskTerminal = computed(() => Boolean(task.value && terminalStatuses.has(task.value.status)))
 const progressPercent = computed(() => {
   if (!task.value) return 0
   if (task.value.total_items <= 0) return terminalStatuses.has(task.value.status) ? 100 : 0
   return Math.min(100, Math.round((task.value.processed_items / task.value.total_items) * 100))
 })
+const runningItemCount = computed(() => task.value?.running_item_count ?? 0)
+const lastActivityAt = computed(() => events.value[0]?.created_at || task.value?.updated_at)
 
 const taskStatusLabel = computed(() => {
   if (!task.value) return ''
@@ -425,6 +502,42 @@ const itemStatusClass = (status: OpenAI5hWakeItemStatus) => {
   }
 }
 
+const knownEventCodes = new Set([
+  'task_created',
+  'task_claimed',
+  'task_resume_failed',
+  'cancel_requested',
+  'cancel_observed',
+  'cancel_check_failed',
+  'cancel_poll_failed',
+  'final_cancel_check_failed',
+  'item_started',
+  'item_woken',
+  'item_skipped_active',
+  'item_failed',
+  'item_cancelled',
+  'item_claim_failed',
+  'item_complete_failed',
+  'heartbeat_failed',
+  'lease_lost',
+  'task_processing_failed',
+  'task_finalize_failed',
+  'task_finished'
+])
+
+const eventCodeLabel = (code: string) => knownEventCodes.has(code)
+  ? t(`admin.accounts.openAI5hWake.events.${code}`)
+  : code
+
+const eventLevelLabel = (level: OpenAI5hWakeEventLevel) =>
+  t(`admin.accounts.openAI5hWake.eventLevels.${level}`)
+
+const eventLevelClass = (level: OpenAI5hWakeEventLevel) => {
+  if (level === 'error') return 'text-red-600 dark:text-red-400'
+  if (level === 'warn') return 'text-amber-600 dark:text-amber-400'
+  return 'text-blue-600 dark:text-blue-400'
+}
+
 const stopPolling = () => {
   if (pollTimer !== null) {
     clearInterval(pollTimer)
@@ -464,13 +577,29 @@ const loadItems = async () => {
   }
 }
 
+const loadEvents = async () => {
+  if (!task.value) return
+  eventsLoading.value = true
+  try {
+    const result = await accountsAPI.listOpenAI5hWakeTaskEvents(task.value.id, 1, eventsPageSize)
+    events.value = result.items
+    eventsTotal.value = result.total
+  } finally {
+    eventsLoading.value = false
+  }
+}
+
+const loadTaskDetails = async () => {
+  await Promise.all([loadItems(), loadEvents()])
+}
+
 const refreshTask = async () => {
   if (!task.value || pollInFlight) return
   pollInFlight = true
   try {
     const nextTask = await accountsAPI.getOpenAI5hWakeTask(task.value.id)
     notifyTask(nextTask)
-    await loadItems()
+    await loadTaskDetails()
     pollError.value = ''
   } catch (error) {
     pollError.value = extractApiErrorMessage(error, t('admin.accounts.openAI5hWake.refreshFailed'))
@@ -484,7 +613,7 @@ const showExistingTask = async (existingTask: OpenAI5hWakeTask) => {
   notifyTask(existingTask)
   if (isActiveTask(existingTask)) startPolling()
   try {
-    await loadItems()
+    await loadTaskDetails()
     pollError.value = ''
   } catch (error) {
     pollError.value = extractApiErrorMessage(error, t('admin.accounts.openAI5hWake.resultsLoadFailed'))
@@ -501,13 +630,14 @@ const initialize = async () => {
   preview.value = null
   items.value = []
   itemsTotal.value = 0
+  events.value = []
+  eventsTotal.value = 0
   itemsPage.value = 1
   try {
-    let latest = isActiveTask(props.initialTask) ? props.initialTask! : null
+    let latest = props.initialTask || null
     if (!latest) {
       try {
-        const fetched = await accountsAPI.getLatestOpenAI5hWakeTask()
-        if (isActiveTask(fetched)) latest = fetched
+        latest = await accountsAPI.getLatestOpenAI5hWakeTask()
       } catch {
         // Preview remains usable even if the optional latest-task lookup fails.
       }
@@ -522,6 +652,27 @@ const initialize = async () => {
     loadError.value = extractApiErrorMessage(error, t('admin.accounts.openAI5hWake.loadFailed'))
   } finally {
     if (sequence === initializeSequence) initializing.value = false
+  }
+}
+
+const prepareNewTask = async () => {
+  stopPolling()
+  initializing.value = true
+  loadError.value = ''
+  pollError.value = ''
+  try {
+    const nextPreview = await accountsAPI.previewOpenAI5hWake()
+    task.value = null
+    items.value = []
+    itemsTotal.value = 0
+    events.value = []
+    eventsTotal.value = 0
+    itemsPage.value = 1
+    preview.value = nextPreview
+  } catch (error) {
+    loadError.value = extractApiErrorMessage(error, t('admin.accounts.openAI5hWake.loadFailed'))
+  } finally {
+    initializing.value = false
   }
 }
 

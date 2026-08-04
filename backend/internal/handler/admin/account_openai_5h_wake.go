@@ -105,6 +105,24 @@ func (h *AccountHandler) ListOpenAI5hWakeTaskItems(c *gin.Context) {
 	response.Paginated(c, items, total, page, pageSize)
 }
 
+func (h *AccountHandler) ListOpenAI5hWakeTaskEvents(c *gin.Context) {
+	wake := h.requireOpenAI5hWake(c)
+	if wake == nil {
+		return
+	}
+	taskID, ok := parseOpenAI5hWakeTaskID(c)
+	if !ok {
+		return
+	}
+	page, pageSize := response.ParsePagination(c)
+	events, total, err := wake.ListTaskEvents(c.Request.Context(), taskID, page, pageSize)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Paginated(c, events, total, page, pageSize)
+}
+
 func (h *AccountHandler) CancelOpenAI5hWakeTask(c *gin.Context) {
 	wake := h.requireOpenAI5hWake(c)
 	if wake == nil {

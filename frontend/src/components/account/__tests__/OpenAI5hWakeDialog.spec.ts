@@ -7,6 +7,7 @@ const apiMocks = vi.hoisted(() => ({
   getLatestOpenAI5hWakeTask: vi.fn(),
   getOpenAI5hWakeTask: vi.fn(),
   listOpenAI5hWakeTaskItems: vi.fn(),
+	listOpenAI5hWakeTaskEvents: vi.fn(),
   cancelOpenAI5hWakeTask: vi.fn()
 }))
 
@@ -87,6 +88,7 @@ const makeTask = (overrides: Partial<OpenAI5hWakeTask> = {}): OpenAI5hWakeTask =
   estimated_request_count: 3,
   total_items: 5,
   processed_items: 1,
+  running_item_count: 1,
   woken_count: 1,
   skipped_active_count: 0,
   failed_count: 0,
@@ -105,11 +107,20 @@ const emptyItems = {
   pages: 1
 }
 
+const emptyEvents = {
+  items: [],
+  total: 0,
+  page: 1,
+  page_size: 100,
+  pages: 1
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   apiMocks.getLatestOpenAI5hWakeTask.mockResolvedValue(null)
   apiMocks.previewOpenAI5hWake.mockResolvedValue(preview)
   apiMocks.listOpenAI5hWakeTaskItems.mockResolvedValue(emptyItems)
+	apiMocks.listOpenAI5hWakeTaskEvents.mockResolvedValue(emptyEvents)
 })
 
 afterEach(() => {
@@ -154,6 +165,7 @@ describe('OpenAI5hWakeDialog', () => {
     await flushPromises()
 
     expect(apiMocks.getOpenAI5hWakeTask).toHaveBeenCalledWith(41)
+	expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledWith(41, 1, 100)
     expect(wrapper.emitted('completed')?.[0]?.[0]).toEqual(completed)
   })
 
@@ -181,6 +193,34 @@ describe('OpenAI5hWakeDialog', () => {
     expect(wrapper.find('[data-testid="openai-5h-wake-task"]').exists()).toBe(true)
   })
 
+  it('restores the latest terminal task logs and can open a new-task preview', async () => {
+    const failed = makeTask({ status: 'failed', processed_items: 5, failed_count: 5 })
+    apiMocks.getLatestOpenAI5hWakeTask.mockResolvedValue(failed)
+    apiMocks.listOpenAI5hWakeTaskEvents.mockResolvedValue({
+      ...emptyEvents,
+      items: [{
+        id: 9,
+        task_id: 41,
+        level: 'error',
+        code: 'task_processing_failed',
+        message: 'database unavailable',
+        created_at: '2026-07-30T00:01:00Z'
+      }],
+      total: 1
+    })
+
+    const wrapper = mount(OpenAI5hWakeDialog, { props: { show: true } })
+    await flushPromises()
+
+    expect(apiMocks.previewOpenAI5hWake).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="openai-5h-wake-events"]').text()).toContain('database unavailable')
+    await wrapper.get('[data-testid="openai-5h-wake-new-task"]').trigger('click')
+    await flushPromises()
+
+    expect(apiMocks.previewOpenAI5hWake).toHaveBeenCalledOnce()
+    expect(wrapper.find('[data-testid="openai-5h-wake-preview"]').exists()).toBe(true)
+  })
+
   it('continues polling when the initial result page fails to load', async () => {
     vi.useFakeTimers()
     const running = makeTask({ processed_items: 2 })
@@ -199,6 +239,45 @@ describe('OpenAI5hWakeDialog', () => {
     expect(apiMocks.getOpenAI5hWakeTask).toHaveBeenCalledWith(41)
     expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenCalledTimes(2)
   })
+
+	it('shows persisted execution errors and the real item attempt count', async () => {
+	  apiMocks.listOpenAI5hWakeTaskItems.mockResolvedValue({
+		...emptyItems,
+		items: [{
+		  id: 44,
+		  task_id: 41,
+		  identity_hash: '0123456789abcdef',
+		  member_account_ids: [7],
+		  attempted_account_ids: [],
+		  status: 'running',
+		  attempt_count: 58,
+		  created_at: '2026-07-30T00:00:00Z',
+		  updated_at: '2026-07-30T00:01:00Z'
+		}],
+		total: 1
+	  })
+	  apiMocks.listOpenAI5hWakeTaskEvents.mockResolvedValue({
+		...emptyEvents,
+		items: [{
+		  id: 8,
+		  task_id: 41,
+		  item_id: 44,
+		  level: 'error',
+		  code: 'item_complete_failed',
+		  message: 'pq: violates check constraint attempted_ids_array_check',
+		  created_at: '2026-07-30T00:01:00Z'
+		}],
+		total: 1
+	  })
+
+	  const wrapper = mount(OpenAI5hWakeDialog, {
+		props: { show: true, initialTask: makeTask() }
+	  })
+	  await flushPromises()
+
+	  expect(wrapper.get('[data-testid="openai-5h-wake-events"]').text()).toContain('attempted_ids_array_check')
+	  expect(wrapper.get('tbody tr').text()).toContain('58')
+	})
 
   it('requests cancellation and keeps the task visible while the backend stops work', async () => {
     const running = makeTask()

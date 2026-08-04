@@ -157,6 +157,53 @@ func TestOpenAI5hWakeClaimItemRequiresCurrentUnexpiredLease(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestOpenAI5hWakeAppendsAndListsTaskEvents(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := NewOpenAI5hWakeTaskRepository(db)
+	itemID := int64(12)
+	now := time.Now().UTC()
+
+	mock.ExpectExec(`INSERT INTO openai_5h_wake_task_events`).
+		WithArgs(int64(5), &itemID, service.OpenAI5hWakeEventLevelError, "item_complete_failed", "constraint violation").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	require.NoError(t, repo.AppendTaskEvent(context.Background(), service.OpenAI5hWakeTaskEventParams{
+		TaskID: 5, ItemID: &itemID, Level: service.OpenAI5hWakeEventLevelError,
+		Code: "item_complete_failed", Message: "constraint violation",
+	}))
+
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM openai_5h_wake_task_events WHERE task_id = \$1`).
+		WithArgs(int64(5)).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`(?s)SELECT id, task_id, item_id, level, code, message, created_at.*ORDER BY id DESC LIMIT \$2 OFFSET \$3`).
+		WithArgs(int64(5), 50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "task_id", "item_id", "level", "code", "message", "created_at"}).
+			AddRow(9, 5, itemID, service.OpenAI5hWakeEventLevelError, "item_complete_failed", "constraint violation", now))
+
+	events, total, err := repo.ListTaskEvents(context.Background(), 5, 1, 50)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, events, 1)
+	require.Equal(t, int64(9), events[0].ID)
+	require.Equal(t, &itemID, events[0].ItemID)
+	require.Equal(t, "constraint violation", events[0].Message)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpenAI5hWakeCountsRunningTaskItems(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := NewOpenAI5hWakeTaskRepository(db)
+
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM openai_5h_wake_task_items WHERE task_id = \$1 AND status = 'running'`).
+		WithArgs(int64(5)).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+	count, err := repo.CountRunningTaskItems(context.Background(), 5)
+	require.NoError(t, err)
+	require.Equal(t, 3, count)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestOpenAI5hWakeDeletesOnlyOldTerminalTasks(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -185,6 +232,14 @@ func TestOpenAI5hWakeMigrationEnforcesDurabilityConstraints(t *testing.T) {
 	require.Contains(t, sqlText, "identity_hash VARCHAR(64)")
 	require.NotContains(t, sqlText, "chatgpt_account_id")
 	require.NotContains(t, sqlText, "organization_id")
+
+	eventMigration, err := os.ReadFile("../../migrations/194_openai_5h_wake_task_events.sql")
+	require.NoError(t, err)
+	eventSQL := string(eventMigration)
+	require.Contains(t, eventSQL, "openai_5h_wake_task_events")
+	require.Contains(t, eventSQL, "ON DELETE CASCADE")
+	require.Contains(t, eventSQL, "level IN ('info', 'warn', 'error')")
+	require.Contains(t, eventSQL, "task_id, id DESC")
 }
 
 func TestOpenAI5hWakeGetTaskMapsMissingRow(t *testing.T) {

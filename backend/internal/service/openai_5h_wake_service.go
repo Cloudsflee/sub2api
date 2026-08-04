@@ -30,6 +30,8 @@ const (
 	openAI5hWakeClaimPoll       = 2 * time.Second
 	openAI5hWakeRetention       = 30 * 24 * time.Hour
 	openAI5hWakeCleanupInterval = 24 * time.Hour
+	openAI5hWakeEventTimeout    = 3 * time.Second
+	openAI5hWakeEventMessageMax = 2000
 	openAI5hWakeInstructions    = "Reply with OK."
 	openAI5hWakeInput           = "hi"
 	openAI5hWakeAuditPath       = "/api/v1/admin/accounts/openai-5h-wake/tasks/:id"
@@ -152,21 +154,46 @@ func (s *OpenAI5hWakeService) CreateTask(ctx context.Context, requestedByUserID 
 	}
 	if created {
 		slog.Info("openai_5h_wake_started", "task_id", task.ID, "accounts", task.EligibleAccountCount, "pools", task.TotalItems, "estimated_requests", task.EstimatedRequestCount)
+		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelInfo, "task_created", fmt.Sprintf(
+			"accounts=%d pools=%d active_windows=%d estimated_requests=%d",
+			task.EligibleAccountCount, task.TotalItems, task.ActiveWindowCount, task.EstimatedRequestCount,
+		))
 	}
 	s.signalWorker()
 	return task, created, nil
 }
 
 func (s *OpenAI5hWakeService) GetTask(ctx context.Context, id int64) (*OpenAI5hWakeTask, error) {
-	return s.repo.GetTask(ctx, id)
+	task, err := s.repo.GetTask(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.populateRunningItemCount(ctx, task)
 }
 
 func (s *OpenAI5hWakeService) GetLatestTask(ctx context.Context) (*OpenAI5hWakeTask, error) {
-	return s.repo.GetLatestTask(ctx)
+	task, err := s.repo.GetLatestTask(ctx)
+	if err != nil || task == nil {
+		return task, err
+	}
+	return s.populateRunningItemCount(ctx, task)
+}
+
+func (s *OpenAI5hWakeService) populateRunningItemCount(ctx context.Context, task *OpenAI5hWakeTask) (*OpenAI5hWakeTask, error) {
+	count, err := s.repo.CountRunningTaskItems(ctx, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	task.RunningItemCount = count
+	return task, nil
 }
 
 func (s *OpenAI5hWakeService) ListTaskItems(ctx context.Context, taskID int64, page, pageSize int) ([]*OpenAI5hWakeTaskItem, int64, error) {
 	return s.repo.ListTaskItems(ctx, taskID, page, pageSize)
+}
+
+func (s *OpenAI5hWakeService) ListTaskEvents(ctx context.Context, taskID int64, page, pageSize int) ([]*OpenAI5hWakeTaskEvent, int64, error) {
+	return s.repo.ListTaskEvents(ctx, taskID, page, pageSize)
 }
 
 func (s *OpenAI5hWakeService) CancelTask(ctx context.Context, taskID int64) (*OpenAI5hWakeTask, error) {
@@ -180,6 +207,7 @@ func (s *OpenAI5hWakeService) CancelTask(ctx context.Context, taskID int64) (*Op
 	if cancel != nil {
 		cancel()
 	}
+	s.recordTaskEvent(taskID, nil, OpenAI5hWakeEventLevelWarn, "cancel_requested", "")
 	s.signalWorker()
 	slog.Info("openai_5h_wake_cancel_requested", "task_id", taskID)
 	return task, nil
@@ -395,6 +423,9 @@ func (s *OpenAI5hWakeService) runWorker() {
 		if err != nil {
 			slog.Error("openai_5h_wake_claim_failed", "error", err)
 		} else if task != nil {
+			s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelInfo, "task_claimed", fmt.Sprintf(
+				"processed=%d total=%d", task.ProcessedItems, task.TotalItems,
+			))
 			s.processTask(task)
 			continue
 		}
@@ -434,6 +465,7 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 	}()
 
 	if err := s.repo.ResetRunningItems(ctx, task.ID, s.owner); err != nil {
+		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "task_resume_failed", wakeEventErrorMessage(err))
 		slog.Error("openai_5h_wake_resume_failed", "task_id", task.ID, "error", err)
 		return
 	}
@@ -443,23 +475,27 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 
 	cancelRequested, err := s.repo.IsCancelRequested(ctx, task.ID)
 	if err != nil {
+		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "cancel_check_failed", wakeEventErrorMessage(err))
 		slog.Error("openai_5h_wake_cancel_check_failed", "task_id", task.ID, "error", err)
 		close(monitorDone)
 		return
 	}
 	if cancelRequested {
+		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelWarn, "cancel_observed", "")
 		cancel()
 	}
 
 	var fatalMu sync.Mutex
 	var fatalErr error
-	setFatal := func(err error) {
+	setFatal := func(err error) bool {
 		fatalMu.Lock()
+		defer fatalMu.Unlock()
 		if fatalErr == nil {
 			fatalErr = err
 			cancel()
+			return true
 		}
-		fatalMu.Unlock()
+		return false
 	}
 	var workers sync.WaitGroup
 	if !cancelRequested {
@@ -471,13 +507,18 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 					item, claimErr := s.repo.ClaimNextItem(ctx, task.ID, s.owner)
 					if claimErr != nil {
 						if ctx.Err() == nil {
-							setFatal(claimErr)
+							if setFatal(claimErr) {
+								s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "item_claim_failed", wakeEventErrorMessage(claimErr))
+							}
 						}
 						return
 					}
 					if item == nil {
 						return
 					}
+					s.recordTaskEvent(task.ID, &item.ID, OpenAI5hWakeEventLevelInfo, "item_started", fmt.Sprintf(
+						"attempt=%d pool=%s members=%d", item.AttemptCount, shortWakeIdentityHash(item.IdentityHash), len(item.MemberAccountIDs),
+					))
 					itemCtx, itemCancel := context.WithTimeout(ctx, openAI5hWakeItemTimeout)
 					result := s.processItem(itemCtx, item)
 					itemCancel()
@@ -491,9 +532,12 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 						if completeErr == nil {
 							completeErr = fmt.Errorf("item %d completion lost task lease", item.ID)
 						}
-						setFatal(completeErr)
+						if setFatal(completeErr) {
+							s.recordTaskEvent(task.ID, &item.ID, OpenAI5hWakeEventLevelError, "item_complete_failed", wakeEventErrorMessage(completeErr))
+						}
 						return
 					}
+					s.recordTaskEvent(task.ID, &item.ID, wakeItemEventLevel(result.Status), wakeItemEventCode(result.Status), wakeItemEventMessage(result))
 				}
 			}()
 		}
@@ -509,6 +553,7 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 	processErr := fatalErr
 	fatalMu.Unlock()
 	if processErr != nil {
+		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "task_processing_failed", wakeEventErrorMessage(processErr))
 		slog.Error("openai_5h_wake_processing_failed", "task_id", task.ID, "error", processErr)
 		return
 	}
@@ -516,14 +561,20 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 	defer finalizeCancel()
 	cancelRequested, err = s.repo.IsCancelRequested(finalizeCtx, task.ID)
 	if err != nil {
+		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "final_cancel_check_failed", wakeEventErrorMessage(err))
 		slog.Error("openai_5h_wake_final_cancel_check_failed", "task_id", task.ID, "error", err)
 		return
 	}
 	finalTask, err := s.repo.FinalizeTask(finalizeCtx, task.ID, s.owner, cancelRequested, time.Now().UTC())
 	if err != nil {
+		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "task_finalize_failed", wakeEventErrorMessage(err))
 		slog.Error("openai_5h_wake_finalize_failed", "task_id", task.ID, "error", err)
 		return
 	}
+	s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelInfo, "task_finished", fmt.Sprintf(
+		"status=%s woken=%d skipped_active=%d failed=%d cancelled=%d",
+		finalTask.Status, finalTask.WokenCount, finalTask.SkippedActiveCount, finalTask.FailedCount, finalTask.CancelledCount,
+	))
 	s.recordFinalAudit(finalTask)
 	slog.Info("openai_5h_wake_finished",
 		"task_id", finalTask.ID,
@@ -541,6 +592,8 @@ func (s *OpenAI5hWakeService) monitorTask(ctx context.Context, cancel context.Ca
 	cancelTicker := time.NewTicker(openAI5hWakeCancelPoll)
 	defer heartbeatTicker.Stop()
 	defer cancelTicker.Stop()
+	heartbeatFailureLogged := false
+	cancelCheckFailureLogged := false
 	for {
 		select {
 		case <-done:
@@ -552,10 +605,16 @@ func (s *OpenAI5hWakeService) monitorTask(ctx context.Context, cancel context.Ca
 			owned, err := s.repo.HeartbeatTask(heartbeatCtx, taskID, s.owner, now.UTC(), now.UTC().Add(openAI5hWakeLeaseDuration))
 			heartbeatCancel()
 			if err != nil {
+				if !heartbeatFailureLogged {
+					s.recordTaskEvent(taskID, nil, OpenAI5hWakeEventLevelWarn, "heartbeat_failed", wakeEventErrorMessage(err))
+					heartbeatFailureLogged = true
+				}
 				slog.Warn("openai_5h_wake_heartbeat_failed", "task_id", taskID, "error", err)
 				continue
 			}
+			heartbeatFailureLogged = false
 			if !owned {
+				s.recordTaskEvent(taskID, nil, OpenAI5hWakeEventLevelError, "lease_lost", "")
 				lostLease.Store(true)
 				cancel()
 				return
@@ -564,12 +623,103 @@ func (s *OpenAI5hWakeService) monitorTask(ctx context.Context, cancel context.Ca
 			checkCtx, checkCancel := context.WithTimeout(context.Background(), 3*time.Second)
 			requested, err := s.repo.IsCancelRequested(checkCtx, taskID)
 			checkCancel()
-			if err == nil && requested {
+			if err != nil {
+				if !cancelCheckFailureLogged {
+					s.recordTaskEvent(taskID, nil, OpenAI5hWakeEventLevelWarn, "cancel_poll_failed", wakeEventErrorMessage(err))
+					cancelCheckFailureLogged = true
+				}
+				continue
+			}
+			cancelCheckFailureLogged = false
+			if requested {
+				s.recordTaskEvent(taskID, nil, OpenAI5hWakeEventLevelWarn, "cancel_observed", "")
 				cancel()
 				return
 			}
 		}
 	}
+}
+
+func (s *OpenAI5hWakeService) recordTaskEvent(taskID int64, itemID *int64, level, code, message string) {
+	if s == nil || s.repo == nil || taskID <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), openAI5hWakeEventTimeout)
+	defer cancel()
+	err := s.repo.AppendTaskEvent(ctx, OpenAI5hWakeTaskEventParams{
+		TaskID:  taskID,
+		ItemID:  itemID,
+		Level:   level,
+		Code:    code,
+		Message: truncateWakeEventMessage(message),
+	})
+	if err != nil {
+		slog.Warn("openai_5h_wake_event_write_failed", "task_id", taskID, "event_code", code, "error", err)
+	}
+}
+
+func truncateWakeEventMessage(message string) string {
+	message = strings.TrimSpace(message)
+	runes := []rune(message)
+	if len(runes) <= openAI5hWakeEventMessageMax {
+		return message
+	}
+	return string(runes[:openAI5hWakeEventMessageMax])
+}
+
+func wakeEventErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	return truncateWakeEventMessage(err.Error())
+}
+
+func shortWakeIdentityHash(identityHash string) string {
+	identityHash = strings.TrimSpace(identityHash)
+	if len(identityHash) <= 12 {
+		return identityHash
+	}
+	return identityHash[:12]
+}
+
+func wakeItemEventCode(status string) string {
+	switch status {
+	case OpenAI5hWakeItemStatusWoken:
+		return "item_woken"
+	case OpenAI5hWakeItemStatusSkippedActive:
+		return "item_skipped_active"
+	case OpenAI5hWakeItemStatusCancelled:
+		return "item_cancelled"
+	default:
+		return "item_failed"
+	}
+}
+
+func wakeItemEventLevel(status string) string {
+	if status == OpenAI5hWakeItemStatusFailed {
+		return OpenAI5hWakeEventLevelError
+	}
+	if status == OpenAI5hWakeItemStatusCancelled {
+		return OpenAI5hWakeEventLevelWarn
+	}
+	return OpenAI5hWakeEventLevelInfo
+}
+
+func wakeItemEventMessage(result OpenAI5hWakeCompleteItemParams) string {
+	parts := []string{
+		fmt.Sprintf("status=%s", result.Status),
+		fmt.Sprintf("attempted_accounts=%d", len(result.AttemptedAccountIDs)),
+	}
+	if result.SuccessfulAccountID != nil {
+		parts = append(parts, fmt.Sprintf("successful_account_id=%d", *result.SuccessfulAccountID))
+	}
+	if result.ResetAt != nil {
+		parts = append(parts, "reset_at="+result.ResetAt.UTC().Format(time.RFC3339))
+	}
+	if result.ErrorCode != "" {
+		parts = append(parts, "error_code="+result.ErrorCode)
+	}
+	return strings.Join(parts, " ")
 }
 
 func (s *OpenAI5hWakeService) recordFinalAudit(task *OpenAI5hWakeTask) {

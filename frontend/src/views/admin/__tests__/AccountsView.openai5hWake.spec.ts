@@ -58,6 +58,7 @@ const runningTask: OpenAI5hWakeTask = {
   estimated_request_count: 3,
   total_items: 3,
   processed_items: 1,
+  running_item_count: 1,
   woken_count: 1,
   skipped_active_count: 0,
   failed_count: 0,
