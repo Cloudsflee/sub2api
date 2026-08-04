@@ -100,6 +100,38 @@ func TestOpenAI5hWakeCompleteItemIsAtomicAndIdempotent(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestOpenAI5hWakeCompleteItemPersistsNilAttemptsAsJSONArray(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := NewOpenAI5hWakeTaskRepository(db)
+	resetAt := time.Now().UTC().Add(5 * time.Hour)
+	successfulID := int64(7)
+	query := `(?s)WITH completed AS.*status = 'running'.*processed_items = processed_items \+ 1.*EXISTS \(SELECT 1 FROM completed\)`
+	mock.ExpectExec(query).
+		WithArgs(
+			int64(5),
+			"worker-a",
+			int64(12),
+			service.OpenAI5hWakeItemStatusSkippedActive,
+			[]byte(`[]`),
+			&successfulID,
+			&resetAt,
+			"",
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	completed, err := repo.CompleteItem(context.Background(), 5, "worker-a", service.OpenAI5hWakeCompleteItemParams{
+		ItemID:              12,
+		Status:              service.OpenAI5hWakeItemStatusSkippedActive,
+		SuccessfulAccountID: &successfulID,
+		ResetAt:             &resetAt,
+	})
+	require.NoError(t, err)
+	require.True(t, completed)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestOpenAI5hWakeClaimItemRequiresCurrentUnexpiredLease(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

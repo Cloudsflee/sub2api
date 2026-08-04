@@ -319,7 +319,11 @@ RETURNING id, task_id, identity_hash, member_account_ids, attempted_account_ids,
 }
 
 func (r *openAI5hWakeRepository) CompleteItem(ctx context.Context, taskID int64, owner string, params service.OpenAI5hWakeCompleteItemParams) (bool, error) {
-	attemptedJSON, err := json.Marshal(params.AttemptedAccountIDs)
+	attemptedAccountIDs := params.AttemptedAccountIDs
+	if attemptedAccountIDs == nil {
+		attemptedAccountIDs = []int64{}
+	}
+	attemptedJSON, err := json.Marshal(attemptedAccountIDs)
 	if err != nil {
 		return false, err
 	}
