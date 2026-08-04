@@ -260,6 +260,10 @@
           class="mt-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-dark-700 dark:bg-dark-900 sm:p-5"
           data-product-sync-worker-status
         >
+          <div v-if="loadingProducts" class="py-4 text-center text-sm text-gray-500 dark:text-dark-400">
+            {{ t('publicAccountImport.productSyncStatusLoading') }}
+          </div>
+          <template v-else>
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h3 class="text-sm font-semibold">{{ t('publicAccountImport.productSyncWorkerTitle') }}</h3>
@@ -316,6 +320,7 @@
               </p>
             </div>
           </div>
+          </template>
         </section>
 
         <form

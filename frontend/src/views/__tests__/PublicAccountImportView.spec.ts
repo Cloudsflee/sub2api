@@ -67,4 +67,10 @@ describe('PublicAccountImportView product synchronization', () => {
 		expect(source).toContain('syncing ? 10_000 : 60_000')
 		expect(source).toContain("document.addEventListener('visibilitychange'")
   })
+
+  it('does not render unavailable lanes before the initial catalog response', () => {
+    expect(source).toContain('v-if="loadingProducts"')
+    expect(source).toContain('productSyncStatusLoading')
+    expect(source).toContain('<template v-else>')
+  })
 })

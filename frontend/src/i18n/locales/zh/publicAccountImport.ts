@@ -115,6 +115,7 @@ export default {
     productSyncAvailable: '可用',
     productSyncUnavailable: '不可用',
     productSyncLaneUnavailable: '暂未报告具体原因',
+    productSyncStatusLoading: '正在获取更新通道状态…',
     productSyncStatusUnavailable: '暂时无法获取更新通道状态',
   },
 }
