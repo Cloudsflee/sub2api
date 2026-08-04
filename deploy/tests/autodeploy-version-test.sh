@@ -35,6 +35,12 @@ TARGET_COMMIT=$(git -C "$REPO" rev-parse HEAD)
 [[ "$(git -C "$REPO" cat-file -t refs/tags/upstream/v0.1.153)" == tag ]]
 [[ "$(resolve_official_version)" == 0.1.153 ]]
 
+# A newer source VERSION wins over an older reachable tag when the host has
+# not fetched the newest upstream release tag yet.
+printf '0.1.170\n' >"$REPO/backend/cmd/server/VERSION"
+[[ "$(resolve_official_version)" == 0.1.170 ]]
+printf '0.1.152\n' >"$REPO/backend/cmd/server/VERSION"
+
 git -C "$REPO" update-ref refs/tags/upstream/v0.1.154 "$TARGET_COMMIT"
 git -C "$REPO" update-ref refs/tags/upstream/v9.0.0-rc1 "$TARGET_COMMIT"
 [[ "$(resolve_official_version)" == 0.1.154 ]]

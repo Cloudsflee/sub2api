@@ -451,17 +451,28 @@ resolve_reachable_tag_version() {
   return 1
 }
 
+version_is_at_least() {
+  local left=$1 right=$2 maximum
+  maximum=$(printf '%s\n%s\n' "$left" "$right" | sort -V | tail -n 1)
+  [[ "$maximum" == "$left" ]]
+}
+
 resolve_official_version() {
-  local version
-  version=$(resolve_reachable_tag_version 'upstream/v' 'refs/tags/upstream/v*' || true)
-  if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    printf '%s\n' "$version"
-    return
-  fi
-  version=$(resolve_reachable_tag_version 'v' 'refs/tags/v*' || true)
-  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    version=$(tr -d '\r\n' <"$BUILD_DIR/backend/cmd/server/VERSION" 2>/dev/null || true)
-  fi
+  local version='' candidate version_file upstream_version local_version
+  version_file=$(tr -d '\r\n' <"$BUILD_DIR/backend/cmd/server/VERSION" 2>/dev/null || true)
+  upstream_version=$(resolve_reachable_tag_version 'upstream/v' 'refs/tags/upstream/v*' || true)
+  local_version=$(resolve_reachable_tag_version 'v' 'refs/tags/v*' || true)
+
+  # A stale host-side tag must not override the newer VERSION synced into the
+  # source tree. This matters when the repository fetch has not brought the
+  # newest upstream release tag to the deployment host yet.
+  for candidate in "$version_file" "$upstream_version" "$local_version"; do
+    [[ "$candidate" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+    if [[ -z "$version" ]] || version_is_at_least "$candidate" "$version"; then
+      version=$candidate
+    fi
+  done
+
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || die "cannot determine official base version for $TARGET_COMMIT"
   printf '%s\n' "$version"
