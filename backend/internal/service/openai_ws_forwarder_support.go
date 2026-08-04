@@ -502,6 +502,9 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
 		return 0, nil, "", nil
 	}
+	if !openAICodexAccountCanServeRequestedModel(account, requestedModel) {
+		return 0, nil, "", nil
+	}
 	if !account.SupportsOpenAIEndpointCapability(requiredCapability) {
 		return 0, nil, "", nil
 	}
@@ -533,6 +536,9 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 			return 0, nil, "", nil
 		}
 		if requestedModel != "" && !latest.IsModelSupported(requestedModel) {
+			return 0, nil, "", nil
+		}
+		if !openAICodexAccountCanServeRequestedModel(latest, requestedModel) {
 			return 0, nil, "", nil
 		}
 		if !latest.SupportsOpenAIEndpointCapability(requiredCapability) {

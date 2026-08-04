@@ -2659,6 +2659,34 @@ func TestOpenAIAccountScheduler_SkipsAccountBlockedForRequestedModel(t *testing.
 	require.True(t, scheduler.isAccountRequestCompatible(context.Background(), account, OpenAIAccountScheduleRequest{RequestedModel: "gpt-5.6-sol"}))
 }
 
+func TestOpenAIAccountScheduler_SkipsFreeOAuthForPlanGatedSol(t *testing.T) {
+	free := &Account{
+		ID:          21634,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"plan_type": "free"},
+	}
+	paid := &Account{
+		ID:          21635,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"plan_type": "plus"},
+	}
+	scheduler := &defaultOpenAIAccountScheduler{service: &OpenAIGatewayService{}}
+
+	compatible, reason := scheduler.isAccountRequestCompatibleReason(context.Background(), free, OpenAIAccountScheduleRequest{RequestedModel: "gpt-5.6-sol"})
+	require.False(t, compatible)
+	require.Equal(t, "plan_not_entitled", reason)
+
+	compatible, reason = scheduler.isAccountRequestCompatibleReason(context.Background(), paid, OpenAIAccountScheduleRequest{RequestedModel: "gpt-5.6-sol"})
+	require.True(t, compatible)
+	require.Empty(t, reason)
+}
+
 func TestReportOpenAIAccountScheduleResult_SuccessClearsModelTransientState(t *testing.T) {
 	svc := &OpenAIGatewayService{openaiModelTransient: newOpenAIAccountModelTransientState(128)}
 	now := time.Now()
