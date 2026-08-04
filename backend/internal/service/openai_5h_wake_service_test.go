@@ -327,7 +327,7 @@ func openAI5hWakeHeaders(status int) openAI5hWakeStubResponse {
 	return openAI5hWakeStubResponse{status: status, headers: headers}
 }
 
-func TestOpenAI5hWakeBuildPlanFiltersAndDeduplicatesQuotaPools(t *testing.T) {
+func TestOpenAI5hWakeBuildPlanFiltersAndKeepsTypedIdentitiesSeparate(t *testing.T) {
 	now := time.Now().UTC()
 	expired := now.Add(-time.Minute)
 	future := now.Add(time.Hour)
@@ -370,16 +370,59 @@ func TestOpenAI5hWakeBuildPlanFiltersAndDeduplicatesQuotaPools(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 13, plan.preview.TotalOpenAIAccounts)
 	require.Equal(t, 3, plan.preview.EligibleAccounts)
-	require.Equal(t, 2, plan.preview.UniqueQuotaPools)
+	require.Equal(t, 3, plan.preview.UniqueQuotaPools)
 	require.Equal(t, 1, plan.preview.ActiveWindows)
-	require.Equal(t, 1, plan.preview.EstimatedRequests)
+	require.Equal(t, 2, plan.preview.EstimatedRequests)
 	require.Equal(t, OpenAI5hWakeExclusions{
 		APIKey: 1, NonOAuth: 1, SparkShadow: 1, NonGlobal: 1, Disabled: 1,
 		Unschedulable: 1, Expired: 1, RateLimited: 1, CoolingDown: 1, MissingIdentity: 1,
 	}, plan.preview.Excluded)
-	require.Equal(t, []int64{1, 2}, []int64{plan.groups[0].accounts[0].ID, plan.groups[0].accounts[1].ID})
+	require.Equal(t, int64(1), plan.groups[0].accounts[0].ID)
+	require.Equal(t, int64(2), plan.groups[1].accounts[0].ID)
 	require.Len(t, plan.groups[0].identityHash, 64)
 	require.NotContains(t, plan.groups[0].identityHash, "shared-pool")
+}
+
+func TestOpenAI5hWakeQuotaGroupsRequireExactTypedIdentity(t *testing.T) {
+	tests := []struct {
+		name   string
+		first  map[string]string
+		second map[string]string
+	}{
+		{
+			name:   "same organization with different chatgpt accounts",
+			first:  map[string]string{"chatgpt_account_id": "account-a", "organization_id": "shared-org"},
+			second: map[string]string{"chatgpt_account_id": "account-b", "organization_id": "shared-org"},
+		},
+		{
+			name:   "same chatgpt account with different organizations",
+			first:  map[string]string{"chatgpt_account_id": "shared-account", "organization_id": "org-a"},
+			second: map[string]string{"chatgpt_account_id": "shared-account", "organization_id": "org-b"},
+		},
+		{
+			name:   "equal values in different fields",
+			first:  map[string]string{"chatgpt_account_id": "cross-field"},
+			second: map[string]string{"organization_id": "cross-field"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			first := newOpenAI5hWakeAccount(1, "")
+			second := newOpenAI5hWakeAccount(2, "")
+			for key, value := range tt.first {
+				first.Credentials[key] = value
+			}
+			for key, value := range tt.second {
+				second.Credentials[key] = value
+			}
+
+			groups := buildOpenAI5hWakeQuotaGroups([]*Account{first, second})
+
+			require.Len(t, groups, 2)
+			require.Equal(t, int64(1), groups[0].accounts[0].ID)
+			require.Equal(t, int64(2), groups[1].accounts[0].ID)
+		})
+	}
 }
 
 func TestBuildOpenAI5hWakePayloadIsMinimalAndUsesMappedModel(t *testing.T) {
@@ -443,9 +486,9 @@ func TestOpenAI5hWakeProcessItemContinuesAfterUsageFailureAndFallsBackAccount(t 
 		require.Equal(t, codexCLIUserAgent, request.headers.Get("User-Agent"))
 		require.NotContains(t, string(request.body), "max_output_tokens")
 	}
-	require.NotEmpty(t, repo.updates[1])
+	require.Empty(t, repo.updates[1])
 	require.NotEmpty(t, repo.updates[2])
-	require.Contains(t, first.Extra, "codex_5h_reset_at")
+	require.NotContains(t, first.Extra, "codex_5h_reset_at")
 	require.Contains(t, second.Extra, "codex_5h_reset_at")
 }
 
@@ -466,7 +509,34 @@ func TestOpenAI5hWakeProcessItemSkipsPersistedActiveWindow(t *testing.T) {
 	require.Equal(t, OpenAI5hWakeItemStatusSkippedActive, result.Status)
 	require.Empty(t, result.AttemptedAccountIDs)
 	require.Empty(t, upstream.requests)
-	require.Equal(t, resetAt.Format(time.RFC3339), second.Extra["codex_5h_reset_at"])
+	require.Empty(t, repo.updates)
+	require.NotContains(t, second.Extra, "codex_5h_reset_at")
+}
+
+func TestOpenAI5hWakeUsageQueryOnlyUpdatesQueriedAccount(t *testing.T) {
+	first := newOpenAI5hWakeAccount(1, "shared-pool")
+	second := newOpenAI5hWakeAccount(2, "shared-pool")
+	repo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{1: first, 2: second}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"rate_limit":{"primary_window":{"used_percent":7,"limit_window_seconds":18000,"reset_after_seconds":18000}}}`)
+	}))
+	defer server.Close()
+	tokenProvider := NewOpenAITokenProvider(repo, nil, nil)
+	quota := NewOpenAIQuotaService(repo, nil, tokenProvider, newQuotaRedirectingFactory(server))
+	service := &OpenAI5hWakeService{accountRepo: repo, quotaService: quota}
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{first, second})[0]
+
+	result := service.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, IdentityHash: group.identityHash, MemberAccountIDs: []int64{1, 2},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusSkippedActive, result.Status)
+	require.Equal(t, []int64{1}, result.AttemptedAccountIDs)
+	require.NotEmpty(t, repo.updates[1])
+	require.Empty(t, repo.updates[2])
+	require.Contains(t, first.Extra, "codex_5h_reset_at")
+	require.NotContains(t, second.Extra, "codex_5h_reset_at")
 }
 
 func TestOpenAI5hWakeProcessItemTreats429WithFutureResetAsActive(t *testing.T) {

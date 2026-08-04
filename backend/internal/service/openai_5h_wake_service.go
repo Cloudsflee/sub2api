@@ -40,7 +40,6 @@ const (
 type openAI5hWakeQuotaGroup struct {
 	identityHash string
 	accounts     []*Account
-	aliases      []string
 }
 
 type openAI5hWakePlan struct {
@@ -231,7 +230,7 @@ func (s *OpenAI5hWakeService) buildPlan(ctx context.Context, now time.Time) (*op
 	for i := range accounts {
 		account := &accounts[i]
 		reason := classifyOpenAI5hWakeExclusion(account, now)
-		if reason == "" && len(openAI5hWakeIdentityAliases(account)) == 0 {
+		if reason == "" && len(openAI5hWakeIdentityParts(account)) == 0 {
 			reason = "missing_identity"
 		}
 		if reason != "" {
@@ -312,97 +311,63 @@ func incrementOpenAI5hWakeExclusion(excluded *OpenAI5hWakeExclusions, reason str
 	}
 }
 
-func openAI5hWakeIdentityAliases(account *Account) []string {
+func openAI5hWakeIdentityParts(account *Account) []string {
 	if account == nil {
 		return nil
 	}
-	values := []string{
-		strings.TrimSpace(account.GetCredential("chatgpt_account_id")),
-		strings.TrimSpace(account.GetCredential("organization_id")),
+	chatGPTAccountID := strings.TrimSpace(account.GetCredential("chatgpt_account_id"))
+	organizationID := strings.TrimSpace(account.GetCredential("organization_id"))
+	if chatGPTAccountID == "" && organizationID == "" {
+		return nil
 	}
-	seen := make(map[string]struct{}, len(values))
-	aliases := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" {
+	// Only exact typed tuples share a wake item. Workspace and user identifiers
+	// are not interchangeable aliases and must never create transitive groups.
+	values := []struct {
+		name  string
+		value string
+	}{
+		{name: "chatgpt_account_id", value: chatGPTAccountID},
+		{name: "organization_id", value: organizationID},
+		{name: "chatgpt_user_id", value: strings.TrimSpace(account.GetCredential("chatgpt_user_id"))},
+	}
+	parts := make([]string, 0, len(values))
+	for _, identity := range values {
+		if identity.value == "" {
 			continue
 		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		aliases = append(aliases, value)
+		parts = append(parts, identity.name+":"+identity.value)
 	}
-	sort.Strings(aliases)
-	return aliases
+	return parts
 }
 
 func buildOpenAI5hWakeQuotaGroups(accounts []*Account) []openAI5hWakeQuotaGroup {
 	if len(accounts) == 0 {
 		return nil
 	}
-	parent := make([]int, len(accounts))
-	for i := range parent {
-		parent[i] = i
-	}
-	var find func(int) int
-	find = func(index int) int {
-		if parent[index] != index {
-			parent[index] = find(parent[index])
-		}
-		return parent[index]
-	}
-	union := func(left, right int) {
-		leftRoot, rightRoot := find(left), find(right)
-		if leftRoot != rightRoot {
-			parent[rightRoot] = leftRoot
-		}
-	}
-	aliasOwner := make(map[string]int)
-	aliasesByAccount := make([][]string, len(accounts))
-	for i, account := range accounts {
-		aliases := openAI5hWakeIdentityAliases(account)
-		aliasesByAccount[i] = aliases
-		for _, alias := range aliases {
-			if previous, ok := aliasOwner[alias]; ok {
-				union(i, previous)
-			} else {
-				aliasOwner[alias] = i
-			}
-		}
-	}
 	type groupBuilder struct {
 		accounts []*Account
-		aliases  map[string]struct{}
 	}
-	builders := make(map[int]*groupBuilder)
-	for i, account := range accounts {
-		if len(aliasesByAccount[i]) == 0 {
+	builders := make(map[string]*groupBuilder)
+	for _, account := range accounts {
+		identityParts := openAI5hWakeIdentityParts(account)
+		if len(identityParts) == 0 {
 			continue
 		}
-		root := find(i)
-		builder := builders[root]
+		identity := strings.Join(identityParts, "\x00")
+		builder := builders[identity]
 		if builder == nil {
-			builder = &groupBuilder{aliases: make(map[string]struct{})}
-			builders[root] = builder
+			builder = &groupBuilder{}
+			builders[identity] = builder
 		}
 		builder.accounts = append(builder.accounts, account)
-		for _, alias := range aliasesByAccount[i] {
-			builder.aliases[alias] = struct{}{}
-		}
 	}
 	groups := make([]openAI5hWakeQuotaGroup, 0, len(builders))
-	for _, builder := range builders {
+	for identity, builder := range builders {
 		sort.Slice(builder.accounts, func(i, j int) bool { return builder.accounts[i].ID < builder.accounts[j].ID })
-		aliases := make([]string, 0, len(builder.aliases))
-		for alias := range builder.aliases {
-			aliases = append(aliases, alias)
-		}
-		sort.Strings(aliases)
-		hash := sha256.Sum256([]byte("openai-5h-quota-pool\x00" + strings.Join(aliases, "\x00")))
+		hash := sha256.Sum256([]byte("openai-5h-quota-pool\x00" + identity))
 		groups = append(groups, openAI5hWakeQuotaGroup{
 			identityHash: hex.EncodeToString(hash[:]),
 			accounts:     builder.accounts,
-			aliases:      aliases,
 		})
 	}
 	sort.Slice(groups, func(i, j int) bool {
@@ -781,13 +746,7 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 		result.ErrorCode = "no_eligible_account"
 		return result
 	}
-	memberIDs := make([]int64, 0, len(currentGroup.accounts))
-	for _, account := range currentGroup.accounts {
-		memberIDs = append(memberIDs, account.ID)
-	}
 	if source, resetAt, ok := activeWakeSnapshot(candidates, now); ok {
-		updates := copyOpenAIWakeSnapshot(source.Extra)
-		s.syncWakeSnapshot(ctx, memberIDs, updates)
 		result.Status = OpenAI5hWakeItemStatusSkippedActive
 		result.ResetAt = &resetAt
 		successID := source.ID
@@ -803,8 +762,7 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 			return result
 		}
 		result.AttemptedAccountIDs = append(result.AttemptedAccountIDs, account.ID)
-		if updates, resetAt, queryErr := s.queryAndPersistGlobalUsage(ctx, account, memberIDs); queryErr == nil && resetAt != nil && resetAt.After(time.Now()) {
-			_ = updates
+		if _, resetAt, queryErr := s.queryAndPersistGlobalUsage(ctx, account); queryErr == nil && resetAt != nil && resetAt.After(time.Now()) {
 			result.Status = OpenAI5hWakeItemStatusSkippedActive
 			if requestSent {
 				result.Status = OpenAI5hWakeItemStatusWoken
@@ -822,7 +780,7 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 			continue
 		}
 		if len(wakeResult.updates) > 0 {
-			s.syncWakeSnapshot(ctx, memberIDs, wakeResult.updates)
+			s.persistWakeSnapshot(ctx, account.ID, wakeResult.updates)
 		}
 		if wakeResult.resetAt != nil && wakeResult.resetAt.After(time.Now()) {
 			if wakeResult.statusCode == http.StatusTooManyRequests {
@@ -850,7 +808,7 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 			lastErrorCode = wakeHTTPErrorCode(wakeResult.statusCode)
 			continue
 		}
-		_, resetAt, queryErr := s.queryAndPersistGlobalUsage(ctx, account, memberIDs)
+		_, resetAt, queryErr := s.queryAndPersistGlobalUsage(ctx, account)
 		if queryErr != nil {
 			lastErrorCode = "post_usage_check_failed"
 			continue
@@ -879,7 +837,7 @@ func wakeErrorCode(ctx context.Context, fallback string) string {
 	return fallback
 }
 
-func (s *OpenAI5hWakeService) queryAndPersistGlobalUsage(ctx context.Context, account *Account, memberIDs []int64) (map[string]any, *time.Time, error) {
+func (s *OpenAI5hWakeService) queryAndPersistGlobalUsage(ctx context.Context, account *Account) (map[string]any, *time.Time, error) {
 	if s.quotaService == nil {
 		return nil, nil, fmt.Errorf("quota service unavailable")
 	}
@@ -895,7 +853,7 @@ func (s *OpenAI5hWakeService) queryAndPersistGlobalUsage(ctx context.Context, ac
 	if len(updates) == 0 {
 		return nil, nil, nil
 	}
-	s.syncWakeSnapshot(ctx, memberIDs, updates)
+	s.persistWakeSnapshot(ctx, account.ID, updates)
 	resetAt, ok := openAIWakeResetAt(updates)
 	if !ok {
 		return updates, nil, nil
@@ -1097,28 +1055,11 @@ func openAIWakeResetAt(extra map[string]any) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func copyOpenAIWakeSnapshot(extra map[string]any) map[string]any {
-	updates := make(map[string]any)
-	for key, value := range extra {
-		if strings.HasPrefix(key, "codex_5h_") || strings.HasPrefix(key, "codex_7d_") ||
-			strings.HasPrefix(key, "codex_primary_") || strings.HasPrefix(key, "codex_secondary_") ||
-			key == "codex_usage_updated_at" {
-			updates[key] = value
-		}
-	}
-	return updates
-}
-
-func (s *OpenAI5hWakeService) syncWakeSnapshot(ctx context.Context, memberIDs []int64, updates map[string]any) {
-	if len(updates) == 0 {
+func (s *OpenAI5hWakeService) persistWakeSnapshot(ctx context.Context, accountID int64, updates map[string]any) {
+	if accountID <= 0 || len(updates) == 0 || s.accountRepo == nil {
 		return
 	}
-	for _, accountID := range memberIDs {
-		if ctx.Err() != nil {
-			return
-		}
-		if err := s.accountRepo.UpdateExtra(ctx, accountID, updates); err != nil {
-			slog.Warn("openai_5h_wake_snapshot_sync_failed", "account_id", accountID, "error", err)
-		}
+	if err := s.accountRepo.UpdateExtra(ctx, accountID, updates); err != nil {
+		slog.Warn("openai_5h_wake_snapshot_persist_failed", "account_id", accountID, "error", err)
 	}
 }
