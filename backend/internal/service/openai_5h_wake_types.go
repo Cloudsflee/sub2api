@@ -173,6 +173,7 @@ type OpenAI5hWakeTaskRepository interface {
 	ClaimTask(ctx context.Context, owner string, now, leaseUntil time.Time) (*OpenAI5hWakeTask, error)
 	HeartbeatTask(ctx context.Context, taskID int64, owner string, now, leaseUntil time.Time) (bool, error)
 	ResetRunningItems(ctx context.Context, taskID int64, owner string) error
+	FailExhaustedItems(ctx context.Context, taskID int64, owner string, maxAttempts int) (int, error)
 	ClaimNextItem(ctx context.Context, taskID int64, owner string) (*OpenAI5hWakeTaskItem, error)
 	CompleteItem(ctx context.Context, taskID int64, owner string, params OpenAI5hWakeCompleteItemParams) (bool, error)
 	RequestCancel(ctx context.Context, taskID int64, now time.Time) (*OpenAI5hWakeTask, error)

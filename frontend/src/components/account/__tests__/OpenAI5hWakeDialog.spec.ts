@@ -214,6 +214,7 @@ describe('OpenAI5hWakeDialog', () => {
 
     expect(apiMocks.previewOpenAI5hWake).not.toHaveBeenCalled()
     expect(wrapper.get('[data-testid="openai-5h-wake-events"]').text()).toContain('database unavailable')
+    expect(wrapper.emitted('completed')).toBeUndefined()
     await wrapper.get('[data-testid="openai-5h-wake-new-task"]').trigger('click')
     await flushPromises()
 

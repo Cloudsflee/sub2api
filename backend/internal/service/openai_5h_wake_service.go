@@ -32,10 +32,13 @@ const (
 	openAI5hWakeCleanupInterval = 24 * time.Hour
 	openAI5hWakeEventTimeout    = 3 * time.Second
 	openAI5hWakeEventMessageMax = 2000
+	openAI5hWakeMaxItemAttempts = 3
 	openAI5hWakeInstructions    = "Reply with OK."
 	openAI5hWakeInput           = "hi"
 	openAI5hWakeAuditPath       = "/api/v1/admin/accounts/openai-5h-wake/tasks/:id"
 )
+
+var errOpenAI5hWakeSnapshotPersist = errors.New("openai 5h wake snapshot persistence failed")
 
 type openAI5hWakeQuotaGroup struct {
 	identityHash string
@@ -434,6 +437,17 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 		slog.Error("openai_5h_wake_resume_failed", "task_id", task.ID, "error", err)
 		return
 	}
+	exhaustedItems, err := s.repo.FailExhaustedItems(ctx, task.ID, s.owner, openAI5hWakeMaxItemAttempts)
+	if err != nil {
+		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "item_recovery_failed", wakeEventErrorMessage(err))
+		slog.Error("openai_5h_wake_item_recovery_failed", "task_id", task.ID, "error", err)
+		return
+	}
+	if exhaustedItems > 0 {
+		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "items_retry_exhausted", fmt.Sprintf(
+			"count=%d max_attempts=%d", exhaustedItems, openAI5hWakeMaxItemAttempts,
+		))
+	}
 	var lostLease atomic.Bool
 	monitorDone := make(chan struct{})
 	go s.monitorTask(ctx, cancel, task.ID, &lostLease, monitorDone)
@@ -762,7 +776,12 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 			return result
 		}
 		result.AttemptedAccountIDs = append(result.AttemptedAccountIDs, account.ID)
-		if _, resetAt, queryErr := s.queryAndPersistGlobalUsage(ctx, account); queryErr == nil && resetAt != nil && resetAt.After(time.Now()) {
+		_, resetAt, queryErr := s.queryAndPersistGlobalUsage(ctx, account)
+		if errors.Is(queryErr, errOpenAI5hWakeSnapshotPersist) {
+			lastErrorCode = "snapshot_persist_failed"
+			continue
+		}
+		if queryErr == nil && resetAt != nil && resetAt.After(time.Now()) {
 			result.Status = OpenAI5hWakeItemStatusSkippedActive
 			if requestSent {
 				result.Status = OpenAI5hWakeItemStatusWoken
@@ -780,7 +799,10 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 			continue
 		}
 		if len(wakeResult.updates) > 0 {
-			s.persistWakeSnapshot(ctx, account.ID, wakeResult.updates)
+			if persistErr := s.persistWakeSnapshot(ctx, account.ID, wakeResult.updates); persistErr != nil {
+				lastErrorCode = "snapshot_persist_failed"
+				continue
+			}
 		}
 		if wakeResult.resetAt != nil && wakeResult.resetAt.After(time.Now()) {
 			if wakeResult.statusCode == http.StatusTooManyRequests {
@@ -808,9 +830,12 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 			lastErrorCode = wakeHTTPErrorCode(wakeResult.statusCode)
 			continue
 		}
-		_, resetAt, queryErr := s.queryAndPersistGlobalUsage(ctx, account)
+		_, resetAt, queryErr = s.queryAndPersistGlobalUsage(ctx, account)
 		if queryErr != nil {
 			lastErrorCode = "post_usage_check_failed"
+			if errors.Is(queryErr, errOpenAI5hWakeSnapshotPersist) {
+				lastErrorCode = "snapshot_persist_failed"
+			}
 			continue
 		}
 		if resetAt == nil || !resetAt.After(time.Now()) {
@@ -853,12 +878,14 @@ func (s *OpenAI5hWakeService) queryAndPersistGlobalUsage(ctx context.Context, ac
 	if len(updates) == 0 {
 		return nil, nil, nil
 	}
-	s.persistWakeSnapshot(ctx, account.ID, updates)
-	resetAt, ok := openAIWakeResetAt(updates)
-	if !ok {
-		return updates, nil, nil
+	var resetAt *time.Time
+	if parsed, ok := openAIWakeResetAt(updates); ok {
+		resetAt = &parsed
 	}
-	return updates, &resetAt, nil
+	if err := s.persistWakeSnapshot(ctx, account.ID, updates); err != nil {
+		return updates, resetAt, fmt.Errorf("%w: %v", errOpenAI5hWakeSnapshotPersist, err)
+	}
+	return updates, resetAt, nil
 }
 
 type openAI5hWakeHTTPResult struct {
@@ -1055,11 +1082,19 @@ func openAIWakeResetAt(extra map[string]any) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func (s *OpenAI5hWakeService) persistWakeSnapshot(ctx context.Context, accountID int64, updates map[string]any) {
-	if accountID <= 0 || len(updates) == 0 || s.accountRepo == nil {
-		return
+func (s *OpenAI5hWakeService) persistWakeSnapshot(ctx context.Context, accountID int64, updates map[string]any) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	if s == nil || s.accountRepo == nil {
+		return fmt.Errorf("account repository unavailable")
+	}
+	if accountID <= 0 {
+		return fmt.Errorf("invalid account ID %d", accountID)
 	}
 	if err := s.accountRepo.UpdateExtra(ctx, accountID, updates); err != nil {
 		slog.Warn("openai_5h_wake_snapshot_persist_failed", "account_id", accountID, "error", err)
+		return err
 	}
+	return nil
 }

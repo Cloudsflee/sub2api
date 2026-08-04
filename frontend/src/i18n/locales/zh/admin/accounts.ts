@@ -112,6 +112,8 @@ export default {
           item_cancelled: '额度池处理已取消',
           item_claim_failed: '领取任务项失败',
           item_complete_failed: '保存任务项结果失败',
+          item_recovery_failed: '恢复任务项失败',
+          items_retry_exhausted: '任务项重试次数已耗尽',
           heartbeat_failed: '任务心跳失败',
           lease_lost: '任务执行租约已丢失',
           task_processing_failed: '任务执行中断',

@@ -68,7 +68,7 @@ const runningTask: OpenAI5hWakeTask = {
   updated_at: '2026-07-30T00:00:01Z'
 }
 
-const mountView = () => mount(AccountsView, {
+const mountView = (stubOverrides: Record<string, any> = {}) => mount(AccountsView, {
   attachTo: document.body,
   global: {
     stubs: {
@@ -103,9 +103,11 @@ const mountView = () => mount(AccountsView, {
       HelpTooltip: true,
       Icon: true,
       OpenAI5hWakeDialog: {
+        name: 'OpenAI5hWakeDialog',
         props: ['show', 'initialTask'],
         template: '<div v-if="show" data-testid="wake-dialog-stub" />'
-      }
+      },
+      ...stubOverrides
     }
   }
 })
@@ -175,5 +177,51 @@ describe('AccountsView OpenAI 5h wake integration', () => {
     expect(mocks.showSuccess).toHaveBeenCalledOnce()
     expect(wrapper.find('[data-testid="openai-5h-wake-running-entry"]').exists()).toBe(false)
     wrapper.unmount()
+  })
+
+  it('refreshes visible usage cells even when the terminal account-list reload fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const account = {
+      id: 7,
+      name: 'OpenAI account',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active',
+      schedulable: true,
+      credentials: {},
+      extra: {},
+      created_at: '2026-07-30T00:00:00Z',
+      updated_at: '2026-07-30T00:00:00Z'
+    }
+    mocks.getLatestTask.mockResolvedValue(null)
+    mocks.list
+      .mockResolvedValueOnce({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+      .mockRejectedValueOnce(new Error('temporary list failure'))
+    const wrapper = mountView({
+      DataTable: {
+        props: ['data'],
+        template: '<div><slot v-if="data.length" name="cell-usage" :row="data[0]" /></div>'
+      },
+      AccountUsageCell: {
+        props: ['manualRefreshToken'],
+        template: '<span data-testid="usage-refresh-token">{{ manualRefreshToken }}</span>'
+      }
+    })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="usage-refresh-token"]').text()).toBe('0')
+
+    const completedTask: OpenAI5hWakeTask = {
+      ...runningTask,
+      status: 'succeeded',
+      processed_items: runningTask.total_items,
+      finished_at: '2026-07-30T00:00:10Z'
+    }
+    wrapper.findComponent({ name: 'OpenAI5hWakeDialog' }).vm.$emit('completed', completedTask)
+    await flushPromises()
+
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-testid="usage-refresh-token"]').text()).toBe('1')
+    wrapper.unmount()
+    consoleError.mockRestore()
   })
 })

@@ -358,6 +358,38 @@ WHERE task_id = $1 AND status = 'running'
 	return err
 }
 
+func (r *openAI5hWakeRepository) FailExhaustedItems(ctx context.Context, taskID int64, owner string, maxAttempts int) (int, error) {
+	if maxAttempts < 1 {
+		return 0, fmt.Errorf("max wake item attempts must be positive")
+	}
+	var exhausted int
+	err := r.db.QueryRowContext(ctx, `
+WITH exhausted AS (
+    UPDATE openai_5h_wake_task_items
+    SET status = 'failed', error_code = 'worker_retry_exhausted',
+        successful_account_id = NULL, reset_at = NULL,
+        finished_at = NOW(), updated_at = NOW()
+    WHERE task_id = $1 AND status = 'pending' AND attempt_count >= $3
+      AND EXISTS (
+          SELECT 1 FROM openai_5h_wake_tasks
+          WHERE id = $1 AND status = 'running' AND lease_owner = $2
+            AND lease_expires_at > NOW() AND cancel_requested_at IS NULL
+      )
+    RETURNING id
+), updated_task AS (
+    UPDATE openai_5h_wake_tasks
+    SET processed_items = processed_items + (SELECT COUNT(*)::integer FROM exhausted),
+        failed_count = failed_count + (SELECT COUNT(*)::integer FROM exhausted),
+        updated_at = NOW()
+    WHERE id = $1 AND status = 'running' AND lease_owner = $2
+      AND lease_expires_at > NOW() AND cancel_requested_at IS NULL
+      AND EXISTS (SELECT 1 FROM exhausted)
+    RETURNING id
+)
+SELECT COUNT(*)::integer FROM exhausted`, taskID, owner, maxAttempts).Scan(&exhausted)
+	return exhausted, err
+}
+
 func (r *openAI5hWakeRepository) ClaimNextItem(ctx context.Context, taskID int64, owner string) (*service.OpenAI5hWakeTaskItem, error) {
 	row := r.db.QueryRowContext(ctx, `
 UPDATE openai_5h_wake_task_items

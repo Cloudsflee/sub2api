@@ -22,10 +22,11 @@ import (
 
 type openAI5hWakeAccountRepoStub struct {
 	AccountRepository
-	mu       sync.Mutex
-	listed   []Account
-	accounts map[int64]*Account
-	updates  map[int64][]map[string]any
+	mu            sync.Mutex
+	listed        []Account
+	accounts      map[int64]*Account
+	updates       map[int64][]map[string]any
+	updateErrByID map[int64]error
 }
 
 func (r *openAI5hWakeAccountRepoStub) ListByPlatform(_ context.Context, platform string) ([]Account, error) {
@@ -55,6 +56,9 @@ func (r *openAI5hWakeAccountRepoStub) GetByID(_ context.Context, id int64) (*Acc
 func (r *openAI5hWakeAccountRepoStub) UpdateExtra(_ context.Context, id int64, updates map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := r.updateErrByID[id]; err != nil {
+		return err
+	}
 	if r.updates == nil {
 		r.updates = make(map[int64][]map[string]any)
 	}
@@ -135,6 +139,26 @@ func (r *openAI5hWakeWorkerRepo) ResetRunningItems(context.Context, int64, strin
 	return nil
 }
 
+func (r *openAI5hWakeWorkerRepo) FailExhaustedItems(_ context.Context, _ int64, _ string, maxAttempts int) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cancelRequested {
+		return 0, nil
+	}
+	count := 0
+	for _, item := range r.items {
+		if item.Status != OpenAI5hWakeItemStatusPending || item.AttemptCount < maxAttempts {
+			continue
+		}
+		item.Status = OpenAI5hWakeItemStatusFailed
+		item.ErrorCode = "worker_retry_exhausted"
+		count++
+	}
+	r.task.ProcessedItems += count
+	r.task.FailedCount += count
+	return count, nil
+}
+
 func (r *openAI5hWakeWorkerRepo) ClaimNextItem(_ context.Context, _ int64, _ string) (*OpenAI5hWakeTaskItem, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -208,7 +232,11 @@ func (r *openAI5hWakeWorkerRepo) FinalizeTask(_ context.Context, _ int64, _ stri
 		}
 		r.task.Status = OpenAI5hWakeTaskStatusCancelled
 	} else if r.task.FailedCount > 0 {
-		r.task.Status = OpenAI5hWakeTaskStatusPartialSucceeded
+		if r.task.WokenCount+r.task.SkippedActiveCount > 0 {
+			r.task.Status = OpenAI5hWakeTaskStatusPartialSucceeded
+		} else {
+			r.task.Status = OpenAI5hWakeTaskStatusFailed
+		}
 	} else {
 		r.task.Status = OpenAI5hWakeTaskStatusSucceeded
 	}
@@ -539,6 +567,54 @@ func TestOpenAI5hWakeUsageQueryOnlyUpdatesQueriedAccount(t *testing.T) {
 	require.NotContains(t, second.Extra, "codex_5h_reset_at")
 }
 
+func TestOpenAI5hWakeUsageSnapshotPersistenceFailureDoesNotReportSuccess(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	repo := &openAI5hWakeAccountRepoStub{
+		accounts:      map[int64]*Account{1: account},
+		updateErrByID: map[int64]error{1: errors.New("database unavailable")},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"rate_limit":{"primary_window":{"used_percent":7,"limit_window_seconds":18000,"reset_after_seconds":18000}}}`)
+	}))
+	defer server.Close()
+	quota := NewOpenAIQuotaService(repo, nil, NewOpenAITokenProvider(repo, nil, nil), newQuotaRedirectingFactory(server))
+	upstream := &openAI5hWakeHTTPStub{}
+	wake := &OpenAI5hWakeService{accountRepo: repo, quotaService: quota, httpUpstream: upstream}
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{account})[0]
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, IdentityHash: group.identityHash, MemberAccountIDs: []int64{1},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusFailed, result.Status)
+	require.Equal(t, "snapshot_persist_failed", result.ErrorCode)
+	require.Empty(t, upstream.requests)
+	require.Empty(t, repo.updates)
+}
+
+func TestOpenAI5hWakeResponseSnapshotPersistenceFailureDoesNotReportWoken(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	repo := &openAI5hWakeAccountRepoStub{
+		accounts:      map[int64]*Account{1: account},
+		updateErrByID: map[int64]error{1: errors.New("database unavailable")},
+	}
+	upstream := &openAI5hWakeHTTPStub{responses: []openAI5hWakeStubResponse{openAI5hWakeHeaders(http.StatusOK)}}
+	wake := &OpenAI5hWakeService{
+		accountRepo: repo, tokenProvider: NewOpenAITokenProvider(repo, nil, nil), httpUpstream: upstream,
+	}
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{account})[0]
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, IdentityHash: group.identityHash, MemberAccountIDs: []int64{1},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusFailed, result.Status)
+	require.Equal(t, "snapshot_persist_failed", result.ErrorCode)
+	require.Len(t, upstream.requests, 1)
+	require.Empty(t, repo.updates)
+}
+
 func TestOpenAI5hWakeProcessItemTreats429WithFutureResetAsActive(t *testing.T) {
 	account := newOpenAI5hWakeAccount(1, "pool")
 	repo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{1: account}}
@@ -667,6 +743,31 @@ func TestOpenAI5hWakeWorkerPersistsCompletionFailureInTaskEvents(t *testing.T) {
 	require.Contains(t, codes, "item_started")
 	require.Contains(t, codes, "item_complete_failed")
 	require.Contains(t, codes, "task_processing_failed")
+}
+
+func TestOpenAI5hWakeWorkerFailsRecoveredItemsAfterRetryLimit(t *testing.T) {
+	upstream := &openAI5hWakeObservedUpstream{}
+	wake, repo := newOpenAI5hWakeWorkerFixture(1, upstream)
+	repo.items[0].Status = OpenAI5hWakeItemStatusRunning
+	repo.items[0].AttemptCount = openAI5hWakeMaxItemAttempts
+
+	wake.processTask(repo.task)
+
+	require.Equal(t, int32(0), upstream.requestCount.Load())
+	require.Equal(t, OpenAI5hWakeTaskStatusFailed, repo.task.Status)
+	require.Equal(t, 1, repo.task.ProcessedItems)
+	require.Equal(t, 1, repo.task.FailedCount)
+	require.Equal(t, OpenAI5hWakeItemStatusFailed, repo.items[0].Status)
+	require.Equal(t, "worker_retry_exhausted", repo.items[0].ErrorCode)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	codes := make([]string, 0, len(repo.events))
+	for _, event := range repo.events {
+		codes = append(codes, event.Code)
+	}
+	require.Contains(t, codes, "items_retry_exhausted")
+	require.Contains(t, codes, "task_finished")
 }
 
 func TestOpenAI5hWakeCancellationStopsDispatchAndCancelsInFlightRequests(t *testing.T) {

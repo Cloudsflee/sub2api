@@ -157,6 +157,33 @@ func TestOpenAI5hWakeClaimItemRequiresCurrentUnexpiredLease(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestOpenAI5hWakeFailsExhaustedItemsAndAdvancesTaskCounters(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := NewOpenAI5hWakeTaskRepository(db)
+
+	mock.ExpectQuery(`(?s)WITH exhausted AS.*status = 'failed'.*error_code = 'worker_retry_exhausted'.*attempt_count >= \$3.*cancel_requested_at IS NULL.*processed_items = processed_items \+.*failed_count = failed_count \+.*SELECT COUNT\(\*\)::integer FROM exhausted`).
+		WithArgs(int64(5), "worker-a", 3).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+
+	count, err := repo.FailExhaustedItems(context.Background(), 5, "worker-a", 3)
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpenAI5hWakeRejectsInvalidRetryLimit(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := NewOpenAI5hWakeTaskRepository(db)
+
+	_, err = repo.FailExhaustedItems(context.Background(), 5, "worker-a", 0)
+	require.ErrorContains(t, err, "must be positive")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestOpenAI5hWakeAppendsAndListsTaskEvents(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

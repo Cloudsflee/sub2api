@@ -112,6 +112,8 @@ export default {
           item_cancelled: 'Quota pool processing cancelled',
           item_claim_failed: 'Task item claim failed',
           item_complete_failed: 'Task item result persistence failed',
+          item_recovery_failed: 'Task item recovery failed',
+          items_retry_exhausted: 'Task item retry limit reached',
           heartbeat_failed: 'Task heartbeat failed',
           lease_lost: 'Task execution lease lost',
           task_processing_failed: 'Task processing interrupted',

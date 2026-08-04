@@ -1336,9 +1336,12 @@ const refreshAccountsAfterOpenAI5hWake = async (task: OpenAI5hWakeTask) => {
   handledOpenAI5hWakeTasks.add(task.id)
   try {
     await reload()
-    usageManualRefreshToken.value += 1
   } catch (error) {
     console.error('Failed to refresh accounts after OpenAI 5h wake task:', error)
+  } finally {
+    // The visible rows can still refresh their per-account usage when the list
+    // reload fails transiently. Do not make quota refresh depend on list I/O.
+    usageManualRefreshToken.value += 1
   }
   const params = {
     woken: task.woken_count,

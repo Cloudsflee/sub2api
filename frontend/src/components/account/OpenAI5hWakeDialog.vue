@@ -518,6 +518,8 @@ const knownEventCodes = new Set([
   'item_cancelled',
   'item_claim_failed',
   'item_complete_failed',
+  'item_recovery_failed',
+  'items_retry_exhausted',
   'heartbeat_failed',
   'lease_lost',
   'task_processing_failed',
@@ -644,6 +646,7 @@ const initialize = async () => {
     }
     if (sequence !== initializeSequence || !props.show) return
     if (latest) {
+      if (terminalStatuses.has(latest.status)) completedTaskIDs.add(latest.id)
       await showExistingTask(latest)
       return
     }
