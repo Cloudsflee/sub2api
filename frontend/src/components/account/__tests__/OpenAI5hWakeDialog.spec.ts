@@ -58,7 +58,12 @@ vi.mock('@/components/icons/Icon.vue', () => ({
 }))
 
 import OpenAI5hWakeDialog from '../OpenAI5hWakeDialog.vue'
-import type { OpenAI5hWakePreview, OpenAI5hWakeTask } from '@/api/admin/accounts'
+import type {
+  OpenAI5hWakePreview,
+  OpenAI5hWakeTask,
+  OpenAI5hWakeTaskEvent,
+  OpenAI5hWakeTaskItem
+} from '@/api/admin/accounts'
 
 const preview: OpenAI5hWakePreview = {
   total_openai_accounts: 12,
@@ -113,6 +118,18 @@ const emptyEvents = {
   page: 1,
   page_size: 100,
   pages: 1
+}
+
+type TestPage<T> = Omit<typeof emptyItems, 'items'> & { items: T[] }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
 }
 
 beforeEach(() => {
@@ -191,6 +208,85 @@ describe('OpenAI5hWakeDialog', () => {
     expect(apiMocks.previewOpenAI5hWake).not.toHaveBeenCalled()
     expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenCalledWith(41, 1, 10)
     expect(wrapper.find('[data-testid="openai-5h-wake-task"]').exists()).toBe(true)
+  })
+
+  it('ignores item and event responses from a task that is no longer displayed', async () => {
+    const staleItems = deferred<TestPage<OpenAI5hWakeTaskItem>>()
+    const staleEvents = deferred<TestPage<OpenAI5hWakeTaskEvent>>()
+    apiMocks.listOpenAI5hWakeTaskItems
+      .mockReturnValueOnce(staleItems.promise)
+      .mockResolvedValue({
+        ...emptyItems,
+        items: [{
+          id: 52,
+          task_id: 42,
+          identity_hash: 'fresh-identity',
+          member_account_ids: [2],
+          attempted_account_ids: [2],
+          status: 'woken',
+          attempt_count: 1,
+          created_at: '2026-07-30T00:02:00Z',
+          updated_at: '2026-07-30T00:02:01Z'
+        }],
+        total: 1
+      })
+    apiMocks.listOpenAI5hWakeTaskEvents
+      .mockReturnValueOnce(staleEvents.promise)
+      .mockResolvedValue({
+        ...emptyEvents,
+        items: [{
+          id: 12,
+          task_id: 42,
+          level: 'info',
+          code: 'fresh_task_event',
+          message: 'fresh-task-event',
+          created_at: '2026-07-30T00:02:01Z'
+        }],
+        total: 1
+      })
+
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: makeTask({ id: 41 }) }
+    })
+    await flushPromises()
+    await wrapper.setProps({ initialTask: makeTask({ id: 42, processed_items: 2 }) })
+    await flushPromises()
+
+    staleItems.resolve({
+      ...emptyItems,
+      items: [{
+        id: 51,
+        task_id: 41,
+        identity_hash: 'stale-identity',
+        member_account_ids: [1],
+        attempted_account_ids: [1],
+        status: 'failed',
+        attempt_count: 1,
+        created_at: '2026-07-30T00:01:00Z',
+        updated_at: '2026-07-30T00:01:01Z'
+      }],
+      total: 1
+    })
+    staleEvents.resolve({
+      ...emptyEvents,
+      items: [{
+        id: 11,
+        task_id: 41,
+        level: 'error',
+        code: 'stale_task_event',
+        message: 'stale-task-event',
+        created_at: '2026-07-30T00:01:01Z'
+      }],
+      total: 1
+    })
+    await flushPromises()
+
+    expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenNthCalledWith(2, 42, 1, 10)
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenNthCalledWith(2, 42, 1, 100)
+    expect(wrapper.text()).toContain('fresh-task-event')
+    expect(wrapper.text()).toContain('fresh-identi')
+    expect(wrapper.text()).not.toContain('stale-task-event')
+    expect(wrapper.text()).not.toContain('stale-identi')
   })
 
   it('restores the latest terminal task logs and can open a new-task preview', async () => {

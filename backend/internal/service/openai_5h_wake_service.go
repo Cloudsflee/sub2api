@@ -199,9 +199,12 @@ func (s *OpenAI5hWakeService) ListTaskEvents(ctx context.Context, taskID int64, 
 }
 
 func (s *OpenAI5hWakeService) CancelTask(ctx context.Context, taskID int64) (*OpenAI5hWakeTask, error) {
-	task, err := s.repo.RequestCancel(ctx, taskID, time.Now().UTC())
+	task, requested, err := s.repo.RequestCancel(ctx, taskID, time.Now().UTC())
 	if err != nil {
 		return nil, err
+	}
+	if !requested {
+		return task, nil
 	}
 	s.runningMu.Lock()
 	cancel := s.running[taskID]
@@ -432,12 +435,7 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 		s.runningMu.Unlock()
 	}()
 
-	if err := s.repo.ResetRunningItems(ctx, task.ID, s.owner); err != nil {
-		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "task_resume_failed", wakeEventErrorMessage(err))
-		slog.Error("openai_5h_wake_resume_failed", "task_id", task.ID, "error", err)
-		return
-	}
-	exhaustedItems, err := s.repo.FailExhaustedItems(ctx, task.ID, s.owner, openAI5hWakeMaxItemAttempts)
+	exhaustedItems, err := s.repo.RecoverTaskItems(ctx, task.ID, s.owner, openAI5hWakeMaxItemAttempts)
 	if err != nil {
 		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "item_recovery_failed", wakeEventErrorMessage(err))
 		slog.Error("openai_5h_wake_item_recovery_failed", "task_id", task.ID, "error", err)
@@ -768,7 +766,7 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 		return result
 	}
 
-	requestSent := false
+	wakeRequestSucceeded := false
 	lastErrorCode := "window_unconfirmed"
 	for _, account := range candidates {
 		if ctx.Err() != nil {
@@ -783,7 +781,7 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 		}
 		if queryErr == nil && resetAt != nil && resetAt.After(time.Now()) {
 			result.Status = OpenAI5hWakeItemStatusSkippedActive
-			if requestSent {
+			if wakeRequestSucceeded {
 				result.Status = OpenAI5hWakeItemStatusWoken
 			}
 			result.ResetAt = resetAt
@@ -792,11 +790,13 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 			return result
 		}
 
-		requestSent = true
 		wakeResult := s.sendMinimumWakeRequest(ctx, account)
 		if wakeResult.err != nil {
 			lastErrorCode = wakeResult.errorCode
 			continue
+		}
+		if wakeResult.statusCode >= http.StatusOK && wakeResult.statusCode < http.StatusMultipleChoices {
+			wakeRequestSucceeded = true
 		}
 		if len(wakeResult.updates) > 0 {
 			if persistErr := s.persistWakeSnapshot(ctx, account.ID, wakeResult.updates); persistErr != nil {

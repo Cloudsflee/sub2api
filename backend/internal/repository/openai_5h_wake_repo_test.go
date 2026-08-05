@@ -29,6 +29,15 @@ func openAI5hWakeTaskRow(id int64, status string, now time.Time) *sqlmock.Rows {
 	)
 }
 
+func openAI5hWakeTaskRowWithCancel(id int64, status string, now, cancelAt time.Time) *sqlmock.Rows {
+	return sqlmock.NewRows(openAI5hWakeTaskColumns).AddRow(
+		id, status, 4, 1, 3,
+		3, 0, 0, 0, 0, 0,
+		nil, nil, nil, nil, nil,
+		nil, nil, cancelAt, nil, nil, now, now,
+	)
+}
+
 func TestOpenAI5hWakeCreateOrGetActiveReturnsConcurrentTask(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -83,7 +92,7 @@ func TestOpenAI5hWakeCompleteItemIsAtomicAndIdempotent(t *testing.T) {
 		SuccessfulAccountID: &successfulID,
 		ResetAt:             &resetAt,
 	}
-	query := `(?s)WITH completed AS.*status = 'running'.*processed_items = processed_items \+ 1.*EXISTS \(SELECT 1 FROM completed\)`
+	query := `(?s)WITH owned_task AS MATERIALIZED \(.*lease_owner = \$2.*FOR UPDATE.*\), completed AS \(.*status = 'running'.*EXISTS \(SELECT 1 FROM owned_task\).*\).*processed_items = processed_items \+ 1.*WHERE id IN \(SELECT id FROM owned_task\).*EXISTS \(SELECT 1 FROM completed\)`
 	mock.ExpectExec(query).
 		WithArgs(int64(5), "worker-a", int64(12), service.OpenAI5hWakeItemStatusWoken, sqlmock.AnyArg(), &successfulID, &resetAt, "").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -107,7 +116,7 @@ func TestOpenAI5hWakeCompleteItemPersistsNilAttemptsAsJSONArray(t *testing.T) {
 	repo := NewOpenAI5hWakeTaskRepository(db)
 	resetAt := time.Now().UTC().Add(5 * time.Hour)
 	successfulID := int64(7)
-	query := `(?s)WITH completed AS.*status = 'running'.*processed_items = processed_items \+ 1.*EXISTS \(SELECT 1 FROM completed\)`
+	query := `(?s)WITH owned_task AS MATERIALIZED \(.*lease_owner = \$2.*FOR UPDATE.*\), completed AS \(.*status = 'running'.*EXISTS \(SELECT 1 FROM owned_task\).*\).*processed_items = processed_items \+ 1.*WHERE id IN \(SELECT id FROM owned_task\).*EXISTS \(SELECT 1 FROM completed\)`
 	mock.ExpectExec(query).
 		WithArgs(
 			int64(5),
@@ -143,7 +152,7 @@ func TestOpenAI5hWakeClaimItemRequiresCurrentUnexpiredLease(t *testing.T) {
 		"successful_account_id", "status", "attempt_count", "error_code", "reset_at",
 		"started_at", "finished_at", "created_at", "updated_at",
 	}
-	mock.ExpectQuery(`(?s)UPDATE openai_5h_wake_task_items.*lease_owner = \$2.*lease_expires_at > NOW\(\).*cancel_requested_at IS NULL.*FOR UPDATE SKIP LOCKED`).
+	mock.ExpectQuery(`(?s)WITH owned_task AS MATERIALIZED \(.*lease_owner = \$2.*lease_expires_at > NOW\(\).*cancel_requested_at IS NULL.*FOR UPDATE.*\), next_item AS \(.*FOR UPDATE OF item SKIP LOCKED.*\).*UPDATE openai_5h_wake_task_items`).
 		WithArgs(int64(5), "worker-a").
 		WillReturnRows(sqlmock.NewRows(itemColumns).AddRow(
 			12, 5, "0123456789abcdef", []byte(`[7]`), []byte(`[]`),
@@ -157,19 +166,71 @@ func TestOpenAI5hWakeClaimItemRequiresCurrentUnexpiredLease(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestOpenAI5hWakeFailsExhaustedItemsAndAdvancesTaskCounters(t *testing.T) {
+func TestOpenAI5hWakeRecoversItemsAndRebuildsTaskCounters(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 	repo := NewOpenAI5hWakeTaskRepository(db)
 
-	mock.ExpectQuery(`(?s)WITH exhausted AS.*status = 'failed'.*error_code = 'worker_retry_exhausted'.*attempt_count >= \$3.*cancel_requested_at IS NULL.*processed_items = processed_items \+.*failed_count = failed_count \+.*SELECT COUNT\(\*\)::integer FROM exhausted`).
-		WithArgs(int64(5), "worker-a", 3).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT cancel_requested_at IS NOT NULL.*lease_owner = \$2.*lease_expires_at > NOW\(\).*FOR UPDATE`).
+		WithArgs(int64(5), "worker-a").
+		WillReturnRows(sqlmock.NewRows([]string{"cancel_requested"}).AddRow(false))
+	mock.ExpectExec(`(?s)UPDATE openai_5h_wake_task_items.*SET status = 'pending'.*task_id = \$1 AND status = 'running'`).
+		WithArgs(int64(5)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE openai_5h_wake_task_items.*SET status = 'failed'.*error_code = 'worker_retry_exhausted'.*attempt_count >= \$2`).
+		WithArgs(int64(5), 3).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`(?s)UPDATE openai_5h_wake_tasks AS task.*processed_items = progress.processed_items.*COUNT\(\*\) FILTER.*FROM openai_5h_wake_task_items.*task.lease_owner = \$2`).
+		WithArgs(int64(5), "worker-a").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
-	count, err := repo.FailExhaustedItems(context.Background(), 5, "worker-a", 3)
+	count, err := repo.RecoverTaskItems(context.Background(), 5, "worker-a", 3)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpenAI5hWakeRecoverySkipsExhaustionAfterCancellation(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := NewOpenAI5hWakeTaskRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT cancel_requested_at IS NOT NULL.*FOR UPDATE`).
+		WithArgs(int64(5), "worker-a").
+		WillReturnRows(sqlmock.NewRows([]string{"cancel_requested"}).AddRow(true))
+	mock.ExpectExec(`(?s)UPDATE openai_5h_wake_task_items.*SET status = 'pending'`).
+		WithArgs(int64(5)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE openai_5h_wake_tasks AS task.*processed_items = progress.processed_items`).
+		WithArgs(int64(5), "worker-a").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	count, err := repo.RecoverTaskItems(context.Background(), 5, "worker-a", 3)
+	require.NoError(t, err)
+	require.Zero(t, count)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpenAI5hWakeRecoveryRejectsLostLeaseWithoutChangingItems(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := NewOpenAI5hWakeTaskRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT cancel_requested_at IS NOT NULL.*FOR UPDATE`).
+		WithArgs(int64(5), "worker-a").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	_, err = repo.RecoverTaskItems(context.Background(), 5, "worker-a", 3)
+	require.ErrorContains(t, err, "lease is no longer owned")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -179,8 +240,107 @@ func TestOpenAI5hWakeRejectsInvalidRetryLimit(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	repo := NewOpenAI5hWakeTaskRepository(db)
 
-	_, err = repo.FailExhaustedItems(context.Background(), 5, "worker-a", 0)
+	_, err = repo.RecoverTaskItems(context.Background(), 5, "worker-a", 0)
 	require.ErrorContains(t, err, "must be positive")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpenAI5hWakeRequestCancelIsIdempotent(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := NewOpenAI5hWakeTaskRepository(db)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	updateQuery := `(?s)UPDATE openai_5h_wake_tasks.*cancel_requested_at = \$2.*status IN \('pending', 'running'\).*cancel_requested_at IS NULL.*RETURNING`
+	mock.ExpectQuery(updateQuery).
+		WithArgs(int64(5), now).
+		WillReturnRows(openAI5hWakeTaskRowWithCancel(5, service.OpenAI5hWakeTaskStatusRunning, now, now))
+
+	task, requested, err := repo.RequestCancel(context.Background(), 5, now)
+	require.NoError(t, err)
+	require.True(t, requested)
+	require.Equal(t, now, task.CancelRequestedAt.UTC())
+
+	mock.ExpectQuery(updateQuery).
+		WithArgs(int64(5), now.Add(time.Second)).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`(?s)FROM openai_5h_wake_tasks WHERE id = \$1`).
+		WithArgs(int64(5)).
+		WillReturnRows(openAI5hWakeTaskRowWithCancel(5, service.OpenAI5hWakeTaskStatusRunning, now, now))
+
+	task, requested, err = repo.RequestCancel(context.Background(), 5, now.Add(time.Second))
+	require.NoError(t, err)
+	require.False(t, requested)
+	require.Equal(t, now, task.CancelRequestedAt.UTC())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpenAI5hWakeRequestCancelLeavesTerminalTaskUntouched(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := NewOpenAI5hWakeTaskRepository(db)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	mock.ExpectQuery(`(?s)UPDATE openai_5h_wake_tasks.*cancel_requested_at IS NULL.*RETURNING`).
+		WithArgs(int64(5), now).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`(?s)FROM openai_5h_wake_tasks WHERE id = \$1`).
+		WithArgs(int64(5)).
+		WillReturnRows(openAI5hWakeTaskRow(5, service.OpenAI5hWakeTaskStatusSucceeded, now))
+
+	task, requested, err := repo.RequestCancel(context.Background(), 5, now)
+	require.NoError(t, err)
+	require.False(t, requested)
+	require.Equal(t, service.OpenAI5hWakeTaskStatusSucceeded, task.Status)
+	require.Nil(t, task.CancelRequestedAt)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpenAI5hWakeFinalizeTaskLocksLeaseBeforeCancellingItems(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := NewOpenAI5hWakeTaskRepository(db)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT id FROM openai_5h_wake_tasks.*status = 'running'.*lease_owner = \$2.*lease_expires_at > \$3.*FOR UPDATE`).
+		WithArgs(int64(5), "worker-a", now).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(5))
+	mock.ExpectQuery(`(?s)WITH cancelled AS.*UPDATE openai_5h_wake_task_items.*status IN \('pending', 'running'\).*RETURNING id`).
+		WithArgs(int64(5), now).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectExec(`(?s)UPDATE openai_5h_wake_tasks.*status = 'cancelled'.*processed_items = processed_items \+ \$4.*cancelled_count = cancelled_count \+ \$4`).
+		WithArgs(int64(5), "worker-a", now, 2).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`(?s)SELECT id, status, eligible_account_count.*FROM openai_5h_wake_tasks WHERE id = \$1`).
+		WithArgs(int64(5)).
+		WillReturnRows(openAI5hWakeTaskRow(5, service.OpenAI5hWakeTaskStatusCancelled, now))
+	mock.ExpectCommit()
+
+	task, err := repo.FinalizeTask(context.Background(), 5, "worker-a", true, now)
+	require.NoError(t, err)
+	require.Equal(t, service.OpenAI5hWakeTaskStatusCancelled, task.Status)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpenAI5hWakeFinalizeTaskRejectsLostLeaseBeforeChangingItems(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := NewOpenAI5hWakeTaskRepository(db)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT id FROM openai_5h_wake_tasks.*FOR UPDATE`).
+		WithArgs(int64(5), "worker-a", now).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectRollback()
+
+	_, err = repo.FinalizeTask(context.Background(), 5, "worker-a", true, now)
+	require.ErrorContains(t, err, "lease is no longer owned")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

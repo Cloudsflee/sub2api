@@ -128,25 +128,17 @@ func (r *openAI5hWakeWorkerRepo) ListTaskEvents(_ context.Context, _ int64, _, _
 	return result, int64(len(result)), nil
 }
 
-func (r *openAI5hWakeWorkerRepo) ResetRunningItems(context.Context, int64, string) error {
+func (r *openAI5hWakeWorkerRepo) RecoverTaskItems(_ context.Context, _ int64, _ string, maxAttempts int) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	count := 0
 	for _, item := range r.items {
 		if item.Status == OpenAI5hWakeItemStatusRunning {
 			item.Status = OpenAI5hWakeItemStatusPending
 		}
-	}
-	return nil
-}
-
-func (r *openAI5hWakeWorkerRepo) FailExhaustedItems(_ context.Context, _ int64, _ string, maxAttempts int) (int, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.cancelRequested {
-		return 0, nil
-	}
-	count := 0
-	for _, item := range r.items {
+		if r.cancelRequested {
+			continue
+		}
 		if item.Status != OpenAI5hWakeItemStatusPending || item.AttemptCount < maxAttempts {
 			continue
 		}
@@ -154,8 +146,27 @@ func (r *openAI5hWakeWorkerRepo) FailExhaustedItems(_ context.Context, _ int64, 
 		item.ErrorCode = "worker_retry_exhausted"
 		count++
 	}
-	r.task.ProcessedItems += count
-	r.task.FailedCount += count
+	r.task.ProcessedItems = 0
+	r.task.WokenCount = 0
+	r.task.SkippedActiveCount = 0
+	r.task.FailedCount = 0
+	r.task.CancelledCount = 0
+	for _, item := range r.items {
+		switch item.Status {
+		case OpenAI5hWakeItemStatusWoken:
+			r.task.ProcessedItems++
+			r.task.WokenCount++
+		case OpenAI5hWakeItemStatusSkippedActive:
+			r.task.ProcessedItems++
+			r.task.SkippedActiveCount++
+		case OpenAI5hWakeItemStatusFailed:
+			r.task.ProcessedItems++
+			r.task.FailedCount++
+		case OpenAI5hWakeItemStatusCancelled:
+			r.task.ProcessedItems++
+			r.task.CancelledCount++
+		}
+	}
 	return count, nil
 }
 
@@ -210,13 +221,17 @@ func (r *openAI5hWakeWorkerRepo) IsCancelRequested(context.Context, int64) (bool
 	return r.cancelRequested, nil
 }
 
-func (r *openAI5hWakeWorkerRepo) RequestCancel(_ context.Context, _ int64, now time.Time) (*OpenAI5hWakeTask, error) {
+func (r *openAI5hWakeWorkerRepo) RequestCancel(_ context.Context, _ int64, now time.Time) (*OpenAI5hWakeTask, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.cancelRequested || (r.task.Status != OpenAI5hWakeTaskStatusPending && r.task.Status != OpenAI5hWakeTaskStatusRunning) {
+		copyTask := *r.task
+		return &copyTask, false, nil
+	}
 	r.cancelRequested = true
 	r.task.CancelRequestedAt = &now
 	copyTask := *r.task
-	return &copyTask, nil
+	return &copyTask, true, nil
 }
 
 func (r *openAI5hWakeWorkerRepo) FinalizeTask(_ context.Context, _ int64, _ string, cancelled bool, now time.Time) (*OpenAI5hWakeTask, error) {
@@ -520,6 +535,41 @@ func TestOpenAI5hWakeProcessItemContinuesAfterUsageFailureAndFallsBackAccount(t 
 	require.Contains(t, second.Extra, "codex_5h_reset_at")
 }
 
+func TestOpenAI5hWakeProcessItemDoesNotCallFailedRequestWoken(t *testing.T) {
+	first := newOpenAI5hWakeAccount(1, "shared-pool")
+	second := newOpenAI5hWakeAccount(2, "shared-pool")
+	repo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{1: first, 2: second}}
+	var usageCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if usageCalls.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"rate_limit":{"primary_window":{"used_percent":3,"limit_window_seconds":18000,"reset_after_seconds":18000}}}`)
+	}))
+	defer server.Close()
+	tokenProvider := NewOpenAITokenProvider(repo, nil, nil)
+	quota := NewOpenAIQuotaService(repo, nil, tokenProvider, newQuotaRedirectingFactory(server))
+	upstream := &openAI5hWakeHTTPStub{responses: []openAI5hWakeStubResponse{{err: errors.New("dial timeout")}}}
+	wake := &OpenAI5hWakeService{
+		accountRepo: repo, quotaService: quota, tokenProvider: tokenProvider, httpUpstream: upstream,
+	}
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{first, second})[0]
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, IdentityHash: group.identityHash, MemberAccountIDs: []int64{1, 2},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusSkippedActive, result.Status)
+	require.Equal(t, []int64{1, 2}, result.AttemptedAccountIDs)
+	require.NotNil(t, result.SuccessfulAccountID)
+	require.Equal(t, int64(2), *result.SuccessfulAccountID)
+	require.Len(t, upstream.requests, 1)
+	require.Empty(t, repo.updates[1])
+	require.NotEmpty(t, repo.updates[2])
+}
+
 func TestOpenAI5hWakeProcessItemSkipsPersistedActiveWindow(t *testing.T) {
 	first := newOpenAI5hWakeAccount(1, "shared-pool")
 	second := newOpenAI5hWakeAccount(2, "shared-pool")
@@ -798,6 +848,37 @@ func TestOpenAI5hWakeCancellationStopsDispatchAndCancelsInFlightRequests(t *test
 	require.Equal(t, int32(openAI5hWakeConcurrency), upstream.cancelled.Load())
 	require.Equal(t, OpenAI5hWakeTaskStatusCancelled, repo.task.Status)
 	require.Equal(t, repo.task.TotalItems, repo.task.CancelledCount)
+}
+
+func TestOpenAI5hWakeCancelTaskRecordsOnlyTheFirstRequest(t *testing.T) {
+	wake, repo := newOpenAI5hWakeWorkerFixture(1, &openAI5hWakeObservedUpstream{})
+
+	first, err := wake.CancelTask(context.Background(), repo.task.ID)
+	require.NoError(t, err)
+	require.NotNil(t, first.CancelRequestedAt)
+	second, err := wake.CancelTask(context.Background(), repo.task.ID)
+	require.NoError(t, err)
+	require.Equal(t, first.CancelRequestedAt, second.CancelRequestedAt)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	cancelEvents := 0
+	for _, event := range repo.events {
+		if event.Code == "cancel_requested" {
+			cancelEvents++
+		}
+	}
+	require.Equal(t, 1, cancelEvents)
+}
+
+func TestOpenAI5hWakeCancelTaskDoesNotAddEventForTerminalTask(t *testing.T) {
+	wake, repo := newOpenAI5hWakeWorkerFixture(1, &openAI5hWakeObservedUpstream{})
+	repo.task.Status = OpenAI5hWakeTaskStatusSucceeded
+
+	task, err := wake.CancelTask(context.Background(), repo.task.ID)
+	require.NoError(t, err)
+	require.Equal(t, OpenAI5hWakeTaskStatusSucceeded, task.Status)
+	require.Empty(t, repo.events)
 }
 
 func sortedMapKeys(values map[string]any) []string {

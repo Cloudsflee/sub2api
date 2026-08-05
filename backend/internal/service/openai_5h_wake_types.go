@@ -172,11 +172,10 @@ type OpenAI5hWakeTaskRepository interface {
 	AppendTaskEvent(ctx context.Context, params OpenAI5hWakeTaskEventParams) error
 	ClaimTask(ctx context.Context, owner string, now, leaseUntil time.Time) (*OpenAI5hWakeTask, error)
 	HeartbeatTask(ctx context.Context, taskID int64, owner string, now, leaseUntil time.Time) (bool, error)
-	ResetRunningItems(ctx context.Context, taskID int64, owner string) error
-	FailExhaustedItems(ctx context.Context, taskID int64, owner string, maxAttempts int) (int, error)
+	RecoverTaskItems(ctx context.Context, taskID int64, owner string, maxAttempts int) (int, error)
 	ClaimNextItem(ctx context.Context, taskID int64, owner string) (*OpenAI5hWakeTaskItem, error)
 	CompleteItem(ctx context.Context, taskID int64, owner string, params OpenAI5hWakeCompleteItemParams) (bool, error)
-	RequestCancel(ctx context.Context, taskID int64, now time.Time) (*OpenAI5hWakeTask, error)
+	RequestCancel(ctx context.Context, taskID int64, now time.Time) (*OpenAI5hWakeTask, bool, error)
 	IsCancelRequested(ctx context.Context, taskID int64) (bool, error)
 	FinalizeTask(ctx context.Context, taskID int64, owner string, cancelled bool, now time.Time) (*OpenAI5hWakeTask, error)
 	DeleteTerminalBefore(ctx context.Context, cutoff time.Time) (int64, error)

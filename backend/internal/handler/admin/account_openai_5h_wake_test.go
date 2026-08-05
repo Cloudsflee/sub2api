@@ -82,13 +82,17 @@ func (r *openAI5hWakeHandlerTaskRepo) AppendTaskEvent(_ context.Context, params 
 	return nil
 }
 
-func (r *openAI5hWakeHandlerTaskRepo) RequestCancel(_ context.Context, taskID int64, now time.Time) (*service.OpenAI5hWakeTask, error) {
+func (r *openAI5hWakeHandlerTaskRepo) RequestCancel(_ context.Context, taskID int64, now time.Time) (*service.OpenAI5hWakeTask, bool, error) {
 	if r.task == nil || taskID != r.task.ID {
-		return nil, service.ErrOpenAI5hWakeTaskNotFound
+		return nil, false, service.ErrOpenAI5hWakeTaskNotFound
 	}
+	if r.task.CancelRequestedAt != nil || (r.task.Status != service.OpenAI5hWakeTaskStatusPending && r.task.Status != service.OpenAI5hWakeTaskStatusRunning) {
+		copyTask := *r.task
+		return &copyTask, false, nil
+	}
+	r.task.CancelRequestedAt = &now
 	copyTask := *r.task
-	copyTask.CancelRequestedAt = &now
-	return &copyTask, nil
+	return &copyTask, true, nil
 }
 
 func newOpenAI5hWakeHandler(t *testing.T) (*AccountHandler, *openAI5hWakeHandlerTaskRepo) {
