@@ -361,6 +361,33 @@ func TestUpdateCredentialsAtomicallyClearsProbeForOpenAIAPIKeyIdentityChange(t *
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestUpdateCredentialsInvalidatesWakeMarkerOnlyThroughTypedOpenAIIdentityGuard(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+
+	marker := regexp.QuoteMeta("- '" + service.OpenAI5hWakeSnapshotIdentityExtraKey + "'")
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE accounts.*platform = 'openai'.*type = 'oauth'.*chatgpt_account_id.*organization_id.*chatgpt_user_id.*`+marker).
+		WithArgs(`{"access_token":"token","chatgpt_account_id":"account-after"}`, int64(27)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
+		WithArgs(service.SchedulerOutboxEventAccountChanged, int64(27), nil, nil, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+
+	err = repo.UpdateCredentials(context.Background(), 27, map[string]any{
+		"access_token":       "token",
+		"chatgpt_account_id": "account-after",
+	})
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestUpdateWithAccountBillingSettingsRollsBackWhenOutboxFails(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

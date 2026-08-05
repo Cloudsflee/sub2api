@@ -141,6 +141,29 @@ func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) 
 	}
 }
 
+func TestExtractOpenAICodexProbeUpdatesRejectsFailureHeaders(t *testing.T) {
+	t.Parallel()
+
+	headers := make(http.Header)
+	headers.Set("x-codex-primary-used-percent", "100")
+	headers.Set("x-codex-primary-reset-after-seconds", "18000")
+	headers.Set("x-codex-primary-window-minutes", "300")
+
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError} {
+		status := status
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+			updates, err := extractOpenAICodexProbeUpdates(&http.Response{StatusCode: status, Header: headers.Clone()})
+			if err == nil {
+				t.Fatalf("extractOpenAICodexProbeUpdates() error = nil, want status %d failure", status)
+			}
+			if len(updates) != 0 {
+				t.Fatalf("extractOpenAICodexProbeUpdates() updates = %v, want none", updates)
+			}
+		})
+	}
+}
+
 func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *testing.T) {
 	t.Parallel()
 
@@ -149,10 +172,12 @@ func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *
 		rateLimitCh:   make(chan time.Time, 1),
 	}
 	svc := &AccountUsageService{accountRepo: repo}
-	svc.persistOpenAICodexProbeSnapshot(321, map[string]any{
+	if err := svc.persistOpenAICodexProbeSnapshot(context.Background(), 321, map[string]any{
 		"codex_7d_used_percent": 100.0,
 		"codex_7d_reset_at":     time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339),
-	})
+	}); err != nil {
+		t.Fatalf("persistOpenAICodexProbeSnapshot() error = %v", err)
+	}
 
 	select {
 	case updates := <-repo.updateExtraCh:

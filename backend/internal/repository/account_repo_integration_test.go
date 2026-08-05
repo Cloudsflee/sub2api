@@ -258,6 +258,42 @@ func (s *AccountRepoSuite) TestUpdateCredentials_SyncsSnapshotAndDurableOutbox()
 	s.Require().Equal(1, outboxCount)
 }
 
+func (s *AccountRepoSuite) TestUpdateCredentials_InvalidatesWakeMarkerOnlyWhenTypedIdentityChanges() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:        "wake-identity-credentials",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"access_token":       "old-token",
+			"chatgpt_account_id": "account-before",
+			"organization_id":    "org",
+		},
+		Extra: map[string]any{
+			service.OpenAI5hWakeSnapshotIdentityExtraKey: "trusted-marker",
+		},
+	})
+
+	s.Require().NoError(s.repo.UpdateCredentials(s.ctx, account.ID, map[string]any{
+		"access_token":       "rotated-token",
+		"chatgpt_account_id": "account-before",
+		"organization_id":    "org",
+	}))
+	afterTokenRotation, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().Equal("trusted-marker", afterTokenRotation.Extra[service.OpenAI5hWakeSnapshotIdentityExtraKey])
+
+	s.Require().NoError(s.repo.UpdateCredentials(s.ctx, account.ID, map[string]any{
+		"access_token":       "reauthorized-token",
+		"chatgpt_account_id": "account-after",
+		"organization_id":    "org",
+	}))
+	afterIdentityChange, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().NotContains(afterIdentityChange.Extra, service.OpenAI5hWakeSnapshotIdentityExtraKey)
+}
+
 func (s *AccountRepoSuite) TestDelete() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "to-delete"})
 

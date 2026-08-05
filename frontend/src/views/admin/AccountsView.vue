@@ -1330,6 +1330,8 @@ const openOpenAI5hWake = () => {
 
 const handledOpenAI5hWakeTasks = new Set<number>()
 let latestOpenAI5hWakeRefreshing = false
+let latestOpenAI5hWakeViewSequence = 0
+let latestOpenAI5hWakeRequestSequence = 0
 
 const refreshAccountsAfterOpenAI5hWake = async (task: OpenAI5hWakeTask) => {
   if (handledOpenAI5hWakeTasks.has(task.id)) return
@@ -1356,10 +1358,12 @@ const refreshAccountsAfterOpenAI5hWake = async (task: OpenAI5hWakeTask) => {
 }
 
 const handleOpenAI5hWakeTaskUpdated = (task: OpenAI5hWakeTask) => {
+  latestOpenAI5hWakeViewSequence += 1
   latestOpenAI5hWakeTask.value = task
 }
 
 const handleOpenAI5hWakeTaskCompleted = (task: OpenAI5hWakeTask) => {
+  latestOpenAI5hWakeViewSequence += 1
   latestOpenAI5hWakeTask.value = task
   void refreshAccountsAfterOpenAI5hWake(task)
 }
@@ -1369,9 +1373,15 @@ const refreshLatestOpenAI5hWakeTask = async (handleTerminalTransition: boolean) 
   const getLatestTask = adminAPI.accounts.getLatestOpenAI5hWakeTask
   if (typeof getLatestTask !== 'function') return
   latestOpenAI5hWakeRefreshing = true
+  const requestSequence = ++latestOpenAI5hWakeRequestSequence
+  const viewSequence = latestOpenAI5hWakeViewSequence
   const previous = latestOpenAI5hWakeTask.value
   try {
     const next = await getLatestTask()
+    if (
+      requestSequence !== latestOpenAI5hWakeRequestSequence ||
+      viewSequence !== latestOpenAI5hWakeViewSequence
+    ) return
     latestOpenAI5hWakeTask.value = next
     const previousWasActive = previous?.status === 'pending' || previous?.status === 'running'
     if (handleTerminalTransition && previousWasActive && next && openAI5hWakeTerminalStatuses.has(next.status)) {
@@ -2320,6 +2330,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  latestOpenAI5hWakeViewSequence += 1
+  latestOpenAI5hWakeRequestSequence += 1
   window.removeEventListener('scroll', handleScroll, true)
   window.removeEventListener('resize', handleViewportResize)
   document.removeEventListener('click', handleClickOutside)

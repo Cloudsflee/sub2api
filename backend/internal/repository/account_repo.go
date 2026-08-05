@@ -796,6 +796,19 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 					- 'ollama_cloud_usage_session'
 					- 'ollama_cloud_usage_auto_refresh'
 					- 'ollama_cloud_usage_snapshot'
+				-- A token refresh keeps the same quota identity and must retain a
+				-- trusted wake marker. Re-authentication that changes any typed
+				-- identity field invalidates it so the new account is queried once.
+				WHEN platform = 'openai'
+					AND type = 'oauth'
+					AND credentials IS DISTINCT FROM $1::jsonb
+					AND (
+						credentials ->> 'chatgpt_account_id' IS DISTINCT FROM $1::jsonb ->> 'chatgpt_account_id'
+						OR credentials ->> 'organization_id' IS DISTINCT FROM $1::jsonb ->> 'organization_id'
+						OR credentials ->> 'chatgpt_user_id' IS DISTINCT FROM $1::jsonb ->> 'chatgpt_user_id'
+					)
+				THEN COALESCE(extra, '{}'::jsonb)
+					- '`+service.OpenAI5hWakeSnapshotIdentityExtraKey+`'
 				-- 上游倍率探测已放宽到全部 API-key 平台：凭证变化即视为探测
 				-- 身份变化，丢弃 stale 快照。
 				WHEN type = 'apikey'

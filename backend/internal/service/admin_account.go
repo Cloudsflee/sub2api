@@ -144,6 +144,9 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"codex_7d_reset_after_seconds":           {},
 	"codex_7d_window_minutes":                {},
 	"codex_7d_reset_at":                      {},
+	// Wake verification belongs to the source account and must be re-established
+	// when an account is duplicated or its credentials are replaced.
+	"codex_5h_wake_identity_hash": {},
 }
 
 func duplicateAccountExtra(value map[string]any) (map[string]any, error) {
@@ -600,6 +603,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
+	previousOpenAI5hWakeIdentity := openAI5hWakeIdentityFingerprintFor(account)
+	previousOpenAI5hWakeMarker, hadOpenAI5hWakeMarker := account.Extra[openAI5hWakeSnapshotIdentityKey]
 	var normalizedExtra map[string]any
 	if input.Extra != nil {
 		normalizedExtra, err = normalizeOpenAILongContextBillingUpdateExtra(account, input)
@@ -610,6 +615,10 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if err != nil {
 			return nil, err
 		}
+		// This is worker-owned state. Never accept a marker echoed by an account
+		// edit payload; a valid marker is restored below only after the identity
+		// comparison has succeeded.
+		delete(normalizedExtra, openAI5hWakeSnapshotIdentityKey)
 	}
 	previousProbeIdentity := upstreamBillingProbeIdentity(account)
 	previousOllamaUsageIdentity := ollamaCloudUsageIdentity(account)
@@ -780,6 +789,21 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			delete(account.Extra, OllamaCloudUsageSnapshotExtraKey)
 		}
 	}
+	currentOpenAI5hWakeIdentity := openAI5hWakeIdentityFingerprintFor(account)
+	if previousOpenAI5hWakeIdentity != currentOpenAI5hWakeIdentity {
+		delete(account.Extra, openAI5hWakeSnapshotIdentityKey)
+	} else if input.Extra != nil && hadOpenAI5hWakeMarker {
+		// Preserve a worker-owned marker through unrelated edits, but only when it
+		// is already the marker for this exact identity. A stale/forged value is
+		// intentionally discarded and will be rebuilt by the next wake query.
+		if marker, ok := previousOpenAI5hWakeMarker.(string); ok &&
+			strings.EqualFold(strings.TrimSpace(marker), currentOpenAI5hWakeIdentity.identityHash) {
+			if account.Extra == nil {
+				account.Extra = make(map[string]any)
+			}
+			account.Extra[openAI5hWakeSnapshotIdentityKey] = marker
+		}
+	}
 	// 只在指针非 nil 时更新 Concurrency（支持设置为 0）
 	if input.Concurrency != nil {
 		account.Concurrency = normalizeAccountConcurrency(account.Platform, account.Type, *input.Concurrency)
@@ -910,6 +934,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OllamaCloudUsageSessionExtraKey)
 	delete(updates, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
+	delete(updates, openAI5hWakeSnapshotIdentityKey)
 	if _, exists := updates[openAILongContextBillingEnabledKey]; exists {
 		account, err := s.accountRepo.GetByID(ctx, id)
 		if err != nil {
@@ -935,6 +960,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
 	delete(input.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)
+	delete(input.Extra, openAI5hWakeSnapshotIdentityKey)
 
 	if len(input.AccountIDs) == 0 && input.Filters != nil {
 		accountIDs, err := s.resolveBulkUpdateTargetIDs(ctx, input.Filters)
@@ -1095,6 +1121,15 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		// next enabled runner cycle probe the new upstream identity immediately.
 		repoUpdates.Extra[UpstreamBillingProbeExtraKey] = nil
 	}
+	if updatesOpenAI5hWakeIdentity(input.Credentials) {
+		if repoUpdates.Extra == nil {
+			repoUpdates.Extra = make(map[string]any)
+		}
+		// BulkUpdate merges one Extra patch into every target row. Clearing the
+		// worker-owned marker for identity-bearing credential edits is deliberate:
+		// each account must prove its new identity independently on the next wake.
+		repoUpdates.Extra[openAI5hWakeSnapshotIdentityKey] = nil
+	}
 	if input.Name != "" {
 		repoUpdates.Name = &input.Name
 	}
@@ -1170,6 +1205,15 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 func updatesUpstreamBillingProbeIdentity(credentials map[string]any) bool {
 	for _, key := range []string{"api_key", "base_url", credKeyHeaderOverrideEnabled, credKeyHeaderOverrides} {
+		if _, ok := credentials[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func updatesOpenAI5hWakeIdentity(credentials map[string]any) bool {
+	for _, key := range []string{"chatgpt_account_id", "organization_id", "chatgpt_user_id"} {
 		if _, ok := credentials[key]; ok {
 			return true
 		}

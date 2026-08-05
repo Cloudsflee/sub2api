@@ -720,7 +720,9 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 				if quotaUsage, err := s.openAIQuotaService.QueryUsage(ctx, account.ID); err == nil {
 					if updates := buildCodexSparkWindowExtraUpdates(quotaUsage, now); len(updates) > 0 {
 						mergeAccountExtra(account, updates)
-						s.persistOpenAICodexProbeSnapshot(account.ID, updates)
+						if persistErr := s.persistOpenAICodexProbeSnapshot(ctx, account.ID, updates); persistErr != nil {
+							slog.Warn("openai_codex_probe_snapshot_persist_failed", "account_id", account.ID, "error", persistErr)
+						}
 						if usage.UpdatedAt == nil {
 							usage.UpdatedAt = &now
 						}
@@ -894,35 +896,43 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 		return nil, err
 	}
 	if len(updates) > 0 {
-		s.persistOpenAICodexProbeSnapshot(account.ID, updates)
+		if err := s.persistOpenAICodexProbeSnapshot(ctx, account.ID, updates); err != nil {
+			return nil, fmt.Errorf("persist openai codex probe snapshot: %w", err)
+		}
 		return updates, nil
 	}
 	return nil, nil
 }
 
-func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(accountID int64, updates map[string]any) {
+func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(ctx context.Context, accountID int64, updates map[string]any) error {
 	if s == nil || s.accountRepo == nil || accountID <= 0 {
-		return
+		return nil
 	}
 	if len(updates) == 0 {
-		return
+		return nil
 	}
 
-	go func() {
-		updateCtx, updateCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer updateCancel()
-		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
-	}()
+	updateCtx, updateCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer updateCancel()
+	return s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
 }
 
 func extractOpenAICodexProbeUpdates(resp *http.Response) (map[string]any, error) {
 	if resp == nil {
 		return nil, nil
 	}
+	// A 429 response is the only non-2xx status whose quota headers are
+	// authoritative. Authentication and upstream failures may carry generic or
+	// stale x-codex-* headers; accepting them would overwrite the account's last
+	// verified snapshot after a wake task completes.
+	if resp.StatusCode != http.StatusTooManyRequests &&
+		(resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
+		return nil, fmt.Errorf("openai codex probe returned status %d", resp.StatusCode)
+	}
 	if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
 		return buildCodexUsageExtraUpdates(snapshot, time.Now()), nil
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if resp.StatusCode == http.StatusTooManyRequests {
 		return nil, fmt.Errorf("openai codex probe returned status %d", resp.StatusCode)
 	}
 	return nil, nil

@@ -81,6 +81,7 @@ func (r *openAI5hWakeAccountRepoStub) UpdateExtra(_ context.Context, id int64, u
 type openAI5hWakeStubResponse struct {
 	status  int
 	headers http.Header
+	body    string
 	err     error
 	block   bool
 }
@@ -305,7 +306,7 @@ func (s *openAI5hWakeObservedUpstream) DoWithTLS(req *http.Request, _ string, _ 
 	return &http.Response{
 		StatusCode: response.status,
 		Header:     response.headers,
-		Body:       io.NopCloser(strings.NewReader("ignored")),
+		Body:       io.NopCloser(strings.NewReader(openAI5hWakeResponseBody(response))),
 	}, nil
 }
 
@@ -341,7 +342,7 @@ func (s *openAI5hWakeHTTPStub) DoWithTLS(req *http.Request, proxyURL string, acc
 	return &http.Response{
 		StatusCode: response.status,
 		Header:     response.headers,
-		Body:       io.NopCloser(strings.NewReader("ignored")),
+		Body:       io.NopCloser(strings.NewReader(openAI5hWakeResponseBody(response))),
 	}, nil
 }
 
@@ -370,6 +371,16 @@ func openAI5hWakeHeaders(status int) openAI5hWakeStubResponse {
 	return openAI5hWakeStubResponse{status: status, headers: headers}
 }
 
+func openAI5hWakeResponseBody(response openAI5hWakeStubResponse) string {
+	if response.body != "" {
+		return response.body
+	}
+	if response.status >= http.StatusOK && response.status < http.StatusMultipleChoices {
+		return "data: {\"type\":\"response.completed\"}\n\ndata: [DONE]\n\n"
+	}
+	return ""
+}
+
 func TestOpenAI5hWakeBuildPlanFiltersAndKeepsTypedIdentitiesSeparate(t *testing.T) {
 	now := time.Now().UTC()
 	expired := now.Add(-time.Minute)
@@ -381,6 +392,7 @@ func TestOpenAI5hWakeBuildPlanFiltersAndKeepsTypedIdentitiesSeparate(t *testing.
 	sharedB.Credentials["organization_id"] = "shared-pool"
 	active := *newOpenAI5hWakeAccount(3, "active-pool")
 	active.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
+	active.Extra[openAI5hWakeSnapshotIdentityKey] = openAI5hWakeIdentityHash(&active)
 	apiKey := *newOpenAI5hWakeAccount(4, "api-key")
 	apiKey.Type = AccountTypeAPIKey
 	nonOAuth := *newOpenAI5hWakeAccount(5, "non-oauth")
@@ -489,6 +501,97 @@ func TestBuildOpenAI5hWakePayloadIsMinimalAndUsesMappedModel(t *testing.T) {
 	require.NotContains(t, string(payload), "You are")
 }
 
+func TestValidateOpenAI5hWakeResponseBody(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr bool
+	}{
+		{
+			name: "completed SSE",
+			body: "data: {\"type\":\"response.completed\"}\n\ndata: [DONE]\n\n",
+		},
+		{
+			name: "event name with buffered response object",
+			body: "event: response.completed\ndata: {\"response\":{\"status\":\"completed\"}}\n\n",
+		},
+		{
+			name: "buffered JSON",
+			body: `{"type":"response.done","response":{"status":"completed"}}`,
+		},
+		{
+			name:    "explicit failure",
+			body:    "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\"}}\n\n",
+			wantErr: true,
+		},
+		{
+			name:    "top-level incomplete status",
+			body:    `{"type":"response.completed","status":"incomplete"}`,
+			wantErr: true,
+		},
+		{
+			name:    "incomplete terminal event",
+			body:    "event: response.incomplete\ndata: {\"status\":\"incomplete\"}\n\n",
+			wantErr: true,
+		},
+		{
+			name:    "incomplete stream",
+			body:    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateOpenAI5hWakeResponseBody([]byte(tt.body))
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestOpenAI5hWakePartialSnapshotInvalidatesTrustedMarker(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	account.Extra["codex_5h_reset_at"] = time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	account.Extra[openAI5hWakeSnapshotIdentityKey] = openAI5hWakeIdentityHash(account)
+	repo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{account.ID: account}}
+	service := &OpenAI5hWakeService{accountRepo: repo}
+
+	require.NoError(t, service.persistWakeSnapshot(context.Background(), account, map[string]any{
+		"codex_7d_used_percent": 42,
+		"codex_7d_reset_at":     time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
+	}))
+
+	updates := repo.updates[account.ID]
+	require.Len(t, updates, 1)
+	marker, exists := updates[0][openAI5hWakeSnapshotIdentityKey]
+	require.True(t, exists)
+	require.Nil(t, marker)
+	require.False(t, hasTrustedOpenAI5hWakeSnapshot(account))
+}
+
+func TestOpenAI5hWakeProcessItemRejectsIncompleteSuccessfulStream(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	response := openAI5hWakeHeaders(http.StatusOK)
+	response.body = "data: {\"type\":\"response.created\"}\n\n"
+	repo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{1: account}}
+	wake := &OpenAI5hWakeService{
+		accountRepo:   repo,
+		tokenProvider: NewOpenAITokenProvider(repo, nil, nil),
+		httpUpstream:  &openAI5hWakeHTTPStub{responses: []openAI5hWakeStubResponse{response}},
+	}
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{account})[0]
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, IdentityHash: group.identityHash, MemberAccountIDs: []int64{account.ID},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusFailed, result.Status)
+	require.Equal(t, "response_stream_incomplete", result.ErrorCode)
+}
+
 func TestOpenAI5hWakeProcessItemContinuesAfterUsageFailureAndFallsBackAccount(t *testing.T) {
 	proxyID := int64(9)
 	proxy := &Proxy{Protocol: "http", Host: "127.0.0.1", Port: 7890}
@@ -575,6 +678,7 @@ func TestOpenAI5hWakeProcessItemSkipsPersistedActiveWindow(t *testing.T) {
 	second := newOpenAI5hWakeAccount(2, "shared-pool")
 	resetAt := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
 	first.Extra["codex_5h_reset_at"] = resetAt.Format(time.RFC3339)
+	first.Extra[openAI5hWakeSnapshotIdentityKey] = openAI5hWakeIdentityHash(first)
 	repo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{1: first, 2: second}}
 	upstream := &openAI5hWakeHTTPStub{}
 	service := &OpenAI5hWakeService{accountRepo: repo, httpUpstream: upstream}
@@ -589,6 +693,32 @@ func TestOpenAI5hWakeProcessItemSkipsPersistedActiveWindow(t *testing.T) {
 	require.Empty(t, upstream.requests)
 	require.Empty(t, repo.updates)
 	require.NotContains(t, second.Extra, "codex_5h_reset_at")
+}
+
+func TestOpenAI5hWakeDoesNotTrustLegacyActiveSnapshot(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	account.Extra["codex_5h_reset_at"] = time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	repo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{1: account}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"rate_limit":{"primary_window":{"used_percent":9,"limit_window_seconds":18000,"reset_after_seconds":18000}}}`)
+	}))
+	defer server.Close()
+	tokenProvider := NewOpenAITokenProvider(repo, nil, nil)
+	quota := NewOpenAIQuotaService(repo, nil, tokenProvider, newQuotaRedirectingFactory(server))
+	wake := &OpenAI5hWakeService{accountRepo: repo, quotaService: quota, tokenProvider: tokenProvider}
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{account})[0]
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, IdentityHash: group.identityHash, MemberAccountIDs: []int64{account.ID},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusSkippedActive, result.Status)
+	require.Equal(t, []int64{account.ID}, result.AttemptedAccountIDs)
+	require.NotEmpty(t, repo.updates[account.ID])
+	lastUpdate := repo.updates[account.ID][len(repo.updates[account.ID])-1]
+	require.Equal(t, group.identityHash, lastUpdate[openAI5hWakeSnapshotIdentityKey])
+	require.Equal(t, float64(9), account.Extra["codex_5h_used_percent"])
 }
 
 func TestOpenAI5hWakeUsageQueryOnlyUpdatesQueriedAccount(t *testing.T) {
@@ -681,6 +811,25 @@ func TestOpenAI5hWakeProcessItemTreats429WithFutureResetAsActive(t *testing.T) {
 	})
 	require.Equal(t, OpenAI5hWakeItemStatusSkippedActive, result.Status)
 	require.Empty(t, result.ErrorCode)
+}
+
+func TestOpenAI5hWakePreservesAuthErrorWhenErrorResponseHasRateLimitHeaders(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	repo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{1: account}}
+	response := openAI5hWakeHeaders(http.StatusUnauthorized)
+	wake := &OpenAI5hWakeService{
+		accountRepo:   repo,
+		tokenProvider: NewOpenAITokenProvider(repo, nil, nil),
+		httpUpstream:  &openAI5hWakeHTTPStub{responses: []openAI5hWakeStubResponse{response}},
+	}
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{account})[0]
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, IdentityHash: group.identityHash, MemberAccountIDs: []int64{account.ID},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusFailed, result.Status)
+	require.Equal(t, "unauthorized", result.ErrorCode)
 }
 
 func TestOpenAI5hWakeProcessItemReportsTimeoutWithoutMutatingAccountHealth(t *testing.T) {

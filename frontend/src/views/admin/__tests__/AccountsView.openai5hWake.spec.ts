@@ -112,6 +112,14 @@ const mountView = (stubOverrides: Record<string, any> = {}) => mount(AccountsVie
   }
 })
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(resolvePromise => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
@@ -129,6 +137,24 @@ afterEach(() => {
 })
 
 describe('AccountsView OpenAI 5h wake integration', () => {
+  it('does not let an older latest-task response overwrite a task just reported by the dialog', async () => {
+    const staleResponse = deferred<OpenAI5hWakeTask | null>()
+    mocks.getLatestTask.mockReturnValue(staleResponse.promise)
+    const wrapper = mountView()
+    await flushPromises()
+
+    const freshTask = { ...runningTask, id: 99 }
+    const dialog = wrapper.findComponent({ name: 'OpenAI5hWakeDialog' })
+    dialog.vm.$emit('task-updated', freshTask)
+    await flushPromises()
+
+    staleResponse.resolve(runningTask)
+    await flushPromises()
+
+    expect(dialog.props('initialTask')).toEqual(freshTask)
+    wrapper.unmount()
+  })
+
   it('restores a running task and opens it from the status entry', async () => {
     const wrapper = mountView()
     await flushPromises()

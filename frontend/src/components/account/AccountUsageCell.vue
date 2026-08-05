@@ -683,6 +683,16 @@ const hasEnteredViewport = ref(false)
 const pendingAutoLoad = ref(false)
 const pendingAutoLoadSource = ref<'passive' | 'active' | undefined>(undefined)
 
+// A list reload and the explicit post-wake refresh can overlap. Only the most
+// recently started request for this row may update the view/cache; otherwise a
+// slower pre-wake response can overwrite the freshly queried quota.
+let usageRequestSequence = 0
+
+const isCurrentUsageRequest = (requestSequence: number, accountID: number) =>
+  !unmounted.value &&
+  requestSequence === usageRequestSequence &&
+  props.account.id === accountID
+
 let desktopViewportMediaQuery: MediaQueryList | null = null
 let desktopViewportListener: ((event: MediaQueryListEvent) => void) | null = null
 let visibilityObserver: IntersectionObserver | null = null
@@ -1276,35 +1286,45 @@ const isAnthropicOAuthOrSetupToken = computed(() => {
 const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?: boolean }) => {
   if (!shouldFetchUsage.value) return
 
+  // A user-triggered active query is authoritative. Automatic row refreshes
+  // that arrive while it is running should not supersede it.
+  if (activeQueryLoading.value) return
+
+  const accountID = props.account.id
+  const account = props.account
+
   // Check cache
   if (!options?.bypassCache) {
-    const cached = _usageCache.get(props.account.id)
+    const cached = _usageCache.get(accountID)
     if (cached && Date.now() - cached.ts < USAGE_CACHE_TTL) {
-      usageInfo.value = cached.data
-      loading.value = false
+      // Do not paint an older cached value over an in-flight network refresh.
+      if (!loading.value && props.account.id === accountID) {
+        usageInfo.value = cached.data
+      }
       return
     }
   }
 
+  const requestSequence = ++usageRequestSequence
   loading.value = true
   error.value = null
 
   try {
     const fetchFn = () => options?.source
-      ? adminAPI.accounts.getUsage(props.account.id, options.source)
-      : adminAPI.accounts.getUsage(props.account.id)
-    const result = await enqueueUsageRequest(props.account, fetchFn)
-    if (!unmounted.value) {
+      ? adminAPI.accounts.getUsage(accountID, options.source)
+      : adminAPI.accounts.getUsage(accountID)
+    const result = await enqueueUsageRequest(account, fetchFn)
+    if (isCurrentUsageRequest(requestSequence, accountID)) {
       usageInfo.value = result
-      _usageCache.set(props.account.id, { data: result, ts: Date.now() })
+      _usageCache.set(accountID, { data: result, ts: Date.now() })
     }
   } catch (e: any) {
-    if (!unmounted.value) {
+    if (isCurrentUsageRequest(requestSequence, accountID)) {
       error.value = t('common.error')
       console.error('Failed to load usage:', e)
     }
   } finally {
-    if (!unmounted.value) loading.value = false
+    if (isCurrentUsageRequest(requestSequence, accountID)) loading.value = false
   }
 }
 
@@ -1359,13 +1379,26 @@ const attachVisibilityObserver = () => {
 }
 
 const loadActiveUsage = async () => {
+  if (activeQueryLoading.value) return
+  const accountID = props.account.id
+  const requestSequence = ++usageRequestSequence
+  // This request supersedes any older automatic request for the row.
+  loading.value = false
   activeQueryLoading.value = true
   try {
-    usageInfo.value = await adminAPI.accounts.getUsage(props.account.id, 'active', true)
+    const result = await adminAPI.accounts.getUsage(accountID, 'active', true)
+    if (isCurrentUsageRequest(requestSequence, accountID)) {
+      usageInfo.value = result
+      _usageCache.set(accountID, { data: result, ts: Date.now() })
+    }
   } catch (e: any) {
-    console.error('Failed to load active usage:', e)
+    if (isCurrentUsageRequest(requestSequence, accountID)) {
+      console.error('Failed to load active usage:', e)
+    }
   } finally {
-    activeQueryLoading.value = false
+    if (isCurrentUsageRequest(requestSequence, accountID)) {
+      activeQueryLoading.value = false
+    }
   }
 }
 
@@ -1584,6 +1617,7 @@ watch(isDesktopViewport, (isDesktop) => {
 })
 
 onUnmounted(() => {
+  usageRequestSequence += 1
   detachVisibilityObserver()
   if (desktopViewportMediaQuery && desktopViewportListener) {
     if (typeof desktopViewportMediaQuery.removeEventListener === 'function') {

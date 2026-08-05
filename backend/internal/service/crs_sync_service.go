@@ -1160,6 +1160,7 @@ func reconcileCRSUpstreamBillingProbeExtra(
 	targetCredentials map[string]any,
 	extra map[string]any,
 ) {
+	reconcileCRSOpenAI5hWakeExtra(existing, targetPlatform, targetType, targetCredentials, extra)
 	for _, key := range []string{
 		UpstreamBillingProbeEnabledExtraKey,
 		UpstreamBillingRateSyncEnabledExtraKey,
@@ -1201,6 +1202,28 @@ func reconcileCRSUpstreamBillingProbeExtra(
 			extra[OllamaCloudUsageSnapshotExtraKey] = snapshot
 		}
 	}
+}
+
+func reconcileCRSOpenAI5hWakeExtra(
+	existing *Account,
+	targetPlatform, targetType string,
+	targetCredentials map[string]any,
+	extra map[string]any,
+) {
+	// CRS input is not allowed to provide worker-owned verification state.
+	delete(extra, openAI5hWakeSnapshotIdentityKey)
+	if existing == nil || !hasTrustedOpenAI5hWakeSnapshot(existing) {
+		return
+	}
+
+	target := *existing
+	target.Platform = targetPlatform
+	target.Type = targetType
+	target.Credentials = targetCredentials
+	if openAI5hWakeIdentityFingerprintFor(existing) != openAI5hWakeIdentityFingerprintFor(&target) {
+		return
+	}
+	extra[openAI5hWakeSnapshotIdentityKey] = existing.Extra[openAI5hWakeSnapshotIdentityKey]
 }
 
 func mergeCRSOpenAILongContextBillingExtra(existing, updates map[string]any) (map[string]any, error) {

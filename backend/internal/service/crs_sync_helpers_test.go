@@ -204,3 +204,28 @@ func TestReconcileCRSUpstreamBillingProbeExtra(t *testing.T) {
 		})
 	}
 }
+
+func TestReconcileCRSOpenAI5hWakeExtra(t *testing.T) {
+	existing := newOpenAI5hWakeAccount(1, "account-before")
+	existing.Extra[openAI5hWakeSnapshotIdentityKey] = openAI5hWakeIdentityHash(existing)
+
+	t.Run("create drops remote marker", func(t *testing.T) {
+		extra := map[string]any{openAI5hWakeSnapshotIdentityKey: "forged"}
+		reconcileCRSOpenAI5hWakeExtra(nil, PlatformOpenAI, AccountTypeOAuth, existing.Credentials, extra)
+		require.NotContains(t, extra, openAI5hWakeSnapshotIdentityKey)
+	})
+
+	t.Run("same identity preserves trusted local marker", func(t *testing.T) {
+		extra := map[string]any{openAI5hWakeSnapshotIdentityKey: "forged"}
+		credentials := mergeMap(existing.Credentials, map[string]any{"access_token": "rotated"})
+		reconcileCRSOpenAI5hWakeExtra(existing, PlatformOpenAI, AccountTypeOAuth, credentials, extra)
+		require.Equal(t, openAI5hWakeIdentityHash(existing), extra[openAI5hWakeSnapshotIdentityKey])
+	})
+
+	t.Run("typed identity change clears marker", func(t *testing.T) {
+		extra := map[string]any{openAI5hWakeSnapshotIdentityKey: openAI5hWakeIdentityHash(existing)}
+		credentials := mergeMap(existing.Credentials, map[string]any{"chatgpt_account_id": "account-after"})
+		reconcileCRSOpenAI5hWakeExtra(existing, PlatformOpenAI, AccountTypeOAuth, credentials, extra)
+		require.NotContains(t, extra, openAI5hWakeSnapshotIdentityKey)
+	})
+}

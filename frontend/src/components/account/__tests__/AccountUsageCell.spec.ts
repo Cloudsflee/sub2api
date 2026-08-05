@@ -54,6 +54,14 @@ function makeAccount(overrides: Partial<Account>): Account {
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 describe('AccountUsageCell', () => {
   beforeEach(() => {
     getUsage.mockReset()
@@ -382,6 +390,55 @@ describe('AccountUsageCell', () => {
     expect(getUsage).toHaveBeenCalledWith(2010)
     // 单一数据源：始终使用 /usage API 值
     expect(wrapper.text()).toContain('5h|18|900')
+  })
+
+  it('OpenAI OAuth 并发刷新时不会让较旧响应覆盖最新余额', async () => {
+    const stale = deferred<any>()
+    const fresh = deferred<any>()
+    getUsage
+      .mockReturnValueOnce(stale.promise)
+      .mockReturnValueOnce(fresh.promise)
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 2020,
+          platform: 'openai',
+          type: 'oauth',
+          extra: {}
+        }),
+        manualRefreshToken: 0
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'utilization'],
+            template: '<div class="usage-bar">{{ label }}|{{ utilization }}</div>'
+          },
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.setProps({ manualRefreshToken: 1 })
+    await flushPromises()
+    expect(getUsage).toHaveBeenCalledTimes(2)
+
+    fresh.resolve({
+      five_hour: { utilization: 22, resets_at: '2099-03-07T12:00:00Z', remaining_seconds: 3600 },
+      seven_day: null
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('5h|22')
+
+    stale.resolve({
+      five_hour: { utilization: 91, resets_at: '2099-03-07T12:00:00Z', remaining_seconds: 3600 },
+      seven_day: null
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('5h|22')
+    expect(wrapper.text()).not.toContain('5h|91')
   })
 
   it('OpenAI OAuth 在无 codex 快照时会回退显示 usage 接口窗口', async () => {
