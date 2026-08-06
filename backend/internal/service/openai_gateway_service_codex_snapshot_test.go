@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -95,6 +96,10 @@ func TestBuildCodexUsageExtraUpdates_UsesSnapshotUpdatedAt(t *testing.T) {
 
 	if got := updates["codex_usage_updated_at"]; got != "2026-02-16T10:00:00Z" {
 		t.Fatalf("codex_usage_updated_at = %v, want %s", got, "2026-02-16T10:00:00Z")
+	}
+	wantObservedAt := fmt.Sprintf("%020d", time.Date(2026, 2, 16, 10, 0, 0, 0, time.UTC).UnixNano())
+	if got := updates[OpenAICodexSnapshotObservedAtExtraKey]; got != wantObservedAt {
+		t.Fatalf("%s = %v, want %s", OpenAICodexSnapshotObservedAtExtraKey, got, wantObservedAt)
 	}
 	if got := updates["codex_5h_reset_at"]; got != "2026-02-16T11:00:00Z" {
 		t.Fatalf("codex_5h_reset_at = %v, want %s", got, "2026-02-16T11:00:00Z")

@@ -183,6 +183,14 @@ func TestOpenAI5hWakeHandlerContracts(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "task_created", requireOpenAI5hWakeMap(t, eventList[0])["code"])
 
+	status, payload = invokeOpenAI5hWakeHandler(t, http.MethodGet, "/tasks/31/items?page=1&page_size=1000", params, handler.ListOpenAI5hWakeTaskItems)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, float64(100), requireOpenAI5hWakeMap(t, payload["data"])["page_size"])
+
+	status, payload = invokeOpenAI5hWakeHandler(t, http.MethodGet, "/tasks/31/events?page=1&page_size=1000", params, handler.ListOpenAI5hWakeTaskEvents)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, float64(100), requireOpenAI5hWakeMap(t, payload["data"])["page_size"])
+
 	status, payload = invokeOpenAI5hWakeHandler(t, http.MethodPost, "/tasks/31/cancel", params, handler.CancelOpenAI5hWakeTask)
 	require.Equal(t, http.StatusOK, status)
 	require.NotEmpty(t, requireOpenAI5hWakeMap(t, payload["data"])["cancel_requested_at"])

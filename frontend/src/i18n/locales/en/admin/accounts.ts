@@ -106,6 +106,8 @@ export default {
           cancel_poll_failed: 'Cancellation polling failed',
           final_cancel_check_failed: 'Final cancellation check failed',
           item_started: 'Quota pool processing started',
+          account_attempt_started: 'Account attempt started',
+          wake_request_started: 'Wake request started',
           item_woken: 'Quota pool window woken',
           item_skipped_active: 'Quota pool window already active',
           item_failed: 'Quota pool processing failed',

@@ -80,9 +80,9 @@ func TestLockAndMergeAccountProbeExtraUsesCurrentDatabaseSnapshot(t *testing.T) 
 			t.Cleanup(func() { _ = client.Close() })
 
 			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
-				WithArgs(int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil).
-				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
-					AddRow(tt.identityUnchanged, false, true, tt.databaseEnabled, nil, tt.databaseSnapshot, nil, nil, nil))
+				WithArgs(int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil, service.QuotaDimensionGlobal, true).
+				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "current_wake_scope", "wake_identity_unchanged", "current_extra", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
+					AddRow(tt.identityUnchanged, false, true, false, false, []byte(`{}`), tt.databaseEnabled, nil, tt.databaseSnapshot, nil, nil, nil))
 
 			account := &service.Account{
 				ID:          27,
@@ -171,9 +171,9 @@ func TestLockAndMergeAccountProbeExtraNeverInfersProbeFromRateSync(t *testing.T)
 			t.Cleanup(func() { _ = client.Close() })
 
 			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
-				WithArgs(int64(31), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil).
-				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
-					AddRow(true, false, true, tt.databaseEnabled, tt.databaseRateSync, nil, nil, nil, nil))
+				WithArgs(int64(31), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil, service.QuotaDimensionGlobal, true).
+				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "current_wake_scope", "wake_identity_unchanged", "current_extra", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
+					AddRow(true, false, true, false, false, []byte(`{}`), tt.databaseEnabled, tt.databaseRateSync, nil, nil, nil, nil))
 
 			account := &service.Account{
 				ID:          31,
@@ -210,9 +210,9 @@ func TestLockAndMergeAccountProbeExtraProtectsOllamaManagedFields(t *testing.T) 
 			t.Cleanup(func() { _ = client.Close() })
 
 			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
-				WithArgs(int64(29), service.PlatformAnthropic, service.AccountTypeAPIKey, `{"api_key":"key","base_url":"https://ollama.com"}`, nil).
-				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
-					AddRow(identityUnchanged, identityUnchanged, true, nil, nil, nil, []byte(`"local-ciphertext"`), []byte(`true`), []byte(`{"status":"ok"}`)))
+				WithArgs(int64(29), service.PlatformAnthropic, service.AccountTypeAPIKey, `{"api_key":"key","base_url":"https://ollama.com"}`, nil, service.QuotaDimensionGlobal, true).
+				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "current_wake_scope", "wake_identity_unchanged", "current_extra", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
+					AddRow(identityUnchanged, identityUnchanged, true, false, false, []byte(`{}`), nil, nil, nil, []byte(`"local-ciphertext"`), []byte(`true`), []byte(`{"status":"ok"}`)))
 
 			account := &service.Account{
 				ID: 29, Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey,
@@ -233,6 +233,74 @@ func TestLockAndMergeAccountProbeExtraProtectsOllamaManagedFields(t *testing.T) 
 				require.NotContains(t, got, service.OllamaCloudUsageSessionExtraKey)
 				require.NotContains(t, got, service.OllamaCloudUsageAutoRefreshExtraKey)
 				require.NotContains(t, got, service.OllamaCloudUsageSnapshotExtraKey)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestLockAndMergeAccountProbeExtraProtectsConcurrentOpenAIWakeSnapshot(t *testing.T) {
+	tests := []struct {
+		name                  string
+		wakeIdentityUnchanged bool
+		wantFreshSnapshot     bool
+	}{
+		{name: "same identity keeps the locked worker snapshot", wakeIdentityUnchanged: true, wantFreshSnapshot: true},
+		{name: "changed identity clears every stale wake field", wakeIdentityUnchanged: false, wantFreshSnapshot: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = db.Close() })
+			client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+			t.Cleanup(func() { _ = client.Close() })
+
+			lockedExtra := []byte(`{
+				"operator_note":"database-value",
+				"codex_primary_used_percent":11,
+				"codex_5h_used_percent":12,
+				"codex_5h_reset_at":"2026-08-05T12:00:00Z",
+				"codex_7d_used_percent":34,
+				"codex_usage_updated_at":"2026-08-05T07:00:00Z",
+				"codex_5h_wake_identity_hash":"fresh-marker"
+			}`)
+			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
+				WithArgs(int64(37), service.PlatformOpenAI, service.AccountTypeOAuth, `{"access_token":"rotated","chatgpt_account_id":"account-a","chatgpt_user_id":"user-a","organization_id":"org-a"}`, nil, service.QuotaDimensionGlobal, true).
+				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "current_wake_scope", "wake_identity_unchanged", "current_extra", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
+					AddRow(false, false, true, true, tt.wakeIdentityUnchanged, lockedExtra, nil, nil, nil, nil, nil, nil))
+
+			account := &service.Account{
+				ID: 37, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+				Credentials: map[string]any{
+					"access_token": "rotated", "chatgpt_account_id": "account-a",
+					"organization_id": "org-a", "chatgpt_user_id": "user-a",
+				},
+				Extra: map[string]any{
+					"operator_note":                              "edited-value",
+					"codex_primary_used_percent":                 99,
+					"codex_5h_used_percent":                      99,
+					"codex_5h_reset_at":                          "stale",
+					"codex_7d_used_percent":                      99,
+					"codex_usage_updated_at":                     "stale",
+					service.OpenAI5hWakeSnapshotIdentityExtraKey: "stale-marker",
+				},
+			}
+			got, err := lockAndMergeAccountProbeExtra(context.Background(), client, account, nil, nil)
+			require.NoError(t, err)
+			require.Equal(t, "edited-value", got["operator_note"])
+			if tt.wantFreshSnapshot {
+				require.Equal(t, float64(11), got["codex_primary_used_percent"])
+				require.Equal(t, float64(12), got["codex_5h_used_percent"])
+				require.Equal(t, "2026-08-05T12:00:00Z", got["codex_5h_reset_at"])
+				require.Equal(t, float64(34), got["codex_7d_used_percent"])
+				require.Equal(t, "2026-08-05T07:00:00Z", got["codex_usage_updated_at"])
+				require.Equal(t, "fresh-marker", got[service.OpenAI5hWakeSnapshotIdentityExtraKey])
+			} else {
+				for _, key := range openAIWakeManagedExtraKeys {
+					require.NotContains(t, got, key)
+				}
 			}
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
@@ -388,6 +456,148 @@ func TestUpdateCredentialsInvalidatesWakeMarkerOnlyThroughTypedOpenAIIdentityGua
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestUpdateOpenAICodexSnapshotUsesIdentityCAS(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	account := &service.Account{
+		ID: 27, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "account-a", "organization_id": "org-a", "chatgpt_user_id": "user-a",
+		},
+	}
+	mock.ExpectExec(`(?s)UPDATE accounts.*quota_dimension = 'global'.*chatgpt_account_id.*organization_id.*chatgpt_user_id`).
+		WithArgs(`{"codex_5h_used_percent":42}`, int64(27), "account-a", "org-a", "user-a").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	applied, err := repo.UpdateOpenAICodexSnapshot(context.Background(), account.ID, account, nil, map[string]any{
+		"codex_5h_used_percent": 42,
+	})
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateOpenAICodexSnapshotReportsIdentityConflict(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	account := &service.Account{
+		ID: 28, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "account-a", "organization_id": "org-a", "chatgpt_user_id": "user-a",
+		},
+	}
+	mock.ExpectExec(`(?s)UPDATE accounts.*WHERE id = \$2.*chatgpt_user_id`).
+		WithArgs(`{"codex_5h_used_percent":42}`, int64(28), "account-a", "org-a", "user-a").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	applied, err := repo.UpdateOpenAICodexSnapshot(context.Background(), account.ID, account, nil, map[string]any{
+		"codex_5h_used_percent": 42,
+	})
+	require.NoError(t, err)
+	require.False(t, applied)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateOpenAICodexSnapshotUsesMonotonicObservationGuard(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	account := &service.Account{
+		ID: 29, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "account-a", "organization_id": "org-a", "chatgpt_user_id": "user-a",
+		},
+	}
+	observedAt := "01775582400123456789"
+	payload := `{"codex_5h_used_percent":42,"codex_usage_observed_at_unix_nano":"01775582400123456789"}`
+	mock.ExpectExec(`(?s)UPDATE accounts.*SET extra = COALESCE.*\|\| \$1::jsonb \|\| CASE.*codex_usage_observed_at_unix_nano.*< \$7.*updated_at = CASE.*WHERE id = \$3`).
+		WithArgs(`{}`, payload, int64(29), "account-a", "org-a", "user-a", observedAt, false).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	applied, err := repo.UpdateOpenAICodexSnapshot(context.Background(), account.ID, account, nil, map[string]any{
+		"codex_5h_used_percent":                       42,
+		service.OpenAICodexSnapshotObservedAtExtraKey: observedAt,
+	})
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateOpenAICodexSnapshotPersistsOrdinaryAndManagedPartsInOneCAS(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	account := &service.Account{
+		ID: 30, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "account-a", "organization_id": "org-a", "chatgpt_user_id": "user-a",
+		},
+	}
+	observedAt := "01775582400123456789"
+	ordinaryPayload := `{"openai_compact_last_status":200,"openai_compact_supported":true}`
+	managedPayload := `{"codex_5h_used_percent":42,"codex_usage_observed_at_unix_nano":"01775582400123456789"}`
+	mock.ExpectExec(`(?s)UPDATE accounts.*\|\| \$1::jsonb \|\| CASE.*THEN \$2::jsonb.*WHERE id = \$3`).
+		WithArgs(ordinaryPayload, managedPayload, int64(30), "account-a", "org-a", "user-a", observedAt, true).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	applied, err := repo.UpdateOpenAICodexSnapshot(
+		context.Background(),
+		account.ID,
+		account,
+		map[string]any{
+			"openai_compact_supported":   true,
+			"openai_compact_last_status": 200,
+		},
+		map[string]any{
+			"codex_5h_used_percent":                       42,
+			service.OpenAICodexSnapshotObservedAtExtraKey: observedAt,
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestBulkUpdateOpenAIIdentityCredentialsClearWakeSnapshotWithoutExtraPatch(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { _ = client.Close() })
+
+	marker := regexp.QuoteMeta("- '" + service.OpenAI5hWakeSnapshotIdentityExtraKey + "'")
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE accounts SET credentials = .*extra = CASE WHEN platform = 'openai'.*chatgpt_account_id.*`+marker+`.*WHERE id = ANY\(\$2\)`).
+		WithArgs([]byte(`{"chatgpt_account_id":"account-after"}`), `{27}`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO scheduler_outbox")).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	repo := newAccountRepositoryWithSQL(client, db, nil)
+	rows, err := repo.BulkUpdate(context.Background(), []int64{27}, service.AccountBulkUpdate{
+		Credentials: map[string]any{"chatgpt_account_id": "account-after"},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestUpdateWithAccountBillingSettingsRollsBackWhenOutboxFails(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -397,9 +607,9 @@ func TestUpdateWithAccountBillingSettingsRollsBackWhenOutboxFails(t *testing.T) 
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
-		WithArgs(int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil).
-		WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
-			AddRow(true, false, true, []byte(`true`), []byte(`true`), []byte(`{"status":"ok"}`), nil, nil, nil))
+		WithArgs(int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil, service.QuotaDimensionGlobal, true).
+		WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "current_wake_scope", "wake_identity_unchanged", "current_extra", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
+			AddRow(true, false, true, false, false, []byte(`{}`), []byte(`true`), []byte(`true`), []byte(`{"status":"ok"}`), nil, nil, nil))
 	mock.ExpectExec(`(?s)UPDATE .*accounts.*SET.*WHERE .*id.*`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`(?s)SELECT .* FROM "accounts" WHERE "id" = \$1`).

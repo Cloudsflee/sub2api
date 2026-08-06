@@ -192,6 +192,24 @@ describe('useTableLoader', () => {
   // --- 请求取消 ---
 
   describe('请求取消', () => {
+    it('ignores a late response when the adapter does not honor AbortSignal', async () => {
+      let resolveFirst: ((value: any) => void) | undefined
+      const firstResponse = new Promise(resolve => { resolveFirst = resolve })
+      const fetchFn = vi.fn()
+        .mockReturnValueOnce(firstResponse)
+        .mockResolvedValueOnce({ items: [{ id: 2 }], total: 1, pages: 1 })
+      const { items, load } = useTableLoader({ fetchFn })
+
+      const firstLoad = load()
+      const secondLoad = load()
+      await expect(secondLoad).resolves.toBe(true)
+      expect(items.value).toEqual([{ id: 2 }])
+
+      resolveFirst!({ items: [{ id: 1 }], total: 1, pages: 1 })
+      await expect(firstLoad).resolves.toBe(false)
+      expect(items.value).toEqual([{ id: 2 }])
+    })
+
     it('新请求取消前一个未完成的请求', async () => {
       let callCount = 0
       const fetchFn = vi.fn((_page, _size, _params, options) => {
@@ -244,8 +262,8 @@ describe('useTableLoader', () => {
       const fetchFn = vi.fn().mockRejectedValue({ name: 'CanceledError', code: 'ERR_CANCELED' })
       const { load } = useTableLoader({ fetchFn })
 
-      // 不应抛出
-      await load()
+      // 不应抛出, but callers that need to retry must know the load did not apply.
+      await expect(load()).resolves.toBe(false)
     })
   })
 })

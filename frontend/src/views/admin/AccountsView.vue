@@ -1048,12 +1048,14 @@ const load = async () => {
   if (isFirstLoad.value) {
     requestParams.lite = '1'
   }
-  await baseLoad()
+  const loaded = await baseLoad()
+  if (!loaded) return false
   if (isFirstLoad.value) {
     isFirstLoad.value = false
     delete requestParams.lite
   }
   await refreshTodayStatsBatch()
+  return true
 }
 
 const reload = async () => {
@@ -1062,8 +1064,10 @@ const reload = async () => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = false
-  await baseReload()
+  const loaded = await baseReload()
+  if (!loaded) return false
   await refreshTodayStatsBatch()
+  return true
 }
 
 const refreshUpstreamBillingSortedList = async (force = false) => {
@@ -1329,22 +1333,24 @@ const openOpenAI5hWake = () => {
 }
 
 const handledOpenAI5hWakeTasks = new Set<number>()
+const refreshingOpenAI5hWakeTasks = new Set<number>()
+const notifiedOpenAI5hWakeTasks = new Set<number>()
+const usageRefreshedOpenAI5hWakeTasks = new Set<number>()
+const openAI5hWakeRefreshRetryTimers = new Map<number, ReturnType<typeof setTimeout>>()
+const openAI5hWakeRefreshRetryAttempts = new Map<number, number>()
+// A terminal task should not turn a temporary list outage into an endless
+// five-second request loop. Keep the first retry responsive, then back off and
+// leave the existing manual-sync affordance visible when the budget is spent.
+const openAI5hWakeRefreshRetryDelays = [5000, 10000, 30000, 60000, 120000] as const
+let accountsViewMounted = false
+let accountsViewLifecycle = 0
 let latestOpenAI5hWakeRefreshing = false
 let latestOpenAI5hWakeViewSequence = 0
 let latestOpenAI5hWakeRequestSequence = 0
 
-const refreshAccountsAfterOpenAI5hWake = async (task: OpenAI5hWakeTask) => {
-  if (handledOpenAI5hWakeTasks.has(task.id)) return
-  handledOpenAI5hWakeTasks.add(task.id)
-  try {
-    await reload()
-  } catch (error) {
-    console.error('Failed to refresh accounts after OpenAI 5h wake task:', error)
-  } finally {
-    // The visible rows can still refresh their per-account usage when the list
-    // reload fails transiently. Do not make quota refresh depend on list I/O.
-    usageManualRefreshToken.value += 1
-  }
+const notifyOpenAI5hWakeCompletion = (task: OpenAI5hWakeTask) => {
+  if (notifiedOpenAI5hWakeTasks.has(task.id)) return
+  notifiedOpenAI5hWakeTasks.add(task.id)
   const params = {
     woken: task.woken_count,
     skipped: task.skipped_active_count,
@@ -1354,6 +1360,66 @@ const refreshAccountsAfterOpenAI5hWake = async (task: OpenAI5hWakeTask) => {
     appStore.showWarning(t('admin.accounts.openAI5hWake.completedWithFailures', params))
   } else {
     appStore.showSuccess(t('admin.accounts.openAI5hWake.completed', params))
+  }
+}
+
+const clearOpenAI5hWakeRefreshRetry = (taskID: number) => {
+  const timer = openAI5hWakeRefreshRetryTimers.get(taskID)
+  if (timer !== undefined) clearTimeout(timer)
+  openAI5hWakeRefreshRetryTimers.delete(taskID)
+  openAI5hWakeRefreshRetryAttempts.delete(taskID)
+}
+
+const scheduleOpenAI5hWakeRefreshRetry = (task: OpenAI5hWakeTask, lifecycle = accountsViewLifecycle) => {
+  if (
+    !accountsViewMounted ||
+    lifecycle !== accountsViewLifecycle ||
+    handledOpenAI5hWakeTasks.has(task.id) ||
+    openAI5hWakeRefreshRetryTimers.has(task.id)
+  ) return
+  const attempt = openAI5hWakeRefreshRetryAttempts.get(task.id) ?? 0
+  if (attempt >= openAI5hWakeRefreshRetryDelays.length) {
+    hasPendingListSync.value = true
+    return
+  }
+  const delay = openAI5hWakeRefreshRetryDelays[attempt]
+  openAI5hWakeRefreshRetryAttempts.set(task.id, attempt + 1)
+  const timer = setTimeout(() => {
+    openAI5hWakeRefreshRetryTimers.delete(task.id)
+    if (!accountsViewMounted || lifecycle !== accountsViewLifecycle) return
+    void refreshAccountsAfterOpenAI5hWake(task, false, lifecycle)
+  }, delay)
+  openAI5hWakeRefreshRetryTimers.set(task.id, timer)
+}
+
+async function refreshAccountsAfterOpenAI5hWake(
+  task: OpenAI5hWakeTask,
+  announceCompletion = true,
+  lifecycle = accountsViewLifecycle
+) {
+  if (!accountsViewMounted || lifecycle !== accountsViewLifecycle) return
+  if (announceCompletion) notifyOpenAI5hWakeCompletion(task)
+  if (!usageRefreshedOpenAI5hWakeTasks.has(task.id)) {
+    usageRefreshedOpenAI5hWakeTasks.add(task.id)
+    usageManualRefreshToken.value += 1
+  }
+  if (handledOpenAI5hWakeTasks.has(task.id) || refreshingOpenAI5hWakeTasks.has(task.id)) return
+  refreshingOpenAI5hWakeTasks.add(task.id)
+  try {
+    const loaded = await reload()
+    if (!accountsViewMounted || lifecycle !== accountsViewLifecycle) return
+    if (!loaded) {
+      scheduleOpenAI5hWakeRefreshRetry(task, lifecycle)
+      return
+    }
+    handledOpenAI5hWakeTasks.add(task.id)
+    clearOpenAI5hWakeRefreshRetry(task.id)
+  } catch (error) {
+    if (!accountsViewMounted || lifecycle !== accountsViewLifecycle) return
+    console.error('Failed to refresh accounts after OpenAI 5h wake task:', error)
+    scheduleOpenAI5hWakeRefreshRetry(task, lifecycle)
+  } finally {
+    refreshingOpenAI5hWakeTasks.delete(task.id)
   }
 }
 
@@ -1384,8 +1450,14 @@ const refreshLatestOpenAI5hWakeTask = async (handleTerminalTransition: boolean) 
     ) return
     latestOpenAI5hWakeTask.value = next
     const previousWasActive = previous?.status === 'pending' || previous?.status === 'running'
-    if (handleTerminalTransition && previousWasActive && next && openAI5hWakeTerminalStatuses.has(next.status)) {
-      await refreshAccountsAfterOpenAI5hWake(next)
+    if (
+      handleTerminalTransition &&
+      previousWasActive &&
+      next &&
+      openAI5hWakeTerminalStatuses.has(next.status) &&
+      !handledOpenAI5hWakeTasks.has(next.id)
+    ) {
+      await refreshAccountsAfterOpenAI5hWake(next, true)
     }
   } catch (error) {
     console.error('Failed to load latest OpenAI 5h wake task:', error)
@@ -2307,6 +2379,8 @@ const handleClickOutside = (event: MouseEvent) => {
 }
 
 onMounted(async () => {
+  accountsViewMounted = true
+  accountsViewLifecycle += 1
   load()
   loadUpstreamBillingProbeGlobalState()
   void refreshLatestOpenAI5hWakeTask(false)
@@ -2330,8 +2404,13 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  accountsViewMounted = false
+  accountsViewLifecycle += 1
   latestOpenAI5hWakeViewSequence += 1
   latestOpenAI5hWakeRequestSequence += 1
+  openAI5hWakeRefreshRetryTimers.forEach(timer => clearTimeout(timer))
+  openAI5hWakeRefreshRetryTimers.clear()
+  openAI5hWakeRefreshRetryAttempts.clear()
   window.removeEventListener('scroll', handleScroll, true)
   window.removeEventListener('resize', handleViewportResize)
   document.removeEventListener('click', handleClickOutside)

@@ -250,4 +250,172 @@ describe('AccountsView OpenAI 5h wake integration', () => {
     wrapper.unmount()
     consoleError.mockRestore()
   })
+
+  it('retries a failed terminal list refresh and only refreshes usage and notifies once', async () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const account = {
+      id: 7,
+      name: 'OpenAI account',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active',
+      schedulable: true,
+      credentials: {},
+      extra: {},
+      created_at: '2026-07-30T00:00:00Z',
+      updated_at: '2026-07-30T00:00:00Z'
+    }
+    const completedTask: OpenAI5hWakeTask = {
+      ...runningTask,
+      status: 'succeeded',
+      processed_items: runningTask.total_items,
+      finished_at: '2026-07-30T00:00:10Z'
+    }
+    mocks.list
+      .mockResolvedValueOnce({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+      .mockRejectedValueOnce(new Error('temporary list failure'))
+      .mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    const wrapper = mountView({
+      DataTable: {
+        props: ['data'],
+        template: '<div><slot v-if="data.length" name="cell-usage" :row="data[0]" /></div>'
+      },
+      AccountUsageCell: {
+        props: ['manualRefreshToken'],
+        template: '<span data-testid="usage-refresh-token">{{ manualRefreshToken }}</span>'
+      }
+    })
+    await flushPromises()
+
+    mocks.getLatestTask.mockResolvedValue(completedTask)
+    wrapper.findComponent({ name: 'OpenAI5hWakeDialog' }).vm.$emit('completed', completedTask)
+    await flushPromises()
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-testid="usage-refresh-token"]').text()).toBe('1')
+    expect(mocks.showSuccess).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(mocks.list).toHaveBeenCalledTimes(3)
+    expect(wrapper.get('[data-testid="usage-refresh-token"]').text()).toBe('1')
+    expect(mocks.showSuccess).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(mocks.list).toHaveBeenCalledTimes(3)
+    wrapper.unmount()
+    consoleError.mockRestore()
+  })
+
+  it('backs off terminal list refreshes and stops after the retry budget', async () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const account = {
+      id: 7,
+      name: 'OpenAI account',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active',
+      schedulable: true,
+      credentials: {},
+      extra: {},
+      created_at: '2026-07-30T00:00:00Z',
+      updated_at: '2026-07-30T00:00:00Z'
+    }
+    const completedTask: OpenAI5hWakeTask = {
+      ...runningTask,
+      status: 'succeeded',
+      processed_items: runningTask.total_items,
+      finished_at: '2026-07-30T00:00:10Z'
+    }
+    mocks.getLatestTask.mockResolvedValue(null)
+    mocks.list
+      .mockResolvedValueOnce({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+      .mockRejectedValue(new Error('list remains unavailable'))
+    const wrapper = mountView({
+      DataTable: { props: ['data'], template: '<div />' }
+    })
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'OpenAI5hWakeDialog' }).vm.$emit('completed', completedTask)
+    await flushPromises()
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+
+    // 5s + 10s + 30s + 60s + 120s are the complete retry budget.
+    await vi.advanceTimersByTimeAsync(5000 + 10000 + 30000 + 60000 + 120000)
+    await flushPromises()
+    expect(mocks.list).toHaveBeenCalledTimes(7)
+    expect(wrapper.text()).toContain('admin.accounts.listPendingSyncHint')
+
+    await vi.advanceTimersByTimeAsync(300000)
+    expect(mocks.list).toHaveBeenCalledTimes(7)
+    wrapper.unmount()
+    consoleError.mockRestore()
+  })
+
+  it('does not schedule a terminal refresh retry after the view is unmounted', async () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const account = {
+      id: 7,
+      name: 'OpenAI account',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active',
+      schedulable: true,
+      credentials: {},
+      extra: {},
+      created_at: '2026-07-30T00:00:00Z',
+      updated_at: '2026-07-30T00:00:00Z'
+    }
+    const completedTask: OpenAI5hWakeTask = {
+      ...runningTask,
+      status: 'succeeded',
+      processed_items: runningTask.total_items,
+      finished_at: '2026-07-30T00:00:10Z'
+    }
+    const terminalReload = deferred<any>()
+    mocks.list
+      .mockResolvedValueOnce({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+      .mockReturnValueOnce(terminalReload.promise)
+    const wrapper = mountView({
+      DataTable: { props: ['data'], template: '<div />' }
+    })
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'OpenAI5hWakeDialog' }).vm.$emit('completed', completedTask)
+    await flushPromises()
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+
+    wrapper.unmount()
+    terminalReload.resolve({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+    consoleError.mockRestore()
+  })
+
+  it('only restores a historical terminal task without refreshing accounts', async () => {
+    const latestTask = deferred<OpenAI5hWakeTask | null>()
+    const completedTask: OpenAI5hWakeTask = {
+      ...runningTask,
+      status: 'succeeded',
+      processed_items: runningTask.total_items,
+      finished_at: '2026-07-30T00:00:10Z'
+    }
+    mocks.getLatestTask.mockReturnValue(latestTask.promise)
+    const wrapper = mountView()
+    await flushPromises()
+    expect(mocks.list).toHaveBeenCalledOnce()
+
+    latestTask.resolve(completedTask)
+    await flushPromises()
+
+    expect(mocks.list).toHaveBeenCalledOnce()
+    expect(mocks.showSuccess).not.toHaveBeenCalled()
+    expect(mocks.showWarning).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
 })

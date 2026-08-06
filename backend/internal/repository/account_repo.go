@@ -64,9 +64,42 @@ var schedulerNeutralExtraKeyPrefixes = []string{
 }
 
 var schedulerNeutralExtraKeys = map[string]struct{}{
-	"codex_usage_updated_at":     {},
-	"grok_billing_snapshot":      {},
-	"session_window_utilization": {},
+	"codex_usage_updated_at":                      {},
+	service.OpenAICodexSnapshotObservedAtExtraKey: {},
+	"grok_billing_snapshot":                       {},
+	"session_window_utilization":                  {},
+}
+
+// openAIWakeManagedExtraKeys are written asynchronously by the Codex quota
+// probe and the 5h wake worker. Full account edits use a read-modify-write path,
+// so these values must be reloaded after the account row is locked or a stale
+// edit can overwrite a snapshot that was persisted after the edit began.
+var openAIWakeManagedExtraKeys = []string{
+	"codex_primary_used_percent",
+	"codex_primary_reset_after_seconds",
+	"codex_primary_window_minutes",
+	"codex_secondary_used_percent",
+	"codex_secondary_reset_after_seconds",
+	"codex_secondary_window_minutes",
+	"codex_primary_over_secondary_percent",
+	"codex_usage_updated_at",
+	service.OpenAICodexSnapshotObservedAtExtraKey,
+	"codex_5h_used_percent",
+	"codex_5h_reset_after_seconds",
+	"codex_5h_window_minutes",
+	"codex_5h_reset_at",
+	"codex_7d_used_percent",
+	"codex_7d_reset_after_seconds",
+	"codex_7d_window_minutes",
+	"codex_7d_reset_at",
+	service.OpenAI5hWakeSnapshotIdentityExtraKey,
+}
+
+func subtractOpenAIWakeManagedExtra(expression string) string {
+	for _, key := range openAIWakeManagedExtraKeys {
+		expression += " - '" + key + "'"
+	}
+	return expression
 }
 
 const postgresParameterBatchSize = 50000
@@ -603,6 +636,25 @@ func lockAndMergeAccountProbeExtra(
 				false
 			),
 			proxy_id IS NOT DISTINCT FROM $5,
+			platform = 'openai'
+				AND type = 'oauth'
+				AND quota_dimension = 'global'
+				AND parent_account_id IS NULL,
+			platform = 'openai'
+				AND $2 = 'openai'
+				AND type = 'oauth'
+				AND $3 = 'oauth'
+				AND quota_dimension::text = $6
+				AND $6 = 'global'
+				AND parent_account_id IS NULL
+				AND $7
+				AND btrim(COALESCE(credentials ->> 'chatgpt_account_id', '')) =
+					btrim(COALESCE($4::jsonb ->> 'chatgpt_account_id', ''))
+				AND btrim(COALESCE(credentials ->> 'organization_id', '')) =
+					btrim(COALESCE($4::jsonb ->> 'organization_id', ''))
+				AND btrim(COALESCE(credentials ->> 'chatgpt_user_id', '')) =
+					btrim(COALESCE($4::jsonb ->> 'chatgpt_user_id', '')),
+			extra,
 			extra -> 'upstream_billing_probe_enabled',
 			extra -> 'upstream_billing_rate_sync_enabled',
 			extra -> 'upstream_billing_probe',
@@ -612,7 +664,7 @@ func lockAndMergeAccountProbeExtra(
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
-	`, account.ID, account.Platform, account.Type, string(credentials), proxyID)
+	`, account.ID, account.Platform, account.Type, string(credentials), proxyID, account.QuotaDimensionOrDefault(), !account.IsShadow())
 	if err != nil {
 		return nil, err
 	}
@@ -628,6 +680,9 @@ func lockAndMergeAccountProbeExtra(
 		identityUnchanged            bool
 		ollamaGroupIdentityUnchanged bool
 		ollamaProxyIdentityUnchanged bool
+		currentWakeScope             bool
+		wakeIdentityUnchanged        bool
+		currentExtra                 []byte
 		currentEnabled               []byte
 		currentRateSyncEnabled       []byte
 		currentSnapshot              []byte
@@ -639,6 +694,9 @@ func lockAndMergeAccountProbeExtra(
 		&identityUnchanged,
 		&ollamaGroupIdentityUnchanged,
 		&ollamaProxyIdentityUnchanged,
+		&currentWakeScope,
+		&wakeIdentityUnchanged,
+		&currentExtra,
 		&currentEnabled,
 		&currentRateSyncEnabled,
 		&currentSnapshot,
@@ -653,6 +711,28 @@ func lockAndMergeAccountProbeExtra(
 	}
 
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
+	newWakeScope := account.Platform == service.PlatformOpenAI &&
+		account.Type == service.AccountTypeOAuth &&
+		account.QuotaDimensionOrDefault() == service.QuotaDimensionGlobal &&
+		!account.IsShadow()
+	if currentWakeScope || newWakeScope {
+		for _, key := range openAIWakeManagedExtraKeys {
+			delete(extra, key)
+		}
+		if wakeIdentityUnchanged {
+			var lockedExtra map[string]any
+			if len(currentExtra) > 0 {
+				if err := json.Unmarshal(currentExtra, &lockedExtra); err != nil {
+					return nil, err
+				}
+			}
+			for _, key := range openAIWakeManagedExtraKeys {
+				if value, ok := lockedExtra[key]; ok && value != nil {
+					extra[key] = value
+				}
+			}
+		}
+	}
 	for _, key := range []string{
 		service.UpstreamBillingProbeEnabledExtraKey,
 		service.UpstreamBillingRateSyncEnabledExtraKey,
@@ -807,8 +887,7 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 						OR credentials ->> 'organization_id' IS DISTINCT FROM $1::jsonb ->> 'organization_id'
 						OR credentials ->> 'chatgpt_user_id' IS DISTINCT FROM $1::jsonb ->> 'chatgpt_user_id'
 					)
-				THEN COALESCE(extra, '{}'::jsonb)
-					- '`+service.OpenAI5hWakeSnapshotIdentityExtraKey+`'
+				THEN `+subtractOpenAIWakeManagedExtra("COALESCE(extra, '{}'::jsonb)")+`
 				-- 上游倍率探测已放宽到全部 API-key 平台：凭证变化即视为探测
 				-- 身份变化，丢弃 stale 快照。
 				WHEN type = 'apikey'
@@ -2605,6 +2684,131 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	return nil
 }
 
+// UpdateOpenAICodexSnapshot atomically merges a Codex quota snapshot only while
+// the account still has the identity that produced the upstream response.
+func (r *accountRepository) UpdateOpenAICodexSnapshot(
+	ctx context.Context,
+	id int64,
+	account *service.Account,
+	ordinaryUpdates map[string]any,
+	managedUpdates map[string]any,
+) (bool, error) {
+	if account == nil || account.ID != id {
+		return false, errors.New("invalid OpenAI wake snapshot account")
+	}
+	if len(ordinaryUpdates) == 0 && len(managedUpdates) == 0 {
+		return true, nil
+	}
+	if account.Platform != service.PlatformOpenAI || account.Type != service.AccountTypeOAuth ||
+		account.QuotaDimensionOrDefault() != service.QuotaDimensionGlobal || account.IsShadow() {
+		return false, nil
+	}
+	exec := r.sql
+	if client := clientFromContext(ctx, r.client); client != nil {
+		exec = client
+	}
+	if exec == nil {
+		return false, errors.New("account SQL executor not configured")
+	}
+	observedAt, hasObservedAt := openAICodexSnapshotObservedAt(managedUpdates)
+	var result sql.Result
+	var err error
+	if hasObservedAt {
+		ordinaryPayload, marshalErr := json.Marshal(normalizeJSONMap(ordinaryUpdates))
+		if marshalErr != nil {
+			return false, marshalErr
+		}
+		managedPayload, marshalErr := json.Marshal(normalizeJSONMap(managedUpdates))
+		if marshalErr != nil {
+			return false, marshalErr
+		}
+		result, err = exec.ExecContext(ctx, `
+		UPDATE accounts
+		SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb || CASE
+				WHEN jsonb_typeof(COALESCE(extra, '{}'::jsonb) -> 'codex_usage_observed_at_unix_nano') IS DISTINCT FROM 'string'
+				  OR (COALESCE(extra, '{}'::jsonb) ->> 'codex_usage_observed_at_unix_nano') !~ '^[0-9]{20}$'
+				  OR (COALESCE(extra, '{}'::jsonb) ->> 'codex_usage_observed_at_unix_nano') < $7
+				THEN $2::jsonb
+				ELSE '{}'::jsonb
+			END,
+			updated_at = CASE
+				WHEN $8
+				  OR jsonb_typeof(COALESCE(extra, '{}'::jsonb) -> 'codex_usage_observed_at_unix_nano') IS DISTINCT FROM 'string'
+				  OR (COALESCE(extra, '{}'::jsonb) ->> 'codex_usage_observed_at_unix_nano') !~ '^[0-9]{20}$'
+				  OR (COALESCE(extra, '{}'::jsonb) ->> 'codex_usage_observed_at_unix_nano') < $7
+				THEN NOW()
+				ELSE updated_at
+			END
+		WHERE id = $3 AND deleted_at IS NULL
+		  AND platform = 'openai' AND type = 'oauth'
+		  AND quota_dimension = 'global' AND parent_account_id IS NULL
+		  AND btrim(COALESCE(credentials ->> 'chatgpt_account_id', '')) = $4
+		  AND btrim(COALESCE(credentials ->> 'organization_id', '')) = $5
+		  AND btrim(COALESCE(credentials ->> 'chatgpt_user_id', '')) = $6
+	`, string(ordinaryPayload), string(managedPayload), id,
+			strings.TrimSpace(account.GetCredential("chatgpt_account_id")),
+			strings.TrimSpace(account.GetCredential("organization_id")),
+			strings.TrimSpace(account.GetCredential("chatgpt_user_id")), observedAt, len(ordinaryUpdates) > 0)
+	} else {
+		updates := make(map[string]any, len(ordinaryUpdates)+len(managedUpdates))
+		for key, value := range ordinaryUpdates {
+			updates[key] = value
+		}
+		for key, value := range managedUpdates {
+			updates[key] = value
+		}
+		payload, marshalErr := json.Marshal(updates)
+		if marshalErr != nil {
+			return false, marshalErr
+		}
+		result, err = exec.ExecContext(ctx, `
+		UPDATE accounts
+		SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb,
+			updated_at = NOW()
+		WHERE id = $2 AND deleted_at IS NULL
+		  AND platform = 'openai' AND type = 'oauth'
+		  AND quota_dimension = 'global' AND parent_account_id IS NULL
+		  AND btrim(COALESCE(credentials ->> 'chatgpt_account_id', '')) = $3
+		  AND btrim(COALESCE(credentials ->> 'organization_id', '')) = $4
+		  AND btrim(COALESCE(credentials ->> 'chatgpt_user_id', '')) = $5
+	`, string(payload), id,
+			strings.TrimSpace(account.GetCredential("chatgpt_account_id")),
+			strings.TrimSpace(account.GetCredential("organization_id")),
+			strings.TrimSpace(account.GetCredential("chatgpt_user_id")))
+	}
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if affected == 1 && dbent.TxFromContext(ctx) == nil {
+		// The database mutation is already committed when this runs. Do not let
+		// an expired probe/request context strand a stale account in the scheduler
+		// cache; propagation is best-effort and bounded independently.
+		r.syncSchedulerAccountSnapshotDetached(ctx, id)
+	}
+	return affected == 1, nil
+}
+
+func openAICodexSnapshotObservedAt(updates map[string]any) (string, bool) {
+	raw, ok := updates[service.OpenAICodexSnapshotObservedAtExtraKey]
+	if !ok {
+		return "", false
+	}
+	value, ok := raw.(string)
+	if !ok || len(value) != 20 {
+		return "", false
+	}
+	for _, digit := range value {
+		if digit < '0' || digit > '9' {
+			return "", false
+		}
+	}
+	return value, true
+}
+
 // UpdateUpstreamBillingProbeSnapshot stores a probe result only while the
 // network identity used by that probe is still current.
 func (r *accountRepository) UpdateUpstreamBillingProbeSnapshot(
@@ -2892,9 +3096,17 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			"NOT ("+ollamaCloudBaseURLMatchesSQL("credentials ->> 'base_url'")+
 				" AND "+ollamaCloudBaseURLMatchesSQL(credentialPlaceholder+"::jsonb ->> 'base_url'")+")")
 	}
+	openAIWakeIdentityCredentialUpdate := false
+	for _, key := range []string{"chatgpt_account_id", "organization_id", "chatgpt_user_id"} {
+		if _, ok := updates.Credentials[key]; ok {
+			openAIWakeIdentityCredentialUpdate = true
+			break
+		}
+	}
 
-	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" {
+	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || openAIWakeIdentityCredentialUpdate {
 		extraExpression := "COALESCE(extra, '{}'::jsonb)"
+		wakeSnapshotIdentityChanged := ""
 		if len(updates.Extra) > 0 {
 			payload, err := json.Marshal(updates.Extra)
 			if err != nil {
@@ -2909,6 +3121,30 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			if ollamaCloudUsageSnapshotClearRequested(updates.Extra) {
 				extraExpression = "(" + extraExpression + ") - 'ollama_cloud_usage_snapshot'"
 			}
+			if raw, ok := updates.Extra[service.OpenAI5hWakeSnapshotIdentityExtraKey]; ok && raw == nil {
+				wakeSnapshotIdentityChanged = "platform = 'openai' AND type = 'oauth' AND quota_dimension = 'global' AND parent_account_id IS NULL"
+			}
+		}
+		if credentialPlaceholder != "" {
+			mergedCredentials := "(COALESCE(credentials, '{}'::jsonb) || " + credentialPlaceholder + "::jsonb)"
+			identityChanges := make([]string, 0, 3)
+			for _, key := range []string{"chatgpt_account_id", "organization_id", "chatgpt_user_id"} {
+				if _, ok := updates.Credentials[key]; ok {
+					identityChanges = append(identityChanges,
+						"credentials ->> '"+key+"' IS DISTINCT FROM "+mergedCredentials+" ->> '"+key+"'")
+				}
+			}
+			if len(identityChanges) > 0 {
+				identityCondition := "platform = 'openai' AND type = 'oauth' AND quota_dimension = 'global' AND parent_account_id IS NULL AND (" + joinClauses(identityChanges, " OR ") + ")"
+				if wakeSnapshotIdentityChanged == "" {
+					wakeSnapshotIdentityChanged = identityCondition
+				} else {
+					wakeSnapshotIdentityChanged = "(" + wakeSnapshotIdentityChanged + " OR " + identityCondition + ")"
+				}
+			}
+		}
+		if wakeSnapshotIdentityChanged != "" {
+			extraExpression = "CASE WHEN " + wakeSnapshotIdentityChanged + " THEN " + subtractOpenAIWakeManagedExtra("("+extraExpression+")") + " ELSE " + extraExpression + " END"
 		}
 		eligibleAccount := "platform IN ('openai', 'anthropic') AND type = 'apikey'"
 		groupIdentityChanged := ""

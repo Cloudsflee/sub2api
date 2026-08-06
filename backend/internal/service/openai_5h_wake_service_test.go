@@ -22,11 +22,54 @@ import (
 
 type openAI5hWakeAccountRepoStub struct {
 	AccountRepository
-	mu            sync.Mutex
-	listed        []Account
-	accounts      map[int64]*Account
-	updates       map[int64][]map[string]any
-	updateErrByID map[int64]error
+	mu                 sync.Mutex
+	listed             []Account
+	accounts           map[int64]*Account
+	updates            map[int64][]map[string]any
+	updateErrByID      map[int64]error
+	snapshotCASOK      *bool
+	snapshotCASOKByID  map[int64]bool
+	snapshotCASResults []bool
+	snapshotCASCalls   int
+	afterUpdate        func(int64, map[string]any)
+}
+
+func (r *openAI5hWakeAccountRepoStub) UpdateOpenAICodexSnapshot(
+	ctx context.Context,
+	id int64,
+	_ *Account,
+	ordinaryUpdates map[string]any,
+	managedUpdates map[string]any,
+) (bool, error) {
+	r.mu.Lock()
+	callIndex := r.snapshotCASCalls
+	r.snapshotCASCalls++
+	var sequencedResult *bool
+	if callIndex < len(r.snapshotCASResults) {
+		result := r.snapshotCASResults[callIndex]
+		sequencedResult = &result
+	}
+	r.mu.Unlock()
+	if sequencedResult != nil && !*sequencedResult {
+		return false, nil
+	}
+	if allowed, ok := r.snapshotCASOKByID[id]; ok && !allowed {
+		return false, nil
+	}
+	if r.snapshotCASOK != nil && !*r.snapshotCASOK {
+		return false, nil
+	}
+	updates := make(map[string]any, len(ordinaryUpdates)+len(managedUpdates))
+	for key, value := range ordinaryUpdates {
+		updates[key] = value
+	}
+	for key, value := range managedUpdates {
+		updates[key] = value
+	}
+	if err := r.UpdateExtra(ctx, id, updates); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (r *openAI5hWakeAccountRepoStub) ListByPlatform(_ context.Context, platform string) ([]Account, error) {
@@ -55,8 +98,8 @@ func (r *openAI5hWakeAccountRepoStub) GetByID(_ context.Context, id int64) (*Acc
 
 func (r *openAI5hWakeAccountRepoStub) UpdateExtra(_ context.Context, id int64, updates map[string]any) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if err := r.updateErrByID[id]; err != nil {
+		r.mu.Unlock()
 		return err
 	}
 	if r.updates == nil {
@@ -74,6 +117,11 @@ func (r *openAI5hWakeAccountRepoStub) UpdateExtra(_ context.Context, id int64, u
 		for key, value := range copied {
 			account.Extra[key] = value
 		}
+	}
+	afterUpdate := r.afterUpdate
+	r.mu.Unlock()
+	if afterUpdate != nil {
+		afterUpdate(id, copied)
 	}
 	return nil
 }
@@ -109,9 +157,17 @@ type openAI5hWakeWorkerRepo struct {
 	events          []*OpenAI5hWakeTaskEvent
 	completeErr     error
 	cancelRequested bool
+	cancelErr       error
+	recoverFn       func(context.Context, int64, string, int) (int, error)
+	heartbeatFn     func(context.Context, int64, string, time.Time, time.Time) (bool, error)
+	appendEventFn   func(OpenAI5hWakeTaskEventParams)
+	finalizeCalls   int
 }
 
 func (r *openAI5hWakeWorkerRepo) AppendTaskEvent(_ context.Context, params OpenAI5hWakeTaskEventParams) error {
+	if r.appendEventFn != nil {
+		r.appendEventFn(params)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	event := &OpenAI5hWakeTaskEvent{
@@ -129,7 +185,10 @@ func (r *openAI5hWakeWorkerRepo) ListTaskEvents(_ context.Context, _ int64, _, _
 	return result, int64(len(result)), nil
 }
 
-func (r *openAI5hWakeWorkerRepo) RecoverTaskItems(_ context.Context, _ int64, _ string, maxAttempts int) (int, error) {
+func (r *openAI5hWakeWorkerRepo) RecoverTaskItems(ctx context.Context, taskID int64, owner string, maxAttempts int) (int, error) {
+	if r.recoverFn != nil {
+		return r.recoverFn(ctx, taskID, owner, maxAttempts)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	count := 0
@@ -212,13 +271,19 @@ func (r *openAI5hWakeWorkerRepo) CompleteItem(_ context.Context, _ int64, _ stri
 	return false, nil
 }
 
-func (r *openAI5hWakeWorkerRepo) HeartbeatTask(context.Context, int64, string, time.Time, time.Time) (bool, error) {
+func (r *openAI5hWakeWorkerRepo) HeartbeatTask(ctx context.Context, taskID int64, owner string, now, leaseUntil time.Time) (bool, error) {
+	if r.heartbeatFn != nil {
+		return r.heartbeatFn(ctx, taskID, owner, now, leaseUntil)
+	}
 	return true, nil
 }
 
 func (r *openAI5hWakeWorkerRepo) IsCancelRequested(context.Context, int64) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.cancelErr != nil {
+		return false, r.cancelErr
+	}
 	return r.cancelRequested, nil
 }
 
@@ -238,6 +303,7 @@ func (r *openAI5hWakeWorkerRepo) RequestCancel(_ context.Context, _ int64, now t
 func (r *openAI5hWakeWorkerRepo) FinalizeTask(_ context.Context, _ int64, _ string, cancelled bool, now time.Time) (*OpenAI5hWakeTask, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.finalizeCalls++
 	if cancelled {
 		for _, item := range r.items {
 			if item.Status == OpenAI5hWakeItemStatusPending || item.Status == OpenAI5hWakeItemStatusRunning {
@@ -520,6 +586,10 @@ func TestValidateOpenAI5hWakeResponseBody(t *testing.T) {
 			body: `{"type":"response.done","response":{"status":"completed"}}`,
 		},
 		{
+			name: "buffered JSON without event type",
+			body: `{"status":"completed"}`,
+		},
+		{
 			name:    "explicit failure",
 			body:    "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\"}}\n\n",
 			wantErr: true,
@@ -572,6 +642,108 @@ func TestOpenAI5hWakePartialSnapshotInvalidatesTrustedMarker(t *testing.T) {
 	require.False(t, hasTrustedOpenAI5hWakeSnapshot(account))
 }
 
+func TestOpenAI5hWakePersistSnapshotRejectsIdentityChangedCAS(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	ok := false
+	repo := &openAI5hWakeAccountRepoStub{
+		accounts:      map[int64]*Account{account.ID: account},
+		snapshotCASOK: &ok,
+	}
+	wake := &OpenAI5hWakeService{accountRepo: repo}
+
+	err := wake.persistWakeSnapshot(context.Background(), account, map[string]any{
+		"codex_5h_used_percent": 42,
+		"codex_5h_reset_at":     time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	})
+
+	require.ErrorIs(t, err, errOpenAI5hWakeIdentityChanged)
+	require.Empty(t, repo.updates)
+}
+
+func TestOpenAI5hWakeUsageQueryPreservesIdentityConflict(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	repo := &openAI5hWakeAccountRepoStub{
+		accounts:          map[int64]*Account{account.ID: account},
+		snapshotCASOKByID: map[int64]bool{account.ID: false},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"rate_limit":{"primary_window":{"used_percent":7,"limit_window_seconds":18000,"reset_after_seconds":18000}}}`)
+	}))
+	defer server.Close()
+	quota := NewOpenAIQuotaService(repo, nil, NewOpenAITokenProvider(repo, nil, nil), newQuotaRedirectingFactory(server))
+	wake := &OpenAI5hWakeService{accountRepo: repo, quotaService: quota}
+
+	_, _, err := wake.queryAndPersistGlobalUsage(context.Background(), account)
+
+	require.ErrorIs(t, err, errOpenAI5hWakeSnapshotPersist)
+	require.ErrorIs(t, err, errOpenAI5hWakeIdentityChanged)
+	require.Empty(t, repo.updates)
+}
+
+func TestOpenAI5hWakePostUsageIdentityConflictIsReported(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	repo := &openAI5hWakeAccountRepoStub{
+		accounts:           map[int64]*Account{account.ID: account},
+		snapshotCASResults: []bool{true, false},
+	}
+	var usageCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if usageCalls.Add(1) == 1 {
+			_, _ = io.WriteString(w, `{"rate_limit":null}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":18000,"reset_after_seconds":18000}}}`)
+	}))
+	defer server.Close()
+	quota := NewOpenAIQuotaService(repo, nil, NewOpenAITokenProvider(repo, nil, nil), newQuotaRedirectingFactory(server))
+	upstream := &openAI5hWakeHTTPStub{responses: []openAI5hWakeStubResponse{{status: http.StatusOK, headers: make(http.Header)}}}
+	wake := &OpenAI5hWakeService{
+		accountRepo: repo, quotaService: quota, tokenProvider: NewOpenAITokenProvider(repo, nil, nil), httpUpstream: upstream,
+	}
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{account})[0]
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, IdentityHash: group.identityHash, MemberAccountIDs: []int64{account.ID},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusFailed, result.Status)
+	require.Equal(t, "identity_changed", result.ErrorCode)
+	require.Equal(t, int32(2), usageCalls.Load())
+	require.Len(t, upstream.requests, 1)
+	require.Len(t, repo.updates[account.ID], 1, "the authoritative pre-wake null snapshot should persist before the later identity conflict")
+}
+
+func TestOpenAI5hWakeProcessItemContinuesAfterUsageSnapshotIdentityConflict(t *testing.T) {
+	first := newOpenAI5hWakeAccount(1, "shared-pool")
+	second := newOpenAI5hWakeAccount(2, "shared-pool")
+	repo := &openAI5hWakeAccountRepoStub{
+		accounts:          map[int64]*Account{1: first, 2: second},
+		snapshotCASOKByID: map[int64]bool{1: false, 2: true},
+	}
+	upstream := &openAI5hWakeHTTPStub{responses: []openAI5hWakeStubResponse{
+		openAI5hWakeHeaders(http.StatusOK),
+		openAI5hWakeHeaders(http.StatusOK),
+	}}
+	wake := &OpenAI5hWakeService{accountRepo: repo, httpUpstream: upstream, tokenProvider: NewOpenAITokenProvider(repo, nil, nil)}
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{first, second})[0]
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, IdentityHash: group.identityHash, MemberAccountIDs: []int64{1, 2},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusWoken, result.Status)
+	require.Equal(t, []int64{1, 2}, result.AttemptedAccountIDs)
+	require.NotNil(t, result.SuccessfulAccountID)
+	require.Equal(t, int64(2), *result.SuccessfulAccountID)
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, int64(1), upstream.requests[0].accountID)
+	require.Equal(t, int64(2), upstream.requests[1].accountID)
+	require.Empty(t, repo.updates[1])
+	require.NotEmpty(t, repo.updates[2])
+}
+
 func TestOpenAI5hWakeProcessItemRejectsIncompleteSuccessfulStream(t *testing.T) {
 	account := newOpenAI5hWakeAccount(1, "pool")
 	response := openAI5hWakeHeaders(http.StatusOK)
@@ -590,6 +762,41 @@ func TestOpenAI5hWakeProcessItemRejectsIncompleteSuccessfulStream(t *testing.T) 
 
 	require.Equal(t, OpenAI5hWakeItemStatusFailed, result.Status)
 	require.Equal(t, "response_stream_incomplete", result.ErrorCode)
+}
+
+func TestOpenAI5hWakeProcessItemCountsConfirmedIncomplete2xxAsWoken(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	repo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{1: account}}
+	var usageCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if usageCalls.Add(1) == 1 {
+			_, _ = io.WriteString(w, `{"rate_limit":null}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":18000,"reset_after_seconds":18000}}}`)
+	}))
+	defer server.Close()
+
+	tokenProvider := NewOpenAITokenProvider(repo, nil, nil)
+	quota := NewOpenAIQuotaService(repo, nil, tokenProvider, newQuotaRedirectingFactory(server))
+	response := openAI5hWakeHeaders(http.StatusOK)
+	response.body = "data: {\"type\":\"response.created\"}\n\n"
+	upstream := &openAI5hWakeHTTPStub{responses: []openAI5hWakeStubResponse{response}}
+	wake := &OpenAI5hWakeService{
+		accountRepo: repo, quotaService: quota, tokenProvider: tokenProvider, httpUpstream: upstream,
+	}
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{account})[0]
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, IdentityHash: group.identityHash, MemberAccountIDs: []int64{account.ID},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusWoken, result.Status)
+	require.Empty(t, result.ErrorCode)
+	require.Equal(t, int32(2), usageCalls.Load())
+	require.Len(t, upstream.requests, 1)
+	require.NotNil(t, result.ResetAt)
 }
 
 func TestOpenAI5hWakeProcessItemContinuesAfterUsageFailureAndFallsBackAccount(t *testing.T) {
@@ -852,6 +1059,30 @@ func TestOpenAI5hWakeProcessItemReportsTimeoutWithoutMutatingAccountHealth(t *te
 	require.True(t, account.Schedulable)
 }
 
+func TestOpenAI5hWakeItemBudgetScalesWithFallbackAccounts(t *testing.T) {
+	tests := []struct {
+		name       string
+		memberIDs  []int64
+		wantBudget time.Duration
+	}{
+		{name: "nil item", wantBudget: openAI5hWakeAccountAttemptTimeout},
+		{name: "empty members", memberIDs: []int64{}, wantBudget: openAI5hWakeAccountAttemptTimeout},
+		{name: "one account", memberIDs: []int64{1}, wantBudget: openAI5hWakeAccountAttemptTimeout},
+		{name: "four fallbacks", memberIDs: []int64{1, 2, 3, 4}, wantBudget: 4 * openAI5hWakeAccountAttemptTimeout},
+		{name: "large pool is bounded", memberIDs: []int64{1, 2, 3, 4, 5, 6, 7, 8, 9}, wantBudget: openAI5hWakeItemTimeout},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var item *OpenAI5hWakeTaskItem
+			if tt.memberIDs != nil {
+				item = &OpenAI5hWakeTaskItem{MemberAccountIDs: tt.memberIDs}
+			}
+			require.Equal(t, tt.wantBudget, openAI5hWakeItemBudget(item))
+		})
+	}
+}
+
 func TestOpenAI5hWakeLightweightUsageSkipsResetCreditsAndOmitsErrorBody(t *testing.T) {
 	account := newOpenAI5hWakeAccount(1, "pool")
 	repo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{1: account}}
@@ -920,6 +1151,384 @@ func TestOpenAI5hWakeWorkerLimitsConcurrencyToEight(t *testing.T) {
 	require.Equal(t, 24, repo.task.ProcessedItems)
 }
 
+func TestOpenAI5hWakeCancellationDuringRecoveryFinalizesWithoutLeaseTakeover(t *testing.T) {
+	wake, repo := newOpenAI5hWakeWorkerFixture(1, &openAI5hWakeObservedUpstream{})
+	recoveryStarted := make(chan struct{})
+	repo.recoverFn = func(ctx context.Context, _ int64, _ string, _ int) (int, error) {
+		close(recoveryStarted)
+		<-ctx.Done()
+		return 0, ctx.Err()
+	}
+	done := make(chan struct{})
+	go func() {
+		wake.processTask(repo.task)
+		close(done)
+	}()
+
+	select {
+	case <-recoveryStarted:
+	case <-time.After(time.Second):
+		t.Fatal("task recovery did not start")
+	}
+	_, err := wake.CancelTask(context.Background(), repo.task.ID)
+	require.NoError(t, err)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancellation during recovery waited for lease takeover")
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Equal(t, OpenAI5hWakeTaskStatusCancelled, repo.task.Status)
+	require.Equal(t, repo.task.TotalItems, repo.task.CancelledCount)
+	require.Equal(t, 1, repo.finalizeCalls)
+}
+
+func TestOpenAI5hWakeRecoveryCancelCheckFailureLeavesLeaseForRecovery(t *testing.T) {
+	wake, repo := newOpenAI5hWakeWorkerFixture(1, &openAI5hWakeObservedUpstream{})
+	recoveryStarted := make(chan struct{})
+	repo.cancelErr = errors.New("database unavailable")
+	repo.recoverFn = func(ctx context.Context, _ int64, _ string, _ int) (int, error) {
+		close(recoveryStarted)
+		<-ctx.Done()
+		return 0, ctx.Err()
+	}
+	done := make(chan struct{})
+	go func() {
+		wake.processTask(repo.task)
+		close(done)
+	}()
+
+	select {
+	case <-recoveryStarted:
+	case <-time.After(time.Second):
+		t.Fatal("task recovery did not start")
+	}
+	_, err := wake.CancelTask(context.Background(), repo.task.ID)
+	require.NoError(t, err)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not stop after recovery cancellation confirmation failed")
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Equal(t, OpenAI5hWakeTaskStatusRunning, repo.task.Status)
+	require.Zero(t, repo.finalizeCalls)
+	require.Condition(t, func() bool {
+		for _, event := range repo.events {
+			if event.Code == "cancel_check_failed" && strings.Contains(event.Message, "database unavailable") {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestOpenAI5hWakeRecoveryStopsWhenConfirmedLeaseExpires(t *testing.T) {
+	wake, repo := newOpenAI5hWakeWorkerFixture(1, &openAI5hWakeObservedUpstream{})
+	leaseExpiresAt := time.Now().UTC().Add(80 * time.Millisecond)
+	repo.task.LeaseExpiresAt = &leaseExpiresAt
+	recoveryCancelled := make(chan struct{})
+	repo.recoverFn = func(ctx context.Context, _ int64, _ string, _ int) (int, error) {
+		<-ctx.Done()
+		close(recoveryCancelled)
+		return 0, ctx.Err()
+	}
+	done := make(chan struct{})
+	go func() {
+		wake.processTask(repo.task)
+		close(done)
+	}()
+
+	select {
+	case <-recoveryCancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expired lease did not cancel task recovery")
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not exit after recovery lost its lease")
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Equal(t, OpenAI5hWakeTaskStatusRunning, repo.task.Status)
+	require.Zero(t, repo.finalizeCalls)
+	require.Condition(t, func() bool {
+		for _, event := range repo.events {
+			if event.Code == "lease_lost" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestOpenAI5hWakeFinalizationRequiresFreshLeaseConfirmation(t *testing.T) {
+	wake, repo := newOpenAI5hWakeWorkerFixture(1, &openAI5hWakeObservedUpstream{})
+	repo.heartbeatFn = func(context.Context, int64, string, time.Time, time.Time) (bool, error) {
+		return false, nil
+	}
+
+	wake.processTask(repo.task)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Equal(t, OpenAI5hWakeTaskStatusRunning, repo.task.Status)
+	require.Zero(t, repo.finalizeCalls)
+	require.Condition(t, func() bool {
+		for _, event := range repo.events {
+			if event.Code == "lease_lost" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestOpenAI5hWakeMonitorStopsAtConfirmedLeaseAfterHeartbeatFailures(t *testing.T) {
+	repo := &openAI5hWakeWorkerRepo{
+		task: &OpenAI5hWakeTask{ID: 81, Status: OpenAI5hWakeTaskStatusRunning},
+		heartbeatFn: func(context.Context, int64, string, time.Time, time.Time) (bool, error) {
+			return false, errors.New("database unavailable")
+		},
+	}
+	service := NewOpenAI5hWakeService(repo, nil, nil, nil, nil, nil, nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	var lostLease atomic.Bool
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		service.monitorTaskWithTimings(
+			ctx,
+			cancel,
+			repo.task.ID,
+			time.Now().UTC().Add(90*time.Millisecond),
+			&lostLease,
+			done,
+			openAI5hWakeMonitorTimings{
+				heartbeatInterval:  15 * time.Millisecond,
+				cancelPollInterval: time.Second,
+				leaseDuration:      90 * time.Millisecond,
+				heartbeatTimeout:   10 * time.Millisecond,
+				cancelPollTimeout:  10 * time.Millisecond,
+			},
+		)
+	}()
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not cancel work after the confirmed lease expired")
+	}
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not stop after lease expiry")
+	}
+	require.True(t, lostLease.Load())
+
+	repo.mu.Lock()
+	codes := make([]string, 0, len(repo.events))
+	for _, event := range repo.events {
+		codes = append(codes, event.Code)
+	}
+	repo.mu.Unlock()
+	require.Contains(t, codes, "heartbeat_failed")
+	require.Contains(t, codes, "lease_lost")
+}
+
+func TestOpenAI5hWakeMonitorExtendsDeadlineOnlyAfterSuccessfulHeartbeat(t *testing.T) {
+	firstHeartbeat := make(chan struct{})
+	var firstHeartbeatOnce sync.Once
+	var heartbeatCalls atomic.Int32
+	repo := &openAI5hWakeWorkerRepo{
+		task: &OpenAI5hWakeTask{ID: 82, Status: OpenAI5hWakeTaskStatusRunning},
+		heartbeatFn: func(context.Context, int64, string, time.Time, time.Time) (bool, error) {
+			if heartbeatCalls.Add(1) == 1 {
+				firstHeartbeatOnce.Do(func() { close(firstHeartbeat) })
+				return true, nil
+			}
+			return false, errors.New("database unavailable")
+		},
+	}
+	service := NewOpenAI5hWakeService(repo, nil, nil, nil, nil, nil, nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	var lostLease atomic.Bool
+	stopped := make(chan struct{})
+	initialLease := time.Now().UTC().Add(300 * time.Millisecond)
+	go func() {
+		defer close(stopped)
+		service.monitorTaskWithTimings(
+			ctx,
+			cancel,
+			repo.task.ID,
+			initialLease,
+			&lostLease,
+			done,
+			openAI5hWakeMonitorTimings{
+				heartbeatInterval:  20 * time.Millisecond,
+				cancelPollInterval: time.Second,
+				leaseDuration:      700 * time.Millisecond,
+				heartbeatTimeout:   10 * time.Millisecond,
+				cancelPollTimeout:  10 * time.Millisecond,
+			},
+		)
+	}()
+
+	select {
+	case <-firstHeartbeat:
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not perform its first heartbeat")
+	}
+	time.Sleep(time.Until(initialLease.Add(75 * time.Millisecond)))
+	select {
+	case <-ctx.Done():
+		t.Fatal("successful heartbeat did not extend the confirmed lease deadline")
+	default:
+	}
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not stop after the extended lease eventually expired")
+	}
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not exit after the extended lease expired")
+	}
+	require.True(t, lostLease.Load())
+}
+
+func TestOpenAI5hWakeMonitorAcceptsSuccessfulHeartbeatAcrossOldDeadline(t *testing.T) {
+	var heartbeatCalls atomic.Int32
+	firstHeartbeatReturned := make(chan struct{})
+	repo := &openAI5hWakeWorkerRepo{
+		task: &OpenAI5hWakeTask{ID: 84, Status: OpenAI5hWakeTaskStatusRunning},
+		heartbeatFn: func(context.Context, int64, string, time.Time, time.Time) (bool, error) {
+			if heartbeatCalls.Add(1) == 1 {
+				// Model a database CAS that committed before the old deadline while
+				// delivery of its successful result crossed that deadline.
+				time.Sleep(85 * time.Millisecond)
+				close(firstHeartbeatReturned)
+				return true, nil
+			}
+			return false, errors.New("database unavailable")
+		},
+	}
+	service := NewOpenAI5hWakeService(repo, nil, nil, nil, nil, nil, nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	var lostLease atomic.Bool
+	stopped := make(chan struct{})
+	initialLease := time.Now().UTC().Add(70 * time.Millisecond)
+	go func() {
+		defer close(stopped)
+		service.monitorTaskWithTimings(
+			ctx,
+			cancel,
+			repo.task.ID,
+			initialLease,
+			&lostLease,
+			done,
+			openAI5hWakeMonitorTimings{
+				heartbeatInterval:  5 * time.Millisecond,
+				cancelPollInterval: time.Second,
+				leaseDuration:      300 * time.Millisecond,
+				heartbeatTimeout:   100 * time.Millisecond,
+				cancelPollTimeout:  10 * time.Millisecond,
+			},
+		)
+	}()
+
+	select {
+	case <-firstHeartbeatReturned:
+	case <-time.After(time.Second):
+		t.Fatal("successful heartbeat did not return")
+	}
+	select {
+	case <-ctx.Done():
+		t.Fatal("worker discarded a database-confirmed renewed lease")
+	default:
+	}
+	close(done)
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not stop")
+	}
+	require.False(t, lostLease.Load())
+}
+
+func TestOpenAI5hWakeMonitorCancelsWorkBeforeWritingCancellationEvent(t *testing.T) {
+	eventWriteStarted := make(chan struct{})
+	releaseEventWrite := make(chan struct{})
+	var eventWriteOnce sync.Once
+	repo := &openAI5hWakeWorkerRepo{
+		task:            &OpenAI5hWakeTask{ID: 83, Status: OpenAI5hWakeTaskStatusRunning},
+		cancelRequested: true,
+		appendEventFn: func(params OpenAI5hWakeTaskEventParams) {
+			if params.Code != "cancel_observed" {
+				return
+			}
+			eventWriteOnce.Do(func() { close(eventWriteStarted) })
+			<-releaseEventWrite
+		},
+	}
+	service := NewOpenAI5hWakeService(repo, nil, nil, nil, nil, nil, nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	var lostLease atomic.Bool
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		service.monitorTaskWithTimings(
+			ctx,
+			cancel,
+			repo.task.ID,
+			time.Now().UTC().Add(time.Second),
+			&lostLease,
+			done,
+			openAI5hWakeMonitorTimings{
+				heartbeatInterval:  time.Second,
+				cancelPollInterval: 10 * time.Millisecond,
+				leaseDuration:      time.Second,
+				heartbeatTimeout:   10 * time.Millisecond,
+				cancelPollTimeout:  10 * time.Millisecond,
+			},
+		)
+	}()
+
+	select {
+	case <-eventWriteStarted:
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not observe the cancellation request")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("work context remained active while cancellation event persistence was blocked")
+	}
+	close(releaseEventWrite)
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not stop after the cancellation event was released")
+	}
+	require.False(t, lostLease.Load())
+}
+
 func TestOpenAI5hWakeWorkerPersistsCompletionFailureInTaskEvents(t *testing.T) {
 	upstream := &openAI5hWakeObservedUpstream{}
 	wake, repo := newOpenAI5hWakeWorkerFixture(1, upstream)
@@ -967,6 +1576,57 @@ func TestOpenAI5hWakeWorkerFailsRecoveredItemsAfterRetryLimit(t *testing.T) {
 	}
 	require.Contains(t, codes, "items_retry_exhausted")
 	require.Contains(t, codes, "task_finished")
+}
+
+func TestOpenAI5hWakeWorkerPersistsWokenItemWhenCancellationFollowsSnapshot(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "cancel-after-wake")
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{account})[0]
+	task := &OpenAI5hWakeTask{ID: 71, Status: OpenAI5hWakeTaskStatusRunning, TotalItems: 1}
+	taskRepo := &openAI5hWakeWorkerRepo{
+		task: task,
+		items: []*OpenAI5hWakeTaskItem{{
+			ID: 1, TaskID: task.ID, IdentityHash: group.identityHash,
+			MemberAccountIDs: []int64{account.ID}, Status: OpenAI5hWakeItemStatusPending,
+		}},
+	}
+	accountRepo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &openAI5hWakeObservedUpstream{}
+	wake := NewOpenAI5hWakeService(
+		taskRepo, accountRepo, nil, NewOpenAITokenProvider(accountRepo, nil, nil),
+		upstream, nil, nil, nil,
+	)
+	cancelResult := make(chan error, 1)
+	var cancelOnce sync.Once
+	accountRepo.afterUpdate = func(int64, map[string]any) {
+		cancelOnce.Do(func() {
+			_, err := wake.CancelTask(context.Background(), task.ID)
+			cancelResult <- err
+		})
+	}
+
+	wake.processTask(task)
+
+	select {
+	case err := <-cancelResult:
+		require.NoError(t, err)
+	default:
+		t.Fatal("snapshot persistence did not trigger the cancellation race")
+	}
+	require.Equal(t, OpenAI5hWakeItemStatusWoken, taskRepo.items[0].Status)
+	require.Equal(t, 1, task.ProcessedItems)
+	require.Equal(t, 1, task.WokenCount)
+	require.Zero(t, task.CancelledCount)
+	require.Equal(t, OpenAI5hWakeTaskStatusCancelled, task.Status)
+
+	taskRepo.mu.Lock()
+	codes := make([]string, 0, len(taskRepo.events))
+	for _, event := range taskRepo.events {
+		codes = append(codes, event.Code)
+	}
+	taskRepo.mu.Unlock()
+	require.Contains(t, codes, "account_attempt_started")
+	require.Contains(t, codes, "wake_request_started")
+	require.Contains(t, codes, "item_woken")
 }
 
 func TestOpenAI5hWakeCancellationStopsDispatchAndCancelsInFlightRequests(t *testing.T) {

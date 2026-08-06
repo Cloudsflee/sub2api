@@ -97,6 +97,9 @@ func (h *AccountHandler) ListOpenAI5hWakeTaskItems(c *gin.Context) {
 		return
 	}
 	page, pageSize := response.ParsePagination(c)
+	if pageSize > 100 {
+		pageSize = 100
+	}
 	items, total, err := wake.ListTaskItems(c.Request.Context(), taskID, page, pageSize)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -115,6 +118,9 @@ func (h *AccountHandler) ListOpenAI5hWakeTaskEvents(c *gin.Context) {
 		return
 	}
 	page, pageSize := response.ParsePagination(c)
+	if pageSize > 100 {
+		pageSize = 100
+	}
 	events, total, err := wake.ListTaskEvents(c.Request.Context(), taskID, page, pageSize)
 	if err != nil {
 		response.ErrorFrom(c, err)

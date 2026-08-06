@@ -160,6 +160,57 @@ func TestBuildCodexSparkWindowExtraUpdates_NoBengalfox(t *testing.T) {
 	require.Nil(t, buildCodexSparkWindowExtraUpdates(usage, time.Now()))
 }
 
+func TestBuildCodexGlobalWindowExtraUpdatesClearsMissingWindows(t *testing.T) {
+	now := time.Date(2026, time.August, 6, 3, 4, 5, 123456789, time.UTC)
+	tests := []struct {
+		name      string
+		rateLimit *OpenAIRateLimit
+		present   []string
+		missing   []string
+	}{
+		{
+			name: "null rate limit",
+			missing: []string{
+				"codex_primary_used_percent", "codex_secondary_used_percent",
+				"codex_5h_used_percent", "codex_5h_reset_at",
+				"codex_7d_used_percent", "codex_7d_reset_at",
+			},
+		},
+		{
+			name: "only 5h window",
+			rateLimit: &OpenAIRateLimit{PrimaryWindow: &OpenAIRateLimitWindow{
+				UsedPercent: 7, ResetAfterSeconds: 90, LimitWindowSeconds: 5 * 60 * 60,
+			}},
+			present: []string{"codex_primary_used_percent", "codex_5h_used_percent", "codex_5h_reset_at"},
+			missing: []string{"codex_secondary_used_percent", "codex_7d_used_percent", "codex_7d_reset_at"},
+		},
+		{
+			name: "only 7d window",
+			rateLimit: &OpenAIRateLimit{PrimaryWindow: &OpenAIRateLimitWindow{
+				UsedPercent: 23, ResetAfterSeconds: 120, LimitWindowSeconds: 7 * 24 * 60 * 60,
+			}},
+			present: []string{"codex_primary_used_percent", "codex_7d_used_percent", "codex_7d_reset_at"},
+			missing: []string{"codex_secondary_used_percent", "codex_5h_used_percent", "codex_5h_reset_at"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			updates := buildCodexGlobalWindowExtraUpdates(&OpenAIQuotaUsage{RateLimit: tt.rateLimit}, now)
+			require.Equal(t, now.Format(time.RFC3339), updates["codex_usage_updated_at"])
+			require.Equal(t, fmt.Sprintf("%020d", now.UnixNano()), updates[OpenAICodexSnapshotObservedAtExtraKey])
+			for _, key := range tt.present {
+				require.NotNil(t, updates[key], "%s should be populated", key)
+			}
+			for _, key := range tt.missing {
+				value, ok := updates[key]
+				require.True(t, ok, "%s must be explicitly cleared", key)
+				require.Nil(t, value, "%s must be explicitly cleared", key)
+			}
+		})
+	}
+}
+
 // ── Part C: ResetCredit 影子拒绝 ───────────────────────────────────────────
 
 // TestResetCreditShadowRejected 验证:

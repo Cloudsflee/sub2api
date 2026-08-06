@@ -136,6 +136,7 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"codex_secondary_window_minutes":         {},
 	"codex_primary_over_secondary_percent":   {},
 	"codex_usage_updated_at":                 {},
+	OpenAICodexSnapshotObservedAtExtraKey:    {},
 	"codex_5h_used_percent":                  {},
 	"codex_5h_reset_after_seconds":           {},
 	"codex_5h_window_minutes":                {},
@@ -147,6 +148,36 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	// Wake verification belongs to the source account and must be re-established
 	// when an account is duplicated or its credentials are replaced.
 	"codex_5h_wake_identity_hash": {},
+}
+
+// openAICodexSnapshotManagedExtraKeys are maintained by upstream quota probes
+// and the 5h wake worker. They are deliberately excluded from generic admin
+// Extra edits so a stale account form cannot overwrite a newer observation.
+var openAICodexSnapshotManagedExtraKeys = map[string]struct{}{
+	"codex_primary_used_percent":           {},
+	"codex_primary_reset_after_seconds":    {},
+	"codex_primary_window_minutes":         {},
+	"codex_secondary_used_percent":         {},
+	"codex_secondary_reset_after_seconds":  {},
+	"codex_secondary_window_minutes":       {},
+	"codex_primary_over_secondary_percent": {},
+	"codex_usage_updated_at":               {},
+	OpenAICodexSnapshotObservedAtExtraKey:  {},
+	"codex_5h_used_percent":                {},
+	"codex_5h_reset_after_seconds":         {},
+	"codex_5h_window_minutes":              {},
+	"codex_5h_reset_at":                    {},
+	"codex_7d_used_percent":                {},
+	"codex_7d_reset_after_seconds":         {},
+	"codex_7d_window_minutes":              {},
+	"codex_7d_reset_at":                    {},
+	openAI5hWakeSnapshotIdentityKey:        {},
+}
+
+func discardOpenAICodexSnapshotManagedExtra(updates map[string]any) {
+	for key := range openAICodexSnapshotManagedExtraKeys {
+		delete(updates, key)
+	}
 }
 
 func duplicateAccountExtra(value map[string]any) (map[string]any, error) {
@@ -618,7 +649,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		// This is worker-owned state. Never accept a marker echoed by an account
 		// edit payload; a valid marker is restored below only after the identity
 		// comparison has succeeded.
-		delete(normalizedExtra, openAI5hWakeSnapshotIdentityKey)
+		discardOpenAICodexSnapshotManagedExtra(normalizedExtra)
 	}
 	previousProbeIdentity := upstreamBillingProbeIdentity(account)
 	previousOllamaUsageIdentity := ollamaCloudUsageIdentity(account)
@@ -694,6 +725,13 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(normalizedExtra, OllamaCloudUsageSnapshotExtraKey)
 		// 保留配额用量和专用服务受管字段，防止普通账号编辑意外覆盖。
+		if previousOpenAI5hWakeIdentity == openAI5hWakeIdentityFingerprintFor(account) {
+			for key := range openAICodexSnapshotManagedExtraKeys {
+				if value, ok := account.Extra[key]; ok && value != nil {
+					normalizedExtra[key] = value
+				}
+			}
+		}
 		for _, key := range []string{
 			"quota_used",
 			"quota_daily_used",
@@ -928,6 +966,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 // UpdateAccountExtra 仅对 Extra JSONB 做 key 级合并，避免覆盖其它运行态键
 // （如 model_rate_limits / passive_usage_* 等）。
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
+	discardOpenAICodexSnapshotManagedExtra(updates)
 	delete(updates, UpstreamBillingProbeEnabledExtraKey)
 	delete(updates, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(updates, UpstreamBillingProbeExtraKey)
@@ -954,6 +993,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 // It merges credentials/extra keys instead of overwriting the whole object.
 func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error) {
 	// Managed probe/session state may only enter through dedicated typed endpoints.
+	discardOpenAICodexSnapshotManagedExtra(input.Extra)
 	delete(input.Extra, UpstreamBillingProbeEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingProbeExtraKey)

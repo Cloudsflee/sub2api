@@ -405,7 +405,13 @@ let itemsRequestSequence = 0
 let eventsRequestSequence = 0
 let refreshRequestSequence = 0
 let activeRefreshRequest = 0
+let startRequestSequence = 0
+let cancelRequestSequence = 0
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let terminalDetailsRetryTimer: ReturnType<typeof setTimeout> | null = null
+let terminalDetailsRetryAttempt = 0
+
+const terminalDetailsRetryDelays = [1000, 1000, 2000, 5000, 10000, 30000]
 
 const terminalStatuses = new Set<OpenAI5hWakeTask['status']>([
   'succeeded',
@@ -427,7 +433,31 @@ const progressPercent = computed(() => {
 const runningItemCount = computed(() => task.value?.running_item_count ?? 0)
 const lastActivityAt = computed(() => events.value[0]?.created_at || task.value?.updated_at)
 
+const stopTerminalDetailsRetry = () => {
+  if (terminalDetailsRetryTimer !== null) {
+    clearTimeout(terminalDetailsRetryTimer)
+    terminalDetailsRetryTimer = null
+  }
+  terminalDetailsRetryAttempt = 0
+}
+
+const clearTerminalDetailsRetryTimer = () => {
+  if (terminalDetailsRetryTimer !== null) {
+    clearTimeout(terminalDetailsRetryTimer)
+    terminalDetailsRetryTimer = null
+  }
+}
+
+const invalidateActionRequests = () => {
+  startRequestSequence += 1
+  cancelRequestSequence += 1
+  starting.value = false
+  cancelling.value = false
+}
+
 const invalidateTaskView = () => {
+  stopTerminalDetailsRetry()
+  invalidateActionRequests()
   taskViewSequence += 1
   itemsRequestSequence += 1
   eventsRequestSequence += 1
@@ -529,6 +559,8 @@ const knownEventCodes = new Set([
   'cancel_poll_failed',
   'final_cancel_check_failed',
   'item_started',
+  'account_attempt_started',
+  'wake_request_started',
   'item_woken',
   'item_skipped_active',
   'item_failed',
@@ -584,9 +616,9 @@ const notifyTask = (nextTask: OpenAI5hWakeTask) => {
   }
 }
 
-const loadItems = async () => {
+const loadItems = async (): Promise<boolean> => {
   const currentTask = task.value
-  if (!currentTask) return
+  if (!currentTask) return false
   const taskID = currentTask.id
   const page = itemsPage.value
   const viewSequence = taskViewSequence
@@ -594,37 +626,76 @@ const loadItems = async () => {
   itemsLoading.value = true
   try {
     const result = await accountsAPI.listOpenAI5hWakeTaskItems(taskID, page, itemsPageSize)
-    if (requestSequence !== itemsRequestSequence || page !== itemsPage.value || !isCurrentTaskView(viewSequence, taskID)) return
+    if (requestSequence !== itemsRequestSequence || page !== itemsPage.value || !isCurrentTaskView(viewSequence, taskID)) return false
     items.value = result.items
     itemsTotal.value = result.total
+    return true
   } catch (error) {
     if (requestSequence === itemsRequestSequence && isCurrentTaskView(viewSequence, taskID)) throw error
+    return false
   } finally {
     if (requestSequence === itemsRequestSequence) itemsLoading.value = false
   }
 }
 
-const loadEvents = async () => {
+const loadEvents = async (): Promise<boolean> => {
   const currentTask = task.value
-  if (!currentTask) return
+  if (!currentTask) return false
   const taskID = currentTask.id
   const viewSequence = taskViewSequence
   const requestSequence = ++eventsRequestSequence
   eventsLoading.value = true
   try {
     const result = await accountsAPI.listOpenAI5hWakeTaskEvents(taskID, 1, eventsPageSize)
-    if (requestSequence !== eventsRequestSequence || !isCurrentTaskView(viewSequence, taskID)) return
+    if (requestSequence !== eventsRequestSequence || !isCurrentTaskView(viewSequence, taskID)) return false
     events.value = result.items
     eventsTotal.value = result.total
+    return true
   } catch (error) {
     if (requestSequence === eventsRequestSequence && isCurrentTaskView(viewSequence, taskID)) throw error
+    return false
   } finally {
     if (requestSequence === eventsRequestSequence) eventsLoading.value = false
   }
 }
 
-const loadTaskDetails = async () => {
-  await Promise.all([loadItems(), loadEvents()])
+const loadTaskDetails = async (): Promise<boolean> => {
+  const [itemsLoaded, eventsLoaded] = await Promise.all([loadItems(), loadEvents()])
+  return itemsLoaded && eventsLoaded
+}
+
+const terminalDetailsComplete = (taskID: number) =>
+  events.value.some(event => event.task_id === taskID && event.code === 'task_finished')
+
+const scheduleTerminalDetailsRetry = (viewSequence: number, taskID: number) => {
+  clearTerminalDetailsRetryTimer()
+  if (!isCurrentTaskView(viewSequence, taskID) || !isTaskTerminal.value) return
+  if (terminalDetailsComplete(taskID)) {
+    stopTerminalDetailsRetry()
+    return
+  }
+  if (terminalDetailsRetryAttempt >= terminalDetailsRetryDelays.length) return
+  const delay = terminalDetailsRetryDelays[terminalDetailsRetryAttempt]
+  terminalDetailsRetryAttempt += 1
+  terminalDetailsRetryTimer = setTimeout(() => {
+    terminalDetailsRetryTimer = null
+    if (!isCurrentTaskView(viewSequence, taskID) || !isTaskTerminal.value) return
+    void loadTaskDetails()
+      .then((loaded) => {
+        if (!isCurrentTaskView(viewSequence, taskID)) return
+        if (!loaded || !terminalDetailsComplete(taskID)) {
+          scheduleTerminalDetailsRetry(viewSequence, taskID)
+          return
+        }
+        pollError.value = ''
+        stopTerminalDetailsRetry()
+      })
+      .catch((error) => {
+        if (!isCurrentTaskView(viewSequence, taskID)) return
+        pollError.value = extractApiErrorMessage(error, t('admin.accounts.openAI5hWake.resultsLoadFailed'))
+        scheduleTerminalDetailsRetry(viewSequence, taskID)
+      })
+  }, delay)
 }
 
 const refreshTask = async () => {
@@ -639,11 +710,16 @@ const refreshTask = async () => {
     const nextTask = await accountsAPI.getOpenAI5hWakeTask(taskID)
     if (!isCurrentTaskView(viewSequence, taskID)) return
     notifyTask(nextTask)
-    await loadTaskDetails()
-    if (isCurrentTaskView(viewSequence, taskID)) pollError.value = ''
+    const detailsLoaded = await loadTaskDetails()
+    if (isCurrentTaskView(viewSequence, taskID)) {
+      pollError.value = ''
+      if (isTaskTerminal.value && detailsLoaded) scheduleTerminalDetailsRetry(viewSequence, taskID)
+      else if (!isTaskTerminal.value) stopTerminalDetailsRetry()
+    }
   } catch (error) {
     if (isCurrentTaskView(viewSequence, taskID)) {
       pollError.value = extractApiErrorMessage(error, t('admin.accounts.openAI5hWake.refreshFailed'))
+      if (isTaskTerminal.value) scheduleTerminalDetailsRetry(viewSequence, taskID)
     }
   } finally {
     if (activeRefreshRequest === requestSequence) activeRefreshRequest = 0
@@ -651,16 +727,35 @@ const refreshTask = async () => {
 }
 
 const showExistingTask = async (existingTask: OpenAI5hWakeTask) => {
+  const replacingTask = task.value?.id !== existingTask.id
   const viewSequence = invalidateTaskView()
+  // A task supplied by the parent can replace the currently displayed task
+  // while the dialog stays open. Do not leave the previous active task's
+  // interval running when the replacement is terminal.
+  stopPolling()
   preview.value = null
+  if (replacingTask) {
+    items.value = []
+    itemsTotal.value = 0
+    events.value = []
+    eventsTotal.value = 0
+    itemsPage.value = 1
+  }
   notifyTask(existingTask)
   if (isActiveTask(existingTask)) startPolling()
   try {
-    await loadTaskDetails()
-    if (isCurrentTaskView(viewSequence, existingTask.id)) pollError.value = ''
+    const detailsLoaded = await loadTaskDetails()
+    if (isCurrentTaskView(viewSequence, existingTask.id)) {
+      pollError.value = ''
+      if (terminalStatuses.has(existingTask.status) && detailsLoaded) scheduleTerminalDetailsRetry(viewSequence, existingTask.id)
+      else if (!terminalStatuses.has(existingTask.status)) stopTerminalDetailsRetry()
+    }
   } catch (error) {
     if (isCurrentTaskView(viewSequence, existingTask.id)) {
       pollError.value = extractApiErrorMessage(error, t('admin.accounts.openAI5hWake.resultsLoadFailed'))
+      if (terminalStatuses.has(existingTask.status)) {
+        scheduleTerminalDetailsRetry(viewSequence, existingTask.id)
+      }
     }
   }
 }
@@ -737,6 +832,7 @@ const startTask = async () => {
   if (!preview.value || preview.value.unique_quota_pools === 0 || starting.value) return
   const initializeSnapshot = initializeSequence
   const viewSnapshot = taskViewSequence
+  const requestSequence = ++startRequestSequence
   starting.value = true
   loadError.value = ''
   try {
@@ -749,7 +845,7 @@ const startTask = async () => {
       loadError.value = extractApiErrorMessage(error, t('admin.accounts.openAI5hWake.startFailed'))
     }
   } finally {
-    starting.value = false
+    if (requestSequence === startRequestSequence) starting.value = false
   }
 }
 
@@ -758,18 +854,34 @@ const cancelTask = async () => {
   if (!task.value || !isTaskActive.value || cancelling.value) return
   const taskID = task.value.id
   const viewSequence = taskViewSequence
+  const requestSequence = ++cancelRequestSequence
   cancelling.value = true
   try {
     const nextTask = await accountsAPI.cancelOpenAI5hWakeTask(taskID)
     if (!isCurrentTaskView(viewSequence, taskID)) return
     notifyTask(nextTask)
-    startPolling()
+    if (terminalStatuses.has(nextTask.status)) {
+      try {
+        await loadTaskDetails()
+        if (isCurrentTaskView(viewSequence, taskID)) {
+          pollError.value = ''
+          scheduleTerminalDetailsRetry(viewSequence, taskID)
+        }
+      } catch (error) {
+        if (isCurrentTaskView(viewSequence, taskID)) {
+          pollError.value = extractApiErrorMessage(error, t('admin.accounts.openAI5hWake.resultsLoadFailed'))
+          scheduleTerminalDetailsRetry(viewSequence, taskID)
+        }
+      }
+    } else {
+      startPolling()
+    }
   } catch (error) {
     if (isCurrentTaskView(viewSequence, taskID)) {
       pollError.value = extractApiErrorMessage(error, t('admin.accounts.openAI5hWake.cancelFailed'))
     }
   } finally {
-    cancelling.value = false
+    if (requestSequence === cancelRequestSequence) cancelling.value = false
   }
 }
 
@@ -798,10 +910,17 @@ watch(
 watch(
   () => props.initialTask,
   (nextTask) => {
-    if (!props.show || !isActiveTask(nextTask) || task.value?.id === nextTask?.id) return
+    if (!props.show || !nextTask || task.value?.id === nextTask.id) return
+    const previousTask = task.value
     ++initializeSequence
     initializing.value = false
-    void showExistingTask(nextTask!)
+    // A terminal task supplied after an already terminal/empty view is a
+    // historical restore, not a new completion event. An active-to-terminal
+    // replacement remains eligible to emit completion normally.
+    if (terminalStatuses.has(nextTask.status) && !isActiveTask(previousTask)) {
+      completedTaskIDs.add(nextTask.id)
+    }
+    void showExistingTask(nextTask)
   }
 )
 

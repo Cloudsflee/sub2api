@@ -210,6 +210,42 @@ describe('OpenAI5hWakeDialog', () => {
     expect(wrapper.find('[data-testid="openai-5h-wake-task"]').exists()).toBe(true)
   })
 
+  it('renders account-attempt and wake-request progress events with known labels', async () => {
+    apiMocks.listOpenAI5hWakeTaskEvents.mockResolvedValue({
+      ...emptyEvents,
+      items: [
+        {
+          id: 2,
+          task_id: 41,
+          item_id: 1,
+          level: 'info',
+          code: 'wake_request_started',
+          message: 'account_id=7 candidate=1/2',
+          created_at: '2026-07-30T00:00:02Z'
+        },
+        {
+          id: 1,
+          task_id: 41,
+          item_id: 1,
+          level: 'info',
+          code: 'account_attempt_started',
+          message: 'account_id=7 candidate=1/2 phase=usage_check',
+          created_at: '2026-07-30T00:00:01Z'
+        }
+      ],
+      total: 2
+    })
+
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: makeTask() }
+    })
+    await flushPromises()
+
+    const log = wrapper.get('[data-testid="openai-5h-wake-events"]').text()
+    expect(log).toContain('admin.accounts.openAI5hWake.events.account_attempt_started')
+    expect(log).toContain('admin.accounts.openAI5hWake.events.wake_request_started')
+  })
+
   it('ignores item and event responses from a task that is no longer displayed', async () => {
     const staleItems = deferred<TestPage<OpenAI5hWakeTaskItem>>()
     const staleEvents = deferred<TestPage<OpenAI5hWakeTaskEvent>>()
@@ -289,6 +325,24 @@ describe('OpenAI5hWakeDialog', () => {
     expect(wrapper.text()).not.toContain('stale-identi')
   })
 
+  it('switches to an externally supplied terminal task instead of keeping stale details', async () => {
+    const first = makeTask({ id: 41, status: 'failed', processed_items: 5, failed_count: 5 })
+    const second = makeTask({ id: 42, status: 'succeeded', processed_items: 5, woken_count: 5 })
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: first }
+    })
+    await flushPromises()
+
+    await wrapper.setProps({ initialTask: second })
+    await flushPromises()
+
+    expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenLastCalledWith(42, 1, 10)
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenLastCalledWith(42, 1, 100)
+    const updates = wrapper.emitted('task-updated') || []
+    expect((updates.at(-1)?.[0] as OpenAI5hWakeTask).id).toBe(42)
+    expect(wrapper.emitted('completed')).toBeUndefined()
+  })
+
   it('restores the latest terminal task logs and can open a new-task preview', async () => {
     const failed = makeTask({ status: 'failed', processed_items: 5, failed_count: 5 })
     apiMocks.getLatestOpenAI5hWakeTask.mockResolvedValue(failed)
@@ -335,6 +389,146 @@ describe('OpenAI5hWakeDialog', () => {
 
     expect(apiMocks.getOpenAI5hWakeTask).toHaveBeenCalledWith(41)
     expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries terminal task details without resuming task polling', async () => {
+    vi.useFakeTimers()
+    const running = makeTask({ processed_items: 4 })
+    const completed = makeTask({
+      status: 'succeeded',
+      processed_items: 5,
+      woken_count: 5,
+      finished_at: '2026-07-30T00:00:10Z'
+    })
+    apiMocks.getOpenAI5hWakeTask.mockResolvedValue(completed)
+    apiMocks.listOpenAI5hWakeTaskEvents
+      .mockResolvedValueOnce(emptyEvents)
+      .mockRejectedValueOnce(new Error('temporary terminal log failure'))
+      .mockResolvedValue({
+        ...emptyEvents,
+        items: [{
+          id: 12,
+          task_id: 41,
+          level: 'info',
+          code: 'task_finished',
+          message: 'terminal-details-restored',
+          created_at: '2026-07-30T00:00:10Z'
+        }],
+        total: 1
+      })
+
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: running }
+    })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+
+    expect(apiMocks.getOpenAI5hWakeTask).toHaveBeenCalledOnce()
+    expect(wrapper.text()).not.toContain('terminal-details-restored')
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="openai-5h-wake-events"]').text()).toContain('terminal-details-restored')
+    expect(apiMocks.getOpenAI5hWakeTask).toHaveBeenCalledOnce()
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(3)
+
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps retrying successful terminal reads until the final event is visible', async () => {
+    vi.useFakeTimers()
+    const terminal = makeTask({ status: 'succeeded', processed_items: 5, woken_count: 5 })
+    apiMocks.listOpenAI5hWakeTaskEvents
+      .mockResolvedValueOnce(emptyEvents)
+      .mockResolvedValueOnce(emptyEvents)
+      .mockResolvedValueOnce({
+        ...emptyEvents,
+        items: [{
+          id: 12,
+          task_id: 41,
+          level: 'info',
+          code: 'task_finished',
+          message: 'status=succeeded',
+          created_at: '2026-07-30T00:00:10Z'
+        }],
+        total: 1
+      })
+
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: terminal }
+    })
+    await flushPromises()
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(3)
+    expect(wrapper.get('[data-testid="openai-5h-wake-events"]').text()).toContain('task_finished')
+
+    await vi.advanceTimersByTimeAsync(60000)
+    await flushPromises()
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(3)
+    wrapper.unmount()
+  })
+
+  it('stops terminal detail retries after the bounded backoff budget', async () => {
+    vi.useFakeTimers()
+    const terminal = makeTask({ status: 'failed', processed_items: 5, failed_count: 5 })
+    apiMocks.listOpenAI5hWakeTaskItems.mockRejectedValue(new Error('items unavailable'))
+    apiMocks.listOpenAI5hWakeTaskEvents.mockRejectedValue(new Error('events unavailable'))
+
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: terminal }
+    })
+    await flushPromises()
+    expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenCalledTimes(1)
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(1)
+
+    for (const delay of [1000, 1000, 2000, 5000, 10000, 30000]) {
+      await vi.advanceTimersByTimeAsync(delay)
+      await flushPromises()
+    }
+
+    expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenCalledTimes(7)
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(7)
+    await vi.advanceTimersByTimeAsync(60000)
+    await flushPromises()
+    expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenCalledTimes(7)
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(7)
+    wrapper.unmount()
+  })
+
+  it('keeps a reopened task creation loading while an older request settles', async () => {
+    const staleCreate = deferred<{ task: OpenAI5hWakeTask; reused: boolean }>()
+    const freshCreate = deferred<{ task: OpenAI5hWakeTask; reused: boolean }>()
+    apiMocks.createOpenAI5hWakeTask
+      .mockReturnValueOnce(staleCreate.promise)
+      .mockReturnValueOnce(freshCreate.promise)
+
+    const wrapper = mount(OpenAI5hWakeDialog, { props: { show: true } })
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-5h-wake-start"]').trigger('click')
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-5h-wake-start"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="openai-5h-wake-start"]').attributes('disabled')).toBeDefined()
+    staleCreate.resolve({ task: makeTask({ id: 41 }), reused: false })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="openai-5h-wake-start"]').attributes('disabled')).toBeDefined()
+
+    freshCreate.resolve({ task: makeTask({ id: 42 }), reused: false })
+    await flushPromises()
+    const reportedTaskIDs = (wrapper.emitted('task-updated') || []).map(args => (args[0] as OpenAI5hWakeTask).id)
+    expect(reportedTaskIDs).toEqual([42])
   })
 
 	it('shows persisted execution errors and the real item attempt count', async () => {
@@ -391,6 +585,36 @@ describe('OpenAI5hWakeDialog', () => {
 
     expect(apiMocks.cancelOpenAI5hWakeTask).toHaveBeenCalledWith(41)
     expect(wrapper.text()).toContain('admin.accounts.openAI5hWake.cancelRequested')
+  })
+
+  it('keeps a reopened cancellation loading while an older request settles', async () => {
+    const staleCancel = deferred<OpenAI5hWakeTask>()
+    const freshCancel = deferred<OpenAI5hWakeTask>()
+    apiMocks.cancelOpenAI5hWakeTask
+      .mockReturnValueOnce(staleCancel.promise)
+      .mockReturnValueOnce(freshCancel.promise)
+
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: makeTask({ id: 41 }) }
+    })
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-5h-wake-cancel"]').trigger('click')
+    await wrapper.get('[data-testid="confirm-cancel"]').trigger('click')
+    await wrapper.setProps({ show: false, initialTask: makeTask({ id: 42 }) })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-5h-wake-cancel"]').trigger('click')
+    await wrapper.get('[data-testid="confirm-cancel"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="openai-5h-wake-cancel"]').attributes('disabled')).toBeDefined()
+    staleCancel.resolve(makeTask({ id: 41, cancel_requested_at: '2026-07-30T00:00:02Z' }))
+    await flushPromises()
+    expect(wrapper.get('[data-testid="openai-5h-wake-cancel"]').attributes('disabled')).toBeDefined()
+
+    freshCancel.resolve(makeTask({ id: 42, cancel_requested_at: '2026-07-30T00:00:03Z' }))
+    await flushPromises()
+    const reportedTaskIDs = (wrapper.emitted('task-updated') || []).map(args => (args[0] as OpenAI5hWakeTask).id)
+    expect(reportedTaskIDs.at(-1)).toBe(42)
   })
 
   it('stops dialog polling when closed', async () => {

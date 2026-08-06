@@ -138,7 +138,8 @@ func nullTimePtr(value sql.NullTime) *time.Time {
 
 func isWakeUniqueViolation(err error) bool {
 	var pqErr *pq.Error
-	return errors.As(err, &pqErr) && pqErr != nil && pqErr.Code == "23505"
+	return errors.As(err, &pqErr) && pqErr != nil &&
+		pqErr.Code == "23505" && pqErr.Constraint == "openai_5h_wake_tasks_one_active_idx"
 }
 
 func (r *openAI5hWakeRepository) CreateOrGetActive(ctx context.Context, params service.OpenAI5hWakeCreateParams) (*service.OpenAI5hWakeTask, bool, error) {
@@ -337,7 +338,8 @@ func (r *openAI5hWakeRepository) HeartbeatTask(ctx context.Context, taskID int64
 	result, err := r.db.ExecContext(ctx, `
 UPDATE openai_5h_wake_tasks
 SET heartbeat_at = $3, lease_expires_at = $4, updated_at = $3
-WHERE id = $1 AND status = 'running' AND lease_owner = $2`, taskID, owner, now, leaseUntil)
+WHERE id = $1 AND status = 'running' AND lease_owner = $2
+  AND lease_expires_at > NOW()`, taskID, owner, now, leaseUntil)
 	if err != nil {
 		return false, err
 	}
@@ -551,18 +553,23 @@ func (r *openAI5hWakeRepository) FinalizeTask(ctx context.Context, taskID int64,
 	defer func() { _ = tx.Rollback() }()
 
 	var lockedTaskID int64
+	var cancelAlreadyRequested bool
 	err = tx.QueryRowContext(ctx, `
-SELECT id
+SELECT id, cancel_requested_at IS NOT NULL
 FROM openai_5h_wake_tasks
 WHERE id = $1 AND status = 'running' AND lease_owner = $2
   AND lease_expires_at > $3
-FOR UPDATE`, taskID, owner, now).Scan(&lockedTaskID)
+FOR UPDATE`, taskID, owner, now).Scan(&lockedTaskID, &cancelAlreadyRequested)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("wake task %d lease is no longer owned", taskID)
 	}
 	if err != nil {
 		return nil, err
 	}
+	// RequestCancel and finalization can race. The row lock above makes this
+	// check authoritative: a cancellation committed before finalization must
+	// never be lost just because the caller's earlier poll saw false.
+	cancelled = cancelled || cancelAlreadyRequested
 
 	if cancelled {
 		var cancelledItems int

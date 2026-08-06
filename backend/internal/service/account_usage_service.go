@@ -720,7 +720,7 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 				if quotaUsage, err := s.openAIQuotaService.QueryUsage(ctx, account.ID); err == nil {
 					if updates := buildCodexSparkWindowExtraUpdates(quotaUsage, now); len(updates) > 0 {
 						mergeAccountExtra(account, updates)
-						if persistErr := s.persistOpenAICodexProbeSnapshot(ctx, account.ID, updates); persistErr != nil {
+						if persistErr := s.persistOpenAICodexProbeSnapshot(ctx, account, updates); persistErr != nil {
 							slog.Warn("openai_codex_probe_snapshot_persist_failed", "account_id", account.ID, "error", persistErr)
 						}
 						if usage.UpdatedAt == nil {
@@ -896,7 +896,7 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 		return nil, err
 	}
 	if len(updates) > 0 {
-		if err := s.persistOpenAICodexProbeSnapshot(ctx, account.ID, updates); err != nil {
+		if err := s.persistOpenAICodexProbeSnapshot(ctx, account, updates); err != nil {
 			return nil, fmt.Errorf("persist openai codex probe snapshot: %w", err)
 		}
 		return updates, nil
@@ -904,8 +904,8 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	return nil, nil
 }
 
-func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(ctx context.Context, accountID int64, updates map[string]any) error {
-	if s == nil || s.accountRepo == nil || accountID <= 0 {
+func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(ctx context.Context, account *Account, updates map[string]any) error {
+	if s == nil || s.accountRepo == nil || account == nil || account.ID <= 0 {
 		return nil
 	}
 	if len(updates) == 0 {
@@ -914,7 +914,11 @@ func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(ctx context.Contex
 
 	updateCtx, updateCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer updateCancel()
-	return s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
+	// The usage path can share an Account instance with token refresh and the
+	// scheduler cache. Capture the identity before entering the repository so a
+	// concurrent credential merge cannot make the SQL CAS use a different
+	// workspace/user tuple than the response that produced this snapshot.
+	return persistOpenAICodexSnapshotForAccount(updateCtx, s.accountRepo, cloneOpenAICodexSnapshotIdentity(account), updates)
 }
 
 func extractOpenAICodexProbeUpdates(resp *http.Response) (map[string]any, error) {
@@ -939,15 +943,7 @@ func extractOpenAICodexProbeUpdates(resp *http.Response) (map[string]any, error)
 }
 
 func mergeAccountExtra(account *Account, updates map[string]any) {
-	if account == nil || len(updates) == 0 {
-		return
-	}
-	if account.Extra == nil {
-		account.Extra = make(map[string]any, len(updates))
-	}
-	for k, v := range updates {
-		account.Extra[k] = v
-	}
+	mergeOpenAICodexSnapshotExtra(account, updates)
 }
 
 // applyExtraToUsage rebuilds the codex 5h/7d windows in usage from the

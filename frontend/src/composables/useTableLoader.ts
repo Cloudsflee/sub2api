@@ -40,7 +40,7 @@ export function useTableLoader<T, P extends Record<string, any>>(options: TableL
     return error?.name === 'AbortError' || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError'
   }
 
-  const load = async () => {
+  const load = async (): Promise<boolean> => {
     if (abortController) {
       abortController.abort()
     }
@@ -56,19 +56,31 @@ export function useTableLoader<T, P extends Record<string, any>>(options: TableL
         { signal: currentController.signal }
       )
 
+      // Some adapters ignore AbortSignal.  The controller identity is the
+      // authoritative request generation, so a late response must not replace
+      // data produced by a newer load.
+      if (abortController !== currentController) {
+        return false
+      }
+
       items.value = response.items || []
       pagination.total = response.total || 0
       pagination.pages = response.pages || 0
     } catch (error) {
+      if (abortController !== currentController) {
+        return false
+      }
       if (!isAbortError(error)) {
         console.error('Table load error:', error)
         throw error
       }
+      return false
     } finally {
       if (abortController === currentController) {
         loading.value = false
       }
     }
+    return true
   }
 
   const reload = () => {
@@ -93,7 +105,9 @@ export function useTableLoader<T, P extends Record<string, any>>(options: TableL
   }
 
   onUnmounted(() => {
-    abortController?.abort()
+    const controller = abortController
+    abortController = null
+    controller?.abort()
   })
 
   return {

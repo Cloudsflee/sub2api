@@ -5,7 +5,9 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -146,6 +148,76 @@ func TestAccountRepoSuite(t *testing.T) {
 	suite.Run(t, new(AccountRepoSuite))
 }
 
+func TestOpenAICodexSnapshotConcurrentWritesKeepNewestObservation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	account := mustCreateAccount(t, integrationEntClient, &service.Account{
+		Name:     fmt.Sprintf("codex-snapshot-concurrency-%d", time.Now().UnixNano()),
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "concurrent-account",
+			"organization_id":    "concurrent-org",
+			"chatgpt_user_id":    "concurrent-user",
+		},
+		Extra: map[string]any{"operator_note": "preserve"},
+	})
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM scheduler_outbox WHERE account_id = $1", account.ID)
+		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM account_groups WHERE account_id = $1", account.ID)
+		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM accounts WHERE id = $1", account.ID)
+	})
+
+	repo := newAccountRepositoryWithSQL(integrationEntClient, integrationDB, nil)
+	identity, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+
+	const writeCount = 32
+	const observedBase int64 = 1775582400000000000
+	start := make(chan struct{})
+	errCh := make(chan error, writeCount)
+	var workers sync.WaitGroup
+	for i := 0; i < writeCount; i++ {
+		i := i
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			observedAt := fmt.Sprintf("%020d", observedBase+int64(i))
+			_, updateErr := repo.UpdateOpenAICodexSnapshot(ctx, account.ID, identity, nil, map[string]any{
+				"codex_5h_used_percent":                       float64(i),
+				"codex_usage_updated_at":                      observedAt,
+				service.OpenAICodexSnapshotObservedAtExtraKey: observedAt,
+			})
+			errCh <- updateErr
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(errCh)
+	for updateErr := range errCh {
+		require.NoError(t, updateErr)
+	}
+
+	got, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	expectedObservedAt := fmt.Sprintf("%020d", observedBase+writeCount-1)
+	require.Equal(t, float64(writeCount-1), got.Extra["codex_5h_used_percent"])
+	require.Equal(t, expectedObservedAt, got.Extra[service.OpenAICodexSnapshotObservedAtExtraKey])
+	require.Equal(t, "preserve", got.Extra["operator_note"])
+
+	// Equal sequence values cannot be ordered safely. Keep the first accepted
+	// snapshot rather than letting a duplicate asynchronous write replace it.
+	_, err = repo.UpdateOpenAICodexSnapshot(ctx, account.ID, identity, nil, map[string]any{
+		"codex_5h_used_percent":                       -1.0,
+		service.OpenAICodexSnapshotObservedAtExtraKey: expectedObservedAt,
+	})
+	require.NoError(t, err)
+	got, err = repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.Equal(t, float64(writeCount-1), got.Extra["codex_5h_used_percent"])
+}
+
 // --- Create / GetByID / Update / Delete ---
 
 func (s *AccountRepoSuite) TestCreate() {
@@ -185,6 +257,82 @@ func (s *AccountRepoSuite) TestUpdate() {
 	got, err := s.repo.GetByID(s.ctx, account.ID)
 	s.Require().NoError(err, "GetByID after update")
 	s.Require().Equal("updated", got.Name)
+}
+
+func (s *AccountRepoSuite) TestUpdate_PreservesConcurrentOpenAIWakeSnapshotForSameIdentity() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:     "wake-snapshot-concurrent-edit",
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":       "old-token",
+			"chatgpt_account_id": "account-a",
+			"organization_id":    "org-a",
+			"chatgpt_user_id":    "user-a",
+		},
+		Extra: map[string]any{
+			"operator_note":               "old",
+			"codex_5h_used_percent":       91.0,
+			"codex_usage_updated_at":      "stale",
+			"codex_5h_wake_identity_hash": "stale-marker",
+		},
+	})
+	stale, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.repo.UpdateExtra(s.ctx, account.ID, map[string]any{
+		"codex_5h_used_percent":                      12.5,
+		"codex_5h_reset_at":                          "2026-08-05T12:00:00Z",
+		"codex_7d_used_percent":                      34.5,
+		"codex_usage_updated_at":                     "2026-08-05T07:00:00Z",
+		service.OpenAI5hWakeSnapshotIdentityExtraKey: "fresh-marker",
+	}))
+	stale.Name = "wake-snapshot-concurrent-edit-renamed"
+	stale.Extra["operator_note"] = "edited"
+	s.Require().NoError(s.repo.Update(s.ctx, stale))
+
+	got, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().Equal("wake-snapshot-concurrent-edit-renamed", got.Name)
+	s.Require().Equal("edited", got.Extra["operator_note"])
+	s.Require().Equal(12.5, got.Extra["codex_5h_used_percent"])
+	s.Require().Equal("2026-08-05T12:00:00Z", got.Extra["codex_5h_reset_at"])
+	s.Require().Equal(34.5, got.Extra["codex_7d_used_percent"])
+	s.Require().Equal("2026-08-05T07:00:00Z", got.Extra["codex_usage_updated_at"])
+	s.Require().Equal("fresh-marker", got.Extra[service.OpenAI5hWakeSnapshotIdentityExtraKey])
+}
+
+func (s *AccountRepoSuite) TestUpdate_ClearsOpenAIWakeSnapshotWhenIdentityChanges() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:     "wake-snapshot-identity-change",
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "account-before",
+			"organization_id":    "org-a",
+			"chatgpt_user_id":    "user-a",
+		},
+		Extra: map[string]any{
+			"operator_note":                              "kept",
+			"codex_primary_used_percent":                 11.0,
+			"codex_5h_used_percent":                      12.0,
+			"codex_5h_reset_at":                          "2026-08-05T12:00:00Z",
+			"codex_7d_used_percent":                      34.0,
+			"codex_usage_updated_at":                     "2026-08-05T07:00:00Z",
+			service.OpenAI5hWakeSnapshotIdentityExtraKey: "old-marker",
+		},
+	})
+	loaded, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	loaded.Credentials["chatgpt_account_id"] = "account-after"
+	s.Require().NoError(s.repo.Update(s.ctx, loaded))
+
+	got, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().Equal("kept", got.Extra["operator_note"])
+	for _, key := range openAIWakeManagedExtraKeys {
+		s.Require().NotContains(got.Extra, key)
+	}
 }
 
 func (s *AccountRepoSuite) TestUpdate_SyncSchedulerSnapshotOnDisabled() {
@@ -271,6 +419,11 @@ func (s *AccountRepoSuite) TestUpdateCredentials_InvalidatesWakeMarkerOnlyWhenTy
 			"organization_id":    "org",
 		},
 		Extra: map[string]any{
+			"codex_primary_used_percent":                 1.0,
+			"codex_5h_used_percent":                      2.0,
+			"codex_5h_reset_at":                          "2026-08-05T12:00:00Z",
+			"codex_7d_used_percent":                      3.0,
+			"codex_usage_updated_at":                     "2026-08-05T07:00:00Z",
 			service.OpenAI5hWakeSnapshotIdentityExtraKey: "trusted-marker",
 		},
 	})
@@ -291,7 +444,159 @@ func (s *AccountRepoSuite) TestUpdateCredentials_InvalidatesWakeMarkerOnlyWhenTy
 	}))
 	afterIdentityChange, err := s.repo.GetByID(s.ctx, account.ID)
 	s.Require().NoError(err)
-	s.Require().NotContains(afterIdentityChange.Extra, service.OpenAI5hWakeSnapshotIdentityExtraKey)
+	for _, key := range openAIWakeManagedExtraKeys {
+		s.Require().NotContains(afterIdentityChange.Extra, key)
+	}
+}
+
+func (s *AccountRepoSuite) TestOpenAIWakeSnapshotCASRejectsReauthorizedIdentity() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name: "wake-cas", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "account-before", "organization_id": "org", "chatgpt_user_id": "user",
+		},
+		Extra: map[string]any{"operator_note": "preserve"},
+	})
+	stale, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().NoError(s.repo.UpdateCredentials(s.ctx, account.ID, map[string]any{
+		"chatgpt_account_id": "account-after", "organization_id": "org", "chatgpt_user_id": "user",
+	}))
+
+	applied, err := s.repo.UpdateOpenAICodexSnapshot(s.ctx, stale.ID, stale, nil, map[string]any{
+		"codex_5h_used_percent":                      99.0,
+		service.OpenAI5hWakeSnapshotIdentityExtraKey: "old-marker",
+	})
+	s.Require().NoError(err)
+	s.Require().False(applied)
+	got, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().Equal("preserve", got.Extra["operator_note"])
+	s.Require().NotContains(got.Extra, "codex_5h_used_percent")
+	s.Require().NotContains(got.Extra, service.OpenAI5hWakeSnapshotIdentityExtraKey)
+}
+
+func (s *AccountRepoSuite) TestOpenAICodexSnapshotDoesNotRegressForLateResponse() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name: "wake-monotonic", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "account-a", "organization_id": "org", "chatgpt_user_id": "user",
+		},
+		Extra: map[string]any{"operator_note": "preserve"},
+	})
+	identity, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	newerObservedAt := "01775582400999999999"
+	olderObservedAt := "01775582400111111111"
+
+	applied, err := s.repo.UpdateOpenAICodexSnapshot(s.ctx, account.ID, identity, nil, map[string]any{
+		"codex_5h_used_percent":                       73.0,
+		"codex_usage_updated_at":                      "2026-04-07T10:00:00Z",
+		service.OpenAICodexSnapshotObservedAtExtraKey: newerObservedAt,
+	})
+	s.Require().NoError(err)
+	s.Require().True(applied)
+
+	// Simulate an older response whose asynchronous persistence finishes later.
+	applied, err = s.repo.UpdateOpenAICodexSnapshot(s.ctx, account.ID, identity, nil, map[string]any{
+		"codex_5h_used_percent":                       12.0,
+		"codex_usage_updated_at":                      "2026-04-07T09:59:59Z",
+		service.OpenAICodexSnapshotObservedAtExtraKey: olderObservedAt,
+	})
+	s.Require().NoError(err)
+	s.Require().True(applied, "the account identity still matches even though the stale snapshot is ignored")
+
+	got, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(73.0, got.Extra["codex_5h_used_percent"])
+	s.Require().Equal("2026-04-07T10:00:00Z", got.Extra["codex_usage_updated_at"])
+	s.Require().Equal(newerObservedAt, got.Extra[service.OpenAICodexSnapshotObservedAtExtraKey])
+	s.Require().Equal("preserve", got.Extra["operator_note"])
+}
+
+func (s *AccountRepoSuite) TestOpenAICodexSnapshotAppliesOrdinaryFieldsWhileRejectingStaleManagedFields() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name: "wake-mixed-atomic", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "account-a", "organization_id": "org", "chatgpt_user_id": "user",
+		},
+	})
+	identity, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	newerObservedAt := "01775582400999999999"
+	olderObservedAt := "01775582400111111111"
+
+	applied, err := s.repo.UpdateOpenAICodexSnapshot(s.ctx, account.ID, identity, nil, map[string]any{
+		"codex_5h_used_percent":                       73.0,
+		service.OpenAICodexSnapshotObservedAtExtraKey: newerObservedAt,
+	})
+	s.Require().NoError(err)
+	s.Require().True(applied)
+
+	applied, err = s.repo.UpdateOpenAICodexSnapshot(
+		s.ctx,
+		account.ID,
+		identity,
+		map[string]any{
+			"openai_compact_supported":   true,
+			"openai_compact_last_status": 200,
+		},
+		map[string]any{
+			"codex_5h_used_percent":                       12.0,
+			service.OpenAICodexSnapshotObservedAtExtraKey: olderObservedAt,
+		},
+	)
+	s.Require().NoError(err)
+	s.Require().True(applied)
+
+	got, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(73.0, got.Extra["codex_5h_used_percent"])
+	s.Require().Equal(newerObservedAt, got.Extra[service.OpenAICodexSnapshotObservedAtExtraKey])
+	s.Require().Equal(true, got.Extra["openai_compact_supported"])
+	s.Require().Equal(float64(200), got.Extra["openai_compact_last_status"])
+}
+
+func (s *AccountRepoSuite) TestOpenAICodexSnapshotDetachedCacheSyncIgnoresCallerCancellation() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name: "wake-detached-cache", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{"chatgpt_account_id": "account-detached"},
+	})
+	cacheRecorder := &schedulerCacheRecorder{}
+	s.repo.schedulerCache = cacheRecorder
+	ctx, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	s.repo.syncSchedulerAccountSnapshotDetached(ctx, account.ID)
+
+	s.Require().ErrorIs(ctx.Err(), context.Canceled)
+	s.Require().NoError(cacheRecorder.setCtxErr)
+	s.Require().Len(cacheRecorder.setAccounts, 1)
+	s.Require().Equal(account.ID, cacheRecorder.setAccounts[0].ID)
+}
+
+func (s *AccountRepoSuite) TestBulkUpdate_ClearsOpenAIWakeSnapshotOnIdentityEdit() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name: "bulk-wake-identity", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "account-before", "organization_id": "org", "chatgpt_user_id": "user",
+		},
+		Extra: map[string]any{
+			"codex_5h_used_percent":                      2.0,
+			"codex_7d_used_percent":                      3.0,
+			"codex_usage_updated_at":                     "2026-08-05T07:00:00Z",
+			service.OpenAI5hWakeSnapshotIdentityExtraKey: "trusted-marker",
+		},
+	})
+	_, err := s.repo.BulkUpdate(s.ctx, []int64{account.ID}, service.AccountBulkUpdate{
+		Credentials: map[string]any{"chatgpt_account_id": "account-after"},
+	})
+	s.Require().NoError(err)
+	got, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	for _, key := range openAIWakeManagedExtraKeys {
+		s.Require().NotContains(got.Extra, key)
+	}
 }
 
 func (s *AccountRepoSuite) TestDelete() {

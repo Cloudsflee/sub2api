@@ -106,6 +106,8 @@ export default {
           cancel_poll_failed: '轮询取消状态失败',
           final_cancel_check_failed: '最终取消检查失败',
           item_started: '开始处理额度池',
+          account_attempt_started: '开始尝试账号',
+          wake_request_started: '正在发送唤醒请求',
           item_woken: '额度池窗口已唤醒',
           item_skipped_active: '额度池窗口已活跃',
           item_failed: '额度池处理失败',

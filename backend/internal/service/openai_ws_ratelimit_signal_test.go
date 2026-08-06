@@ -408,7 +408,7 @@ func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotDoesNotS
 		SecondaryResetAfterSeconds: ptrIntWS(1200),
 		SecondaryWindowMinutes:     ptrIntWS(300),
 	}
-	svc.updateCodexUsageSnapshot(context.Background(), 601, snapshot)
+	svc.updateCodexUsageSnapshot(context.Background(), &Account{ID: 601}, snapshot)
 
 	select {
 	case updates := <-repo.updateExtraCh:
@@ -438,7 +438,7 @@ func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_NonExhaustedSnapshotDoesN
 		SecondaryResetAfterSeconds: ptrIntWS(1200),
 		SecondaryWindowMinutes:     ptrIntWS(300),
 	}
-	svc.updateCodexUsageSnapshot(context.Background(), 602, snapshot)
+	svc.updateCodexUsageSnapshot(context.Background(), &Account{ID: 602}, snapshot)
 
 	select {
 	case <-repo.updateExtraCh:
@@ -470,8 +470,8 @@ func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ThrottlesExtraWrites(t *t
 		SecondaryWindowMinutes:     ptrIntWS(300),
 	}
 
-	svc.updateCodexUsageSnapshot(context.Background(), 777, snapshot)
-	svc.updateCodexUsageSnapshot(context.Background(), 777, snapshot)
+	svc.updateCodexUsageSnapshot(context.Background(), &Account{ID: 777}, snapshot)
+	svc.updateCodexUsageSnapshot(context.Background(), &Account{ID: 777}, snapshot)
 
 	select {
 	case <-repo.updateExtraCh:

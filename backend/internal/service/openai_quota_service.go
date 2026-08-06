@@ -646,10 +646,53 @@ func buildCodexSparkWindowExtraUpdates(usage *OpenAIQuotaUsage, now time.Time) m
 // buildCodexGlobalWindowExtraUpdates maps the global /wham/usage rate limit to
 // the same canonical codex_5h_* / codex_7d_* keys used by response headers.
 func buildCodexGlobalWindowExtraUpdates(usage *OpenAIQuotaUsage, now time.Time) map[string]any {
-	if usage == nil || usage.RateLimit == nil {
+	if usage == nil {
 		return nil
 	}
-	return buildCodexRateLimitWindowExtraUpdates(usage.RateLimit, now)
+	if usage.RateLimit == nil {
+		return emptyCodexGlobalWindowExtraUpdates(now)
+	}
+	updates := buildCodexRateLimitWindowExtraUpdates(usage.RateLimit, now)
+	if len(updates) == 0 {
+		return emptyCodexGlobalWindowExtraUpdates(now)
+	}
+	// /wham/usage is an authoritative snapshot. A response may legitimately
+	// omit one window (or return a null rate_limit), so explicitly null fields
+	// that are absent instead of leaving a previous 5h/7d value looking current.
+	for _, key := range codexGlobalWindowExtraKeys {
+		if _, ok := updates[key]; !ok {
+			updates[key] = nil
+		}
+	}
+	return updates
+}
+
+var codexGlobalWindowExtraKeys = []string{
+	"codex_primary_used_percent",
+	"codex_primary_reset_after_seconds",
+	"codex_primary_window_minutes",
+	"codex_secondary_used_percent",
+	"codex_secondary_reset_after_seconds",
+	"codex_secondary_window_minutes",
+	"codex_primary_over_secondary_percent",
+	"codex_5h_used_percent",
+	"codex_5h_reset_after_seconds",
+	"codex_5h_window_minutes",
+	"codex_5h_reset_at",
+	"codex_7d_used_percent",
+	"codex_7d_reset_after_seconds",
+	"codex_7d_window_minutes",
+	"codex_7d_reset_at",
+}
+
+func emptyCodexGlobalWindowExtraUpdates(now time.Time) map[string]any {
+	updates := make(map[string]any, len(codexGlobalWindowExtraKeys)+2)
+	for _, key := range codexGlobalWindowExtraKeys {
+		updates[key] = nil
+	}
+	updates["codex_usage_updated_at"] = now.UTC().Format(time.RFC3339)
+	updates[OpenAICodexSnapshotObservedAtExtraKey] = fmt.Sprintf("%020d", now.UTC().UnixNano())
+	return updates
 }
 
 func buildCodexRateLimitWindowExtraUpdates(rateLimit *OpenAIRateLimit, now time.Time) map[string]any {
@@ -682,7 +725,7 @@ func buildCodexRateLimitWindowExtraUpdates(rateLimit *OpenAIRateLimit, now time.
 	if snapshot.PrimaryWindowMinutes == nil && snapshot.SecondaryWindowMinutes == nil {
 		return nil
 	}
-	snapshot.UpdatedAt = now.UTC().Format(time.RFC3339)
+	snapshot.UpdatedAt = now.UTC().Format(time.RFC3339Nano)
 	return buildCodexUsageExtraUpdates(snapshot, now)
 }
 

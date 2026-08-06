@@ -674,8 +674,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	if isOAuth && s.accountRepo != nil {
 		if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
-			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
-			mergeAccountExtra(account, updates)
+			if persistErr := persistOpenAICodexSnapshotForAccount(ctx, s.accountRepo, account, updates); persistErr == nil {
+				mergeAccountExtra(account, updates)
+			}
 		}
 	}
 
@@ -1010,8 +1011,9 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 			updates = mergeExtraUpdates(updates, codexUpdates)
 		}
 		if len(updates) > 0 {
-			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
-			mergeAccountExtra(account, updates)
+			if persistErr := persistOpenAICodexSnapshotForAccount(ctx, s.accountRepo, account, updates); persistErr == nil {
+				mergeAccountExtra(account, updates)
+			}
 		}
 		// 探测如返回 429,主动同步限流状态,避免后续短时间内继续选中。
 		if resp.StatusCode == http.StatusTooManyRequests {

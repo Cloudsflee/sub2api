@@ -733,7 +733,7 @@ func ParseCodexRateLimitHeaders(headers http.Header) *OpenAICodexUsageSnapshot {
 		return nil
 	}
 
-	snapshot.UpdatedAt = time.Now().Format(time.RFC3339)
+	snapshot.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	return snapshot
 }
 
@@ -794,6 +794,7 @@ func buildCodexUsageExtraUpdates(snapshot *OpenAICodexUsageSnapshot, fallbackNow
 		updates["codex_primary_over_secondary_percent"] = *snapshot.PrimaryOverSecondaryPercent
 	}
 	updates["codex_usage_updated_at"] = baseTime.Format(time.RFC3339)
+	updates[OpenAICodexSnapshotObservedAtExtraKey] = fmt.Sprintf("%020d", baseTime.UnixNano())
 
 	// 归一化到 5h/7d 规范字段
 	if normalized := snapshot.Normalize(); normalized != nil {
@@ -829,10 +830,10 @@ func buildCodexUsageExtraUpdates(snapshot *OpenAICodexUsageSnapshot, fallbackNow
 // updateCodexUsageSnapshot saves the Codex usage snapshot to account's Extra field
 // updateCodexUsageSnapshot 把 /responses 的 x-codex-* 全局头快照写入账号 codex_* Extra。
 // ⚠️ 调用方必须排除 spark 影子账号(account.IsShadow()):影子的 codex_* 仅由 QueryUsage
-// (/wham/usage bengalfox 道)更新,不能被全局头口径污染(外审第7轮 P1)。本函数仅持 accountID,
-// 无法在此自检影子,故守卫前置到各调用点。
-func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, accountID int64, snapshot *OpenAICodexUsageSnapshot) {
-	if snapshot == nil {
+// (/wham/usage bengalfox 道)更新,不能被全局头口径污染(外审第7轮 P1)。调用方在这里传入
+// 完整账号身份,让异步持久化可以对响应来源做 CAS 校验。
+func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, account *Account, snapshot *OpenAICodexUsageSnapshot) {
+	if account == nil || account.ID <= 0 || snapshot == nil {
 		return
 	}
 	if s == nil || s.accountRepo == nil {
@@ -844,22 +845,23 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 	if len(updates) == 0 {
 		return
 	}
-	if !s.getCodexSnapshotThrottle().Allow(accountID, now) {
+	if !s.getCodexSnapshotThrottle().Allow(account.ID, now) {
 		return
 	}
+	identity := cloneOpenAICodexSnapshotIdentity(account)
 
 	go func() {
 		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
+		_ = persistOpenAICodexSnapshotForAccount(updateCtx, s.accountRepo, identity, updates)
 	}()
 }
 
-func (s *OpenAIGatewayService) UpdateCodexUsageSnapshotFromHeaders(ctx context.Context, accountID int64, headers http.Header) {
-	if accountID <= 0 || headers == nil {
+func (s *OpenAIGatewayService) UpdateCodexUsageSnapshotFromHeaders(ctx context.Context, account *Account, headers http.Header) {
+	if account == nil || account.ID <= 0 || headers == nil {
 		return
 	}
 	if snapshot := ParseCodexRateLimitHeaders(headers); snapshot != nil {
-		s.updateCodexUsageSnapshot(ctx, accountID, snapshot)
+		s.updateCodexUsageSnapshot(ctx, account, snapshot)
 	}
 }
