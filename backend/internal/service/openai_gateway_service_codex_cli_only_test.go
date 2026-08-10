@@ -476,3 +476,57 @@ func TestOpenAIGatewayService_Forward_ModelCapacityErrorTriggersAccountFailover(
 	require.Contains(t, string(failoverErr.ResponseBody), "Selected model is at capacity")
 	require.False(t, c.Writer.Written(), "service 层应返回 failover 错误给上层重试/换号，而不是直接向客户端写响应")
 }
+
+func TestOpenAIGatewayService_Forward_ServerOverloadedMessageTriggersAccountFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
+	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.1.0")
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header: http.Header{
+				"Content-Type": []string{"application/json"},
+				"x-request-id": []string{"rid-overloaded-400"},
+			},
+			Body: io.NopCloser(strings.NewReader(`{"error":{"message":"Our servers are currently overloaded. Please try again later.","type":"invalid_request_error"}}`)),
+		},
+	}
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{
+			Gateway: config.GatewayConfig{ForceCodexCLI: false},
+		},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:          1001,
+		Name:        "codex max套餐",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":   "sk-test",
+			"pool_mode": true,
+		},
+		Status:         StatusActive,
+		Schedulable:    true,
+		RateMultiplier: f64p(1),
+	}
+	body := []byte(`{"model":"gpt-5.4","stream":false,"input":[{"type":"text","text":"hello"}]}`)
+
+	_, err := svc.Forward(context.Background(), c, account, body)
+	require.Error(t, err)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.True(t, failoverErr.IsOpenAIModelCapacityError())
+	require.Equal(t, NextAccountRetry, failoverErr.NextAccountAction)
+	require.Contains(t, string(failoverErr.ResponseBody), "Our servers are currently overloaded")
+	require.False(t, c.Writer.Written(), "service 层应返回 failover 错误给上层重试/换号，而不是直接向客户端写响应")
+}

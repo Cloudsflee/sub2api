@@ -222,6 +222,11 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode i
 	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
 		return false
 	}
+	// Capacity and explicit server-overload responses require another account,
+	// including the HTTP 400 form returned by some OpenAI-compatible upstreams.
+	if isOpenAIModelCapacityError(upstreamMsg, upstreamBody) {
+		return true
+	}
 	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, upstreamBody) {
 		return true
 	}
