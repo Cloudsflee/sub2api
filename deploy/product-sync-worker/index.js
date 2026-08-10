@@ -224,7 +224,6 @@ function backendRequestSignal(externalSignal, timeoutMilliseconds = backendReque
   if (externalSignal?.aborted) onAbort()
   else externalSignal?.addEventListener('abort', onAbort, { once: true })
   const timer = setTimeout(() => controller.abort(timeoutError), timeout)
-  timer.unref?.()
   return {
     signal: controller.signal,
     dispose() {
@@ -400,7 +399,6 @@ async function evaluateShopRequest(page, callback, args, timeoutMilliseconds, si
         error.timeoutMilliseconds = timeout
         reject(error)
       }, timeout)
-      timer.unref?.()
     })
     const cancellationPromise = signal
       ? new Promise((resolve, reject) => {
