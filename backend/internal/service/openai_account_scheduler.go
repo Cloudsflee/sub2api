@@ -83,6 +83,7 @@ type OpenAIAccountScheduleRequest struct {
 	RequiredCapability      OpenAIEndpointCapability
 	RequiredImageCapability OpenAIImagesCapability
 	RequireCompact          bool
+	DistributeIndependent   bool
 	ExcludedIDs             map[int64]struct{}
 }
 
@@ -1055,10 +1056,10 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		if len(plan.staleSnapshotCompactRetry) > 0 && s.service.schedulerSnapshot != nil {
 			selectionOrder = append(selectionOrder, sortOpenAICompactRetryCandidates(plan.staleSnapshotCompactRetry)...)
 		}
-		return selectionOrder
+		return s.distributeSelectionOrder(req, selectionOrder)
 	}
 
-	return buildSelectionOrder(plan.candidates)
+	return s.distributeSelectionOrder(req, buildSelectionOrder(plan.candidates))
 }
 
 func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
@@ -2066,8 +2067,28 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	distributeIndependent := len(excludedIDs) == 0 &&
+		s.shouldDistributeOpenAIAccountRequest(ctx, groupID, previousResponseID, sessionHash)
+	distributionKey := newOpenAIAccountDistributionKey(
+		groupID,
+		platform,
+		requestedModel,
+		requiredCapability,
+		requiredImageCapability,
+		requireCompact,
+	)
+	if distributeIndependent {
+		ctx = withOpenAIAccountDistribution(ctx)
+	}
+	recordIndependentSelection := func(selection *AccountSelectionResult) {
+		if distributeIndependent && selection != nil && selection.Account != nil {
+			s.recordOpenAIAccountForIndependentRequest(distributionKey, selection.Account.ID)
+		}
+	}
+
 	selection, decision, err := s.selectAccountWithSchedulerOnce(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
 	if err == nil || openAIProxyStreamQuarantineBypassed(ctx) {
+		recordIndependentSelection(selection)
 		return selection, decision, err
 	}
 	if !errors.Is(err, ErrNoAvailableAccounts) && !errors.Is(err, ErrNoAvailableCompactAccounts) {
@@ -2082,7 +2103,11 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 		return selection, decision, err
 	}
 	s.logOpenAIProxyStreamQuarantineFailOpen(requestedModel, blocked)
-	return s.selectAccountWithSchedulerOnce(withOpenAIProxyStreamQuarantineBypass(ctx), groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	selection, decision, err = s.selectAccountWithSchedulerOnce(withOpenAIProxyStreamQuarantineBypass(ctx), groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	if err == nil {
+		recordIndependentSelection(selection)
+	}
+	return selection, decision, err
 }
 
 func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
@@ -2205,6 +2230,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		RequiredCapability:      requiredCapability,
 		RequiredImageCapability: requiredImageCapability,
 		RequireCompact:          requireCompact,
+		DistributeIndependent:   openAIAccountDistributionEnabled(ctx),
 		ExcludedIDs:             excludedIDs,
 	})
 }
@@ -2250,9 +2276,19 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 	return s.getOpenAIWSProtocolResolver().Resolve(account).Transport == requiredTransport
 }
 
-func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64, model string, success bool, firstTokenMs *int) {
+func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(
+	accountID int64,
+	model string,
+	success bool,
+	firstTokenMs *int,
+	failoverErrors ...*UpstreamFailoverError,
+) {
+	model = normalizeOpenAIAccountModelTransientModel(model)
 	if success {
-		s.clearOpenAIAccountModelTransientState(accountID, normalizeOpenAIAccountModelTransientModel(model))
+		s.clearOpenAIAccountModelTransientState(accountID, model)
+		s.clearOpenAIModelCapacityState(accountID, model)
+	} else if len(failoverErrors) > 0 && failoverErrors[0].IsOpenAIModelCapacityError() {
+		s.recordOpenAIModelCapacityFailure(accountID, model, time.Now())
 	}
 	scheduler := s.getOpenAIAccountScheduler(context.Background())
 	if scheduler == nil {

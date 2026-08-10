@@ -420,6 +420,8 @@ type OpenAIGatewayService struct {
 	openaiProxyStreamCircuitOnce   sync.Once
 	openaiWSPassthroughDialerOnce  sync.Once
 	openaiModelTransientOnce       sync.Once
+	openaiModelCapacityOnce        sync.Once
+	openaiAccountDistributionOnce  sync.Once
 	agentIdentityTaskMu            sync.Mutex
 	openaiWSPool                   *openAIWSConnPool
 	openaiWSStateStore             OpenAIWSStateStore
@@ -427,6 +429,8 @@ type OpenAIGatewayService struct {
 	openaiWSPassthroughDialer      openAIWSClientDialer
 	openaiAccountStats             *openAIAccountRuntimeStats
 	openaiModelTransient           *openAIAccountModelTransientState
+	openaiModelCapacity            *openAIAccountModelTransientState
+	openaiAccountDistribution      *openAIAccountDistributionState
 	openaiProxyStreamCircuit       *openAIProxyStreamCircuit
 	openaiProxyStreamFailOpenLogAt atomic.Int64
 
@@ -513,6 +517,10 @@ func NewOpenAIGatewayService(
 		responseHeaderFilter:  compileResponseHeaderFilter(cfg),
 		codexSnapshotThrottle: newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
 		openaiModelTransient:  newOpenAIAccountModelTransientState(openAIModelTransientDefaultMax),
+		openaiModelCapacity:   newOpenAIModelCapacityState(openAIModelTransientDefaultMax),
+		openaiAccountDistribution: newOpenAIAccountDistributionState(
+			openAIAccountDistributionDefaultMax,
+		),
 	}
 	if rateLimitService != nil {
 		rateLimitService.SetAccountRuntimeBlocker(svc)

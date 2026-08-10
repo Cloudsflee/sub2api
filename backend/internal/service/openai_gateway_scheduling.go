@@ -813,6 +813,7 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 		}
 		return s.isBetterAccount(a, b)
 	})
+	s.distributeOpenAIAccounts(ctx, groupID, platform, requestedModel, requiredCapability, requireCompact, eligible)
 	return eligible[0], compactBlocked
 }
 
@@ -1088,6 +1089,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		} else {
 			selectionOrder = append(selectionOrder, available...)
 		}
+		s.distributeOpenAIAccountsWithLoad(ctx, groupID, platform, requestedModel, requiredCapability, requireCompact, selectionOrder)
 
 		for _, item := range selectionOrder {
 			fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, item.account, platform, requestedModel, false, requiredCapability)
@@ -1128,6 +1130,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if requireCompact {
 			ordered = prioritizeOpenAICompactAccounts(ordered)
 		}
+		s.distributeOpenAIAccounts(ctx, groupID, platform, requestedModel, requiredCapability, requireCompact, ordered)
 		for _, acc := range ordered {
 			fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)
 			if fresh == nil {
@@ -1178,6 +1181,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	if requireCompact {
 		candidates = prioritizeOpenAICompactAccounts(candidates)
 	}
+	s.distributeOpenAIAccounts(ctx, groupID, platform, requestedModel, requiredCapability, requireCompact, candidates)
 	for _, acc := range candidates {
 		fresh := s.resolveFreshSchedulableOpenAIAccount(ctx, acc, platform, requestedModel, false, requiredCapability)
 		if fresh == nil {

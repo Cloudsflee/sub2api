@@ -306,7 +306,9 @@ func (s *OpenAIGatewayService) isOpenAIAccountModelRuntimeBlocked(account *Accou
 }
 
 func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Account, requestedModel string) bool {
-	return s != nil && (s.isOpenAIAccountRuntimeBlocked(account) || s.isOpenAIAccountModelRuntimeBlocked(account, requestedModel))
+	return s != nil && (s.isOpenAIAccountRuntimeBlocked(account) ||
+		s.isOpenAIAccountModelRuntimeBlocked(account, requestedModel) ||
+		s.isOpenAIModelCapacityBlocked(account, requestedModel))
 }
 
 func (s *OpenAIGatewayService) recordOpenAIOAuth429() {

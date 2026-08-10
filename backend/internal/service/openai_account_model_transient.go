@@ -33,18 +33,41 @@ type openAIAccountModelTransientDecision struct {
 }
 
 type openAIAccountModelTransientState struct {
-	mu         sync.Mutex
-	entries    map[openAIAccountModelKey]openAIAccountModelTransientEntry
-	maxEntries int
+	mu            sync.Mutex
+	entries       map[openAIAccountModelKey]openAIAccountModelTransientEntry
+	maxEntries    int
+	failureWindow time.Duration
+	shortCooldown time.Duration
+	longCooldown  time.Duration
 }
 
 func newOpenAIAccountModelTransientState(maxEntries int) *openAIAccountModelTransientState {
+	return newOpenAIAccountModelTransientStateWithPolicy(
+		maxEntries,
+		openAIModelTransientFailureWindow,
+		openAIModelTransientShortCooldown,
+		openAIModelTransientLongCooldown,
+	)
+}
+
+func newOpenAIAccountModelTransientStateWithPolicy(
+	maxEntries int,
+	failureWindow time.Duration,
+	shortCooldown time.Duration,
+	longCooldown time.Duration,
+) *openAIAccountModelTransientState {
 	if maxEntries <= 0 {
 		maxEntries = openAIModelTransientDefaultMax
 	}
+	if failureWindow <= 0 {
+		failureWindow = openAIModelTransientFailureWindow
+	}
 	return &openAIAccountModelTransientState{
-		entries:    make(map[openAIAccountModelKey]openAIAccountModelTransientEntry),
-		maxEntries: maxEntries,
+		entries:       make(map[openAIAccountModelKey]openAIAccountModelTransientEntry),
+		maxEntries:    maxEntries,
+		failureWindow: failureWindow,
+		shortCooldown: shortCooldown,
+		longCooldown:  longCooldown,
 	}
 }
 
@@ -86,7 +109,7 @@ func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model 
 	if !exists {
 		s.evictOldestLocked()
 	}
-	if !exists || entry.lastFailure.IsZero() || now.Sub(entry.lastFailure) > openAIModelTransientFailureWindow || now.Before(entry.lastFailure) {
+	if !exists || entry.lastFailure.IsZero() || now.Sub(entry.lastFailure) > s.failureWindow || now.Before(entry.lastFailure) {
 		entry.failureStreak = 0
 		entry.blockUntil = time.Time{}
 	}
@@ -97,9 +120,9 @@ func (s *openAIAccountModelTransientState) recordFailure(accountID int64, model 
 	cooldown := time.Duration(0)
 	switch {
 	case entry.failureStreak >= 3:
-		cooldown = openAIModelTransientLongCooldown
+		cooldown = s.longCooldown
 	case entry.failureStreak == 2:
-		cooldown = openAIModelTransientShortCooldown
+		cooldown = s.shortCooldown
 	}
 	if cooldown > 0 {
 		entry.blockUntil = now.Add(cooldown)
@@ -139,7 +162,8 @@ func (s *openAIAccountModelTransientState) isBlocked(accountID int64, model stri
 	if !exists {
 		return false
 	}
-	if !entry.lastFailure.IsZero() && now.Sub(entry.lastFailure) > openAIModelTransientFailureWindow {
+	if !entry.lastFailure.IsZero() && now.Sub(entry.lastFailure) > s.failureWindow &&
+		(entry.blockUntil.IsZero() || !now.Before(entry.blockUntil)) {
 		delete(s.entries, key)
 		return false
 	}
