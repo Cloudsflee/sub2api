@@ -115,6 +115,55 @@ func TestShouldRefreshOpenAICodexSnapshot_SparkShadowIgnoresWSv2(t *testing.T) {
 	}
 }
 
+func TestOpenAICodexProbeFlightKeySeparatesQuotaIdentity(t *testing.T) {
+	base := &Account{
+		ID:       42,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "workspace-a",
+			"chatgpt_user_id":    "user-a",
+		},
+	}
+	rotatedToken := snapshotOAuthRefreshAccount(base)
+	rotatedToken.Credentials["access_token"] = "new-token"
+	changedWorkspace := snapshotOAuthRefreshAccount(base)
+	changedWorkspace.Credentials["chatgpt_account_id"] = "workspace-b"
+
+	if got, want := openAICodexProbeFlightKey(base), openAICodexProbeFlightKey(rotatedToken); got != want {
+		t.Fatalf("access-token rotation should keep the same probe flight: %q != %q", got, want)
+	}
+	if got, want := openAICodexProbeFlightKey(base), openAICodexProbeFlightKey(changedWorkspace); got == want {
+		t.Fatalf("quota identity change must split probe flights: %q", got)
+	}
+}
+
+func TestOpenAICodexProbeCooldownSeparatesQuotaIdentity(t *testing.T) {
+	base := &Account{
+		ID:       42,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "workspace-a",
+			"chatgpt_user_id":    "user-a",
+		},
+	}
+	changedWorkspace := snapshotOAuthRefreshAccount(base)
+	changedWorkspace.Credentials["chatgpt_account_id"] = "workspace-b"
+
+	cache := NewUsageCache()
+	svc := &AccountUsageService{cache: cache}
+	now := time.Now()
+	cache.openAIProbeCache.Store(openAICodexProbeCacheKey(base), now)
+
+	if svc.shouldProbeOpenAICodexSnapshot(base, now.Add(time.Minute)) {
+		t.Fatal("the same quota identity should still be in the probe cooldown")
+	}
+	if !svc.shouldProbeOpenAICodexSnapshot(changedWorkspace, now.Add(time.Minute)) {
+		t.Fatal("a workspace change must bypass the old account-ID probe cooldown")
+	}
+}
+
 func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -243,6 +292,7 @@ func TestBuildCodexUsageProgressFromExtra_ZerosExpiredWindow(t *testing.T) {
 		progress := buildCodexUsageProgressFromExtra(extra, "5h", now)
 		if progress == nil {
 			t.Fatal("expected non-nil progress")
+			return
 		}
 		if progress.Utilization != 0 {
 			t.Fatalf("expected Utilization=0 for expired window, got %v", progress.Utilization)
@@ -261,6 +311,7 @@ func TestBuildCodexUsageProgressFromExtra_ZerosExpiredWindow(t *testing.T) {
 		progress := buildCodexUsageProgressFromExtra(extra, "5h", now)
 		if progress == nil {
 			t.Fatal("expected non-nil progress")
+			return
 		}
 		if progress.Utilization != 42.0 {
 			t.Fatalf("expected Utilization=42, got %v", progress.Utilization)
@@ -275,6 +326,7 @@ func TestBuildCodexUsageProgressFromExtra_ZerosExpiredWindow(t *testing.T) {
 		progress := buildCodexUsageProgressFromExtra(extra, "7d", now)
 		if progress == nil {
 			t.Fatal("expected non-nil progress")
+			return
 		}
 		if progress.Utilization != 0 {
 			t.Fatalf("expected Utilization=0 for expired 7d window, got %v", progress.Utilization)

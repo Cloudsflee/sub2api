@@ -28,12 +28,14 @@ const (
 )
 
 var ErrOpenAI5hWakeTaskNotFound = infraerrors.NotFound("OPENAI_5H_WAKE_TASK_NOT_FOUND", "OpenAI 5h wake task not found")
+var ErrOpenAI5hWakeNoEligiblePools = infraerrors.BadRequest("OPENAI_5H_WAKE_NO_ELIGIBLE_POOLS", "no eligible quota pools are available for OpenAI 5h wake")
 
 type OpenAI5hWakeExclusions struct {
 	APIKey          int `json:"api_key"`
 	NonOAuth        int `json:"non_oauth"`
 	SparkShadow     int `json:"spark_shadow"`
 	NonGlobal       int `json:"non_global"`
+	No5hEntitlement int `json:"no_5h_entitlement"`
 	Disabled        int `json:"disabled"`
 	Unschedulable   int `json:"unschedulable"`
 	Expired         int `json:"expired"`

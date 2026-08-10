@@ -46,7 +46,9 @@ vi.mock('@/components/common/ConfirmDialog.vue', () => ({
 vi.mock('@/components/common/Pagination.vue', () => ({
   default: {
     name: 'Pagination',
-    template: '<div />'
+    props: ['page', 'total', 'pageSize'],
+    emits: ['update:page'],
+    template: '<button type="button" data-testid="pagination-next" @click="$emit(\'update:page\', page + 1)">next</button>'
   }
 }))
 
@@ -76,6 +78,7 @@ const preview: OpenAI5hWakePreview = {
     non_oauth: 0,
     spark_shadow: 1,
     non_global: 0,
+    no_5h_entitlement: 0,
     disabled: 1,
     unschedulable: 1,
     expired: 0,
@@ -215,6 +218,60 @@ describe('OpenAI5hWakeDialog', () => {
       ...emptyEvents,
       items: [
         {
+          id: 5,
+          task_id: 41,
+          item_id: 1,
+          level: 'error',
+          code: 'account_attempt_failed',
+          message: 'account_id=7 candidate=1/2 phase=upstream_request status=403 error_code=forbidden',
+          created_at: '2026-07-30T00:00:05Z'
+        },
+        {
+          id: 6,
+          task_id: 41,
+          item_id: 1,
+          level: 'warn',
+          code: 'usage_check_failed',
+          message: 'account_id=7 candidate=1/2 phase=usage_check error_code=usage_check_failed',
+          created_at: '2026-07-30T00:00:05Z'
+        },
+        {
+          id: 7,
+          task_id: 41,
+          item_id: 1,
+          level: 'info',
+          code: 'no_5h_entitlement',
+          message: 'account_id=9 candidate=1/1 phase=eligibility',
+          created_at: '2026-07-30T00:00:05Z'
+        },
+        {
+          id: 4,
+          task_id: 41,
+          item_id: 1,
+          level: 'error',
+          code: 'wake_request_failed',
+          message: 'account_id=7 candidate=1/2 phase=upstream_request status=403 error_code=forbidden',
+          created_at: '2026-07-30T00:00:04Z'
+        },
+        {
+          id: 8,
+          task_id: 41,
+          item_id: 1,
+          level: 'info',
+          code: 'wake_request_accepted',
+          message: 'account_id=8 candidate=2/2 phase=upstream_request status=200',
+          created_at: '2026-07-30T00:00:03Z'
+        },
+        {
+          id: 3,
+          task_id: 41,
+          item_id: 1,
+          level: 'info',
+          code: 'wake_request_succeeded',
+          message: 'account_id=8 candidate=2/2 phase=upstream_request status=200',
+          created_at: '2026-07-30T00:00:03Z'
+        },
+        {
           id: 2,
           task_id: 41,
           item_id: 1,
@@ -233,7 +290,7 @@ describe('OpenAI5hWakeDialog', () => {
           created_at: '2026-07-30T00:00:01Z'
         }
       ],
-      total: 2
+      total: 6
     })
 
     const wrapper = mount(OpenAI5hWakeDialog, {
@@ -243,7 +300,31 @@ describe('OpenAI5hWakeDialog', () => {
 
     const log = wrapper.get('[data-testid="openai-5h-wake-events"]').text()
     expect(log).toContain('admin.accounts.openAI5hWake.events.account_attempt_started')
+    expect(log).toContain('admin.accounts.openAI5hWake.events.account_attempt_failed')
+    expect(log).toContain('admin.accounts.openAI5hWake.events.usage_check_failed')
+    expect(log).toContain('admin.accounts.openAI5hWake.events.no_5h_entitlement')
     expect(log).toContain('admin.accounts.openAI5hWake.events.wake_request_started')
+    expect(log).toContain('admin.accounts.openAI5hWake.events.wake_request_failed')
+    expect(log).toContain('admin.accounts.openAI5hWake.events.wake_request_accepted')
+    expect(log).toContain('admin.accounts.openAI5hWake.events.wake_request_succeeded')
+  })
+
+  it('can page through execution logs beyond the newest 100 events', async () => {
+    apiMocks.listOpenAI5hWakeTaskEvents.mockResolvedValue({
+      ...emptyEvents,
+      total: 150,
+      pages: 2
+    })
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: makeTask() }
+    })
+    await flushPromises()
+
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenLastCalledWith(41, 1, 100)
+    await wrapper.get('[data-testid="openai-5h-wake-events-pagination"] [data-testid="pagination-next"]').trigger('click')
+    await flushPromises()
+
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenLastCalledWith(41, 2, 100)
   })
 
   it('ignores item and event responses from a task that is no longer displayed', async () => {
@@ -372,6 +453,22 @@ describe('OpenAI5hWakeDialog', () => {
     expect(wrapper.find('[data-testid="openai-5h-wake-preview"]').exists()).toBe(true)
   })
 
+  it('shows a retryable preview error instead of retaining the old terminal task', async () => {
+    const failed = makeTask({ status: 'failed', processed_items: 5, failed_count: 5 })
+    apiMocks.getLatestOpenAI5hWakeTask.mockResolvedValue(failed)
+    apiMocks.previewOpenAI5hWake.mockRejectedValue(new Error('preview unavailable'))
+
+    const wrapper = mount(OpenAI5hWakeDialog, { props: { show: true } })
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-5h-wake-new-task"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="openai-5h-wake-task"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="openai-5h-wake-preview"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('preview unavailable')
+    expect(wrapper.get('button').exists()).toBe(true)
+  })
+
   it('continues polling when the initial result page fails to load', async () => {
     vi.useFakeTimers()
     const running = makeTask({ processed_items: 2 })
@@ -380,7 +477,7 @@ describe('OpenAI5hWakeDialog', () => {
       .mockResolvedValue(emptyItems)
     apiMocks.getOpenAI5hWakeTask.mockResolvedValue(running)
 
-    mount(OpenAI5hWakeDialog, {
+    const wrapper = mount(OpenAI5hWakeDialog, {
       props: { show: true, initialTask: running }
     })
     await flushPromises()
@@ -389,6 +486,210 @@ describe('OpenAI5hWakeDialog', () => {
 
     expect(apiMocks.getOpenAI5hWakeTask).toHaveBeenCalledWith(41)
     expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('does not let a stale polling response overwrite a cancellation', async () => {
+    vi.useFakeTimers()
+    const running = makeTask()
+    const cancelled = makeTask({
+      status: 'cancelled',
+      cancel_requested_at: '2026-07-30T00:00:02Z',
+      updated_at: '2026-07-30T00:00:02Z',
+      processed_items: 5,
+      cancelled_count: 5
+    })
+    const staleRefresh = deferred<OpenAI5hWakeTask>()
+    apiMocks.getOpenAI5hWakeTask.mockReturnValue(staleRefresh.promise)
+    apiMocks.cancelOpenAI5hWakeTask.mockResolvedValue(cancelled)
+
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: running }
+    })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(apiMocks.getOpenAI5hWakeTask).toHaveBeenCalledOnce()
+
+    await wrapper.get('[data-testid="openai-5h-wake-cancel"]').trigger('click')
+    await wrapper.get('[data-testid="confirm-cancel"]').trigger('click')
+    await flushPromises()
+    expect((wrapper.emitted('task-updated')?.at(-1)?.[0] as OpenAI5hWakeTask).status).toBe('cancelled')
+
+    staleRefresh.resolve(running)
+    await flushPromises()
+    expect((wrapper.emitted('task-updated')?.at(-1)?.[0] as OpenAI5hWakeTask).status).toBe('cancelled')
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(apiMocks.getOpenAI5hWakeTask).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+
+  it('ignores detail responses that started before cancellation', async () => {
+    const staleItems = deferred<TestPage<OpenAI5hWakeTaskItem>>()
+    const staleEvents = deferred<TestPage<OpenAI5hWakeTaskEvent>>()
+    const cancelled = makeTask({
+      status: 'cancelled',
+      cancel_requested_at: '2026-07-30T00:00:02Z',
+      updated_at: '2026-07-30T00:00:02Z',
+      processed_items: 1,
+      cancelled_count: 1
+    })
+    apiMocks.listOpenAI5hWakeTaskItems
+      .mockReturnValueOnce(staleItems.promise)
+      .mockResolvedValue({
+        ...emptyItems,
+        items: [{
+          id: 2,
+          task_id: 41,
+          identity_hash: 'fresh-detail',
+          member_account_ids: [2],
+          attempted_account_ids: [2],
+          status: 'cancelled',
+          attempt_count: 1,
+          created_at: '2026-07-30T00:00:02Z',
+          updated_at: '2026-07-30T00:00:02Z'
+        }]
+      })
+    apiMocks.listOpenAI5hWakeTaskEvents
+      .mockReturnValueOnce(staleEvents.promise)
+      .mockResolvedValue({
+        ...emptyEvents,
+        items: [{
+          id: 2,
+          task_id: 41,
+          level: 'info',
+          code: 'fresh_detail',
+          message: 'fresh detail',
+          created_at: '2026-07-30T00:00:02Z'
+        }]
+      })
+    apiMocks.cancelOpenAI5hWakeTask.mockResolvedValue(cancelled)
+
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: makeTask() }
+    })
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-5h-wake-cancel"]').trigger('click')
+    await wrapper.get('[data-testid="confirm-cancel"]').trigger('click')
+    await flushPromises()
+
+    staleItems.resolve({
+      ...emptyItems,
+      items: [{
+        id: 1,
+        task_id: 41,
+        identity_hash: 'stale-detail',
+        member_account_ids: [1],
+        attempted_account_ids: [1],
+        status: 'failed',
+        attempt_count: 1,
+        created_at: '2026-07-30T00:00:01Z',
+        updated_at: '2026-07-30T00:00:01Z'
+      }]
+    })
+    staleEvents.resolve({
+      ...emptyEvents,
+      items: [{
+        id: 1,
+        task_id: 41,
+        level: 'error',
+        code: 'stale_detail',
+        message: 'stale detail',
+        created_at: '2026-07-30T00:00:01Z'
+      }]
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('fresh detail')
+    expect(wrapper.text()).toContain('fresh-detail')
+    expect(wrapper.text()).not.toContain('stale detail')
+    expect(wrapper.text()).not.toContain('stale-detail')
+    wrapper.unmount()
+  })
+
+  it('applies a newer parent snapshot for the same task id', async () => {
+    const running = makeTask()
+    const completed = makeTask({
+      status: 'succeeded',
+      processed_items: 5,
+      woken_count: 5,
+      updated_at: '2026-07-30T00:00:02Z',
+      finished_at: '2026-07-30T00:00:02Z'
+    })
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: running }
+    })
+    await flushPromises()
+
+    await wrapper.setProps({ initialTask: completed })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="openai-5h-wake-new-task"]').exists()).toBe(true)
+    expect((wrapper.emitted('task-updated')?.at(-1)?.[0] as OpenAI5hWakeTask).status).toBe('succeeded')
+    wrapper.unmount()
+  })
+
+  it('updates an active parent snapshot without restarting detail loads or polling', async () => {
+    vi.useFakeTimers()
+    const running = makeTask()
+    const newerRunning = makeTask({
+      processed_items: 3,
+      running_item_count: 2,
+      updated_at: '2026-07-30T00:00:02Z'
+    })
+    apiMocks.getOpenAI5hWakeTask.mockResolvedValue(running)
+
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: running }
+    })
+    await flushPromises()
+
+    expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenCalledOnce()
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledOnce()
+
+    await wrapper.setProps({ initialTask: newerRunning })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('3 / 5')
+    expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenCalledOnce()
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+    expect(apiMocks.getOpenAI5hWakeTask).toHaveBeenCalledWith(41)
+    wrapper.unmount()
+  })
+
+  it('ignores an older parent snapshot even when its progress differs', async () => {
+    const current = makeTask({ processed_items: 3, updated_at: '2026-07-30T00:00:03Z' })
+    const stale = makeTask({ processed_items: 1, updated_at: '2026-07-30T00:00:02Z' })
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: current }
+    })
+    await flushPromises()
+
+    await wrapper.setProps({ initialTask: stale })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('3 / 5')
+    expect(wrapper.text()).not.toContain('1 / 5')
+    expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
+
+  it('does not regress a terminal task to an active parent snapshot', async () => {
+    const terminal = makeTask({ status: 'succeeded', processed_items: 5, updated_at: '2026-07-30T00:00:03Z' })
+    const staleActive = makeTask({ status: 'running', processed_items: 4, updated_at: '2026-07-30T00:00:04Z' })
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: terminal }
+    })
+    await flushPromises()
+
+    await wrapper.setProps({ initialTask: staleActive })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.accounts.openAI5hWake.status.succeeded')
+    expect(wrapper.text()).not.toContain('admin.accounts.openAI5hWake.status.running')
+    wrapper.unmount()
   })
 
   it('retries terminal task details without resuming task polling', async () => {
@@ -436,6 +737,51 @@ describe('OpenAI5hWakeDialog', () => {
 
     await vi.advanceTimersByTimeAsync(2000)
     expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(3)
+  })
+
+  it('checks the first log page when terminal detail retry runs on another page', async () => {
+    vi.useFakeTimers()
+    const terminal = makeTask({ status: 'succeeded', processed_items: 5, woken_count: 5 })
+    let firstPageCalls = 0
+    apiMocks.listOpenAI5hWakeTaskEvents.mockImplementation((_taskID: number, page: number) => {
+      if (page === 1) {
+        firstPageCalls += 1
+        if (firstPageCalls > 1) {
+          return Promise.resolve({
+            ...emptyEvents,
+            items: [{
+              id: 12,
+              task_id: 41,
+              level: 'info',
+              code: 'task_finished',
+              message: 'status=succeeded',
+              created_at: '2026-07-30T00:00:10Z'
+            }],
+            total: 150,
+            pages: 2
+          })
+        }
+      }
+      return Promise.resolve({ ...emptyEvents, total: 150, pages: 2 })
+    })
+
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: terminal }
+    })
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-5h-wake-events-pagination"] [data-testid="pagination-next"]').trigger('click')
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenNthCalledWith(1, 41, 1, 100)
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenNthCalledWith(2, 41, 2, 100)
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenNthCalledWith(4, 41, 1, 100)
+    await vi.advanceTimersByTimeAsync(60000)
+    await flushPromises()
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(4)
+    wrapper.unmount()
   })
 
   it('keeps retrying successful terminal reads until the final event is visible', async () => {
@@ -503,6 +849,22 @@ describe('OpenAI5hWakeDialog', () => {
     expect(apiMocks.listOpenAI5hWakeTaskItems).toHaveBeenCalledTimes(7)
     expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(7)
     wrapper.unmount()
+  })
+
+  it('clears terminal detail retries when the dialog is unmounted', async () => {
+    vi.useFakeTimers()
+    const terminal = makeTask({ status: 'failed', processed_items: 5, failed_count: 5 })
+    const wrapper = mount(OpenAI5hWakeDialog, {
+      props: { show: true, initialTask: terminal }
+    })
+    await flushPromises()
+
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(60000)
+    await flushPromises()
+
+    expect(apiMocks.listOpenAI5hWakeTaskEvents).toHaveBeenCalledTimes(1)
   })
 
   it('keeps a reopened task creation loading while an older request settles', async () => {

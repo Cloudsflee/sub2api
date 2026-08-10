@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 	"time"
@@ -59,6 +60,16 @@ func TestOpenAI5hWakeRecoveryRebuildsCountersFromItemState(t *testing.T) {
 		{status: service.OpenAI5hWakeItemStatusSkippedActive, attemptCount: 1, resetAt: &early},
 		{status: service.OpenAI5hWakeItemStatusCancelled, attemptCount: 1},
 	})
+	staleFinishedAt := now.Add(-time.Minute)
+	_, err := integrationDB.ExecContext(context.Background(), `
+UPDATE openai_5h_wake_task_items
+SET attempted_account_ids = '[91,92]'::jsonb,
+    successful_account_id = 92,
+    error_code = 'stale_result',
+    reset_at = $2,
+    finished_at = $3
+WHERE task_id = $1 AND status = 'running'`, taskID, late, staleFinishedAt)
+	require.NoError(t, err)
 	repo := NewOpenAI5hWakeTaskRepository(integrationDB).(*openAI5hWakeRepository)
 
 	exhausted, err := repo.RecoverTaskItems(context.Background(), taskID, owner, 3)
@@ -99,6 +110,22 @@ SELECT status FROM openai_5h_wake_task_items WHERE task_id = $1 ORDER BY id`, ta
 		service.OpenAI5hWakeItemStatusSkippedActive,
 		service.OpenAI5hWakeItemStatusCancelled,
 	}, statuses)
+
+	var attemptedJSON []byte
+	var successfulID sql.NullInt64
+	var errorCode sql.NullString
+	var resetAt, finishedAt sql.NullTime
+	require.NoError(t, integrationDB.QueryRowContext(context.Background(), `
+SELECT attempted_account_ids, successful_account_id, error_code, reset_at, finished_at
+FROM openai_5h_wake_task_items
+WHERE task_id = $1 AND status = 'pending'`, taskID).Scan(
+		&attemptedJSON, &successfulID, &errorCode, &resetAt, &finishedAt,
+	))
+	require.JSONEq(t, `[]`, string(attemptedJSON))
+	require.False(t, successfulID.Valid)
+	require.False(t, errorCode.Valid)
+	require.False(t, resetAt.Valid)
+	require.False(t, finishedAt.Valid)
 }
 
 func TestOpenAI5hWakeRecoveryRejectsDifferentOwner(t *testing.T) {
@@ -185,4 +212,45 @@ func TestOpenAI5hWakeClaimNextItemRejectsDifferentOwner(t *testing.T) {
 	require.NoError(t, integrationDB.QueryRowContext(context.Background(), `
 SELECT status FROM openai_5h_wake_task_items WHERE task_id = $1`, taskID).Scan(&status))
 	require.Equal(t, service.OpenAI5hWakeItemStatusPending, status)
+}
+
+func TestOpenAI5hWakeClaimNextItemClearsStaleResultFields(t *testing.T) {
+	now := time.Now().UTC()
+	owner := fmt.Sprintf("claim-clean-%d", now.UnixNano())
+	taskID := seedOpenAI5hWakeIntegrationTask(t, owner, []openAI5hWakeIntegrationItemSeed{{
+		status: service.OpenAI5hWakeItemStatusPending,
+	}})
+	_, err := integrationDB.ExecContext(context.Background(), `
+UPDATE openai_5h_wake_task_items
+SET attempted_account_ids = '[17]'::jsonb,
+    successful_account_id = 17,
+    error_code = 'stale_result',
+    reset_at = NOW() + INTERVAL '1 hour',
+    finished_at = NOW()
+WHERE task_id = $1`, taskID)
+	require.NoError(t, err)
+	repo := NewOpenAI5hWakeTaskRepository(integrationDB).(*openAI5hWakeRepository)
+
+	item, err := repo.ClaimNextItem(context.Background(), taskID, owner)
+
+	require.NoError(t, err)
+	require.NotNil(t, item)
+	require.Equal(t, service.OpenAI5hWakeItemStatusRunning, item.Status)
+	require.Empty(t, item.AttemptedAccountIDs)
+	require.Nil(t, item.SuccessfulAccountID)
+	require.Empty(t, item.ErrorCode)
+	require.Nil(t, item.ResetAt)
+	require.Nil(t, item.FinishedAt)
+}
+
+func TestOpenAI5hWakeFinalizeLegacyEmptyTaskAsFailed(t *testing.T) {
+	now := time.Now().UTC()
+	owner := fmt.Sprintf("empty-%d", now.UnixNano())
+	taskID := seedOpenAI5hWakeIntegrationTask(t, owner, nil)
+	repo := NewOpenAI5hWakeTaskRepository(integrationDB).(*openAI5hWakeRepository)
+
+	task, err := repo.FinalizeTask(context.Background(), taskID, owner, false, now)
+
+	require.NoError(t, err)
+	require.Equal(t, service.OpenAI5hWakeTaskStatusFailed, task.Status)
 }

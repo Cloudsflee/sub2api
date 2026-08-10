@@ -22,15 +22,15 @@ class JobLeaseLostError extends Error {
   }
 }
 
-function browserProcessIDForProfile(profileDirectory, procDirectory = '/proc') {
+function browserProfileProcessInfo(profileDirectory, procDirectory = '/proc') {
   const profileValue = String(profileDirectory || '')
-  if (!profileValue || !path.isAbsolute(profileValue)) return 0
+  if (!profileValue || !path.isAbsolute(profileValue)) return { available: true, pid: 0 }
   const expectedProfile = path.resolve(profileValue)
   let entries
   try {
     entries = fs.readdirSync(procDirectory, { withFileTypes: true })
   } catch {
-    return 0
+    return { available: false, pid: 0 }
   }
   for (const entry of entries) {
     if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue
@@ -39,15 +39,26 @@ function browserProcessIDForProfile(profileDirectory, procDirectory = '/proc') {
         .toString('utf8')
         .split('\0')
         .filter(Boolean)
-      const profileIndex = argumentsList.indexOf('-profile')
-      if (profileIndex >= 0 && path.resolve(argumentsList[profileIndex + 1] || '') === expectedProfile) {
-        return Number(entry.name)
+      const profileIndex = argumentsList.findIndex((argument) => argument === '-profile' || argument === '--profile')
+      const profileArgument = profileIndex >= 0 ? argumentsList[profileIndex + 1] : ''
+      const inlineProfileArgument = argumentsList.find((argument) => argument.startsWith('--profile='))
+      if ((profileArgument && path.resolve(profileArgument) === expectedProfile)
+        || (inlineProfileArgument && path.resolve(inlineProfileArgument.slice('--profile='.length)) === expectedProfile)
+        || argumentsList.some((argument) => argument === expectedProfile)) {
+        return { available: true, pid: Number(entry.name) }
       }
-    } catch {
+    } catch (error) {
       // Processes can exit while /proc is being scanned.
+      if (error?.code === 'EACCES' || error?.code === 'EPERM') {
+        return { available: false, pid: 0 }
+      }
     }
   }
-  return 0
+  return { available: true, pid: 0 }
+}
+
+function browserProcessIDForProfile(profileDirectory, procDirectory = '/proc') {
+  return browserProfileProcessInfo(profileDirectory, procDirectory).pid
 }
 
 function abortReason(signal) {
@@ -61,13 +72,20 @@ function throwIfAborted(signal) {
 }
 
 function waitForPromiseOrAbort(promise, signal) {
-  if (!signal) return Promise.resolve(promise)
-  if (signal.aborted) return Promise.reject(abortReason(signal))
+  const settledPromise = Promise.resolve(promise)
+  if (!signal) return settledPromise
+  if (signal.aborted) {
+    // The underlying operation may still reject after the caller has already
+    // observed cancellation. Consume that rejection so aborting a lane does
+    // not turn an expected shutdown into an unhandled-rejection warning.
+    settledPromise.catch(() => {})
+    return Promise.reject(abortReason(signal))
+  }
 
   return new Promise((resolve, reject) => {
     const onAbort = () => reject(abortReason(signal))
     signal.addEventListener('abort', onAbort, { once: true })
-    Promise.resolve(promise).then(
+    settledPromise.then(
       (value) => {
         signal.removeEventListener('abort', onAbort)
         resolve(value)
@@ -421,22 +439,55 @@ function quoteResult(payload) {
 
 function parseShopHTTPResponse(result) {
   if (!result || typeof result !== 'object') throw new ShopSyncError('unknown', 'shop API returned no response')
-  if (result.status === 429) throw new ShopSyncError('rate_limit', 'shop API returned HTTP 429')
-  if (result.status === 502 || result.status === 520) {
-    throw new ShopSyncError('network', `shop API returned HTTP ${result.status}`)
+  if (result.browserTimeout === true) {
+    const requestPath = redactURLCredentials(String(result.requestPath || result.path || 'request'))
+    const phase = ['fetch', 'response_body', 'protocol'].includes(String(result.timeoutPhase))
+      ? String(result.timeoutPhase)
+      : 'request'
+    const timeoutMilliseconds = Number(result.timeoutMilliseconds)
+    const timeoutText = Number.isFinite(timeoutMilliseconds) && timeoutMilliseconds > 0
+      ? ` after ${Math.round(timeoutMilliseconds)}ms`
+      : ''
+    const error = new ShopSyncError(
+      'network',
+      `shop API ${requestPath} timed out during ${phase}${timeoutText}`
+    )
+    error.path = requestPath
+    error.timeoutPhase = phase
+    error.timeoutMilliseconds = timeoutMilliseconds
+    error.browserTimeout = true
+    throw error
   }
+  const status = Number.isInteger(result.status) ? result.status : Number(result.status) || 0
   const contentType = String(result.contentType || '').toLowerCase()
   if (!contentType.includes('application/json')) {
-    const error = new ShopSyncError('verification', `shop API verification required: HTTP ${result.status || 0}`)
+    const responseError = String(result.responseError || '')
+    const responseText = String(result.text || '').slice(0, 2_000)
+    // Do not route every HTML error page through challenge recovery. ESA marks
+    // its challenge responses with http_custom, while other deployments expose
+    // the slider/captcha copy or DOM identifiers in the response body.
+    const challengeResponse = /denied\s+by\s+http_custom|(?:aliyun|alicloud|alibabacloud|aliyuncaptcha|acw_sc__v2|captcha-element|captcha.{0,80}(?:slide|slider|drag)|(?:slide|slider|drag).{0,80}(?:verify|verification)|(?:verification|verify).{0,80}(?:slide|slider|drag)|(?:滑块|拖动|拖拽|滑动).{0,30}(?:验证|最右|尽头))/i
+      .test(`${responseError}\n${responseText}`)
+    if (!challengeResponse) {
+      const kind = status === 429
+        ? 'rate_limit'
+        : status >= 500 && status < 600 ? 'network' : 'unknown'
+      throw new ShopSyncError(kind, `shop API returned non-JSON HTTP ${status}`)
+    }
+    const error = new ShopSyncError('verification', `shop API verification required: HTTP ${status}`)
     error.challengeResponse = {
       contentType,
-      responseError: String(result.responseError || ''),
-      text: String(result.text || '').slice(0, 2_000),
+      responseError,
+      text: responseText,
     }
     throw error
   }
-  if (!Number.isInteger(result.status) || result.status < 200 || result.status >= 300) {
-    throw new ShopSyncError('unknown', `shop API returned HTTP ${result.status || 0}`)
+  if (status === 429) throw new ShopSyncError('rate_limit', 'shop API returned HTTP 429')
+  if (status === 502 || status === 520) {
+    throw new ShopSyncError('network', `shop API returned HTTP ${status}`)
+  }
+  if (status < 200 || status >= 300) {
+    throw new ShopSyncError('unknown', `shop API returned HTTP ${status}`)
   }
   if (!result.payload || typeof result.payload !== 'object') {
     throw new ShopSyncError('unknown', 'shop API returned invalid JSON')
@@ -445,7 +496,10 @@ function parseShopHTTPResponse(result) {
 }
 
 function shopRequestError(path, error) {
-  if (error instanceof ShopSyncError) return error
+  if (error instanceof ShopSyncError) {
+    if (!error.path) error.path = path
+    return error
+  }
   const message = redactURLCredentials(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 500)
   const name = String(error?.name || '').toLowerCase()
   const browserSessionClosed = /target (?:page, )?context or browser has been closed|page, context or browser has been closed|browser has been closed|context has been closed|page has been closed/i.test(message)
@@ -476,6 +530,12 @@ function pressureBackoffMilliseconds(failureCount, random = Math.random) {
   return Math.round(base * jitter)
 }
 
+function pressureRecoveryMode(failureCount, proxyPoolSize) {
+  const failures = Math.max(1, Number(failureCount) || 1)
+  const poolSize = Math.max(0, Number(proxyPoolSize) || 0)
+  return failures < 2 || poolSize < 2 ? 'reload_current_exit' : 'switch_fallback'
+}
+
 async function withPressureRecovery(task, options = {}) {
   if (typeof task !== 'function') throw new Error('pressure recovery task is required')
   const state = options.state || { failureCount: 0 }
@@ -488,13 +548,26 @@ async function withPressureRecovery(task, options = {}) {
   while (true) {
     throwIfAborted(signal)
     try {
-      return await task()
+      const result = await task()
+      // Backoff and fallback selection are based on consecutive pressure
+      // failures. A successful request proves that the current exit recovered;
+      // carrying its old count into a later API call would rotate on two
+      // unrelated transient failures.
+      state.failureCount = 0
+      return result
     } catch (error) {
       if (!isPressureError(error)) throw error
       state.failureCount = Math.max(0, Number(state.failureCount) || 0) + 1
       const waitMilliseconds = pressureBackoffMilliseconds(state.failureCount, random)
       if (now() + waitMilliseconds >= deadlineAt) {
-        throw new ShopSyncError('unknown', 'product sync job cannot recover from upstream pressure before its deadline')
+        const exhausted = new ShopSyncError(
+          error?.kind || 'network',
+          'product sync job cannot recover from upstream pressure before its deadline'
+        )
+        exhausted.cause = error
+        exhausted.pressureDeadlineExceeded = true
+        exhausted.pressureFailureCount = state.failureCount
+        throw exhausted
       }
       await options.onBackoff?.({ error, failureCount: state.failureCount, waitMilliseconds })
       await waitForPromiseOrAbort(sleep(waitMilliseconds), signal)
@@ -592,18 +665,29 @@ async function closeContextThenCreate(previousContext, createContext) {
 
 function browserResourceCounts(contexts) {
   const activeContexts = Array.isArray(contexts) ? contexts.filter(Boolean) : []
+  let contextCount = 0
   let pageCount = 0
   for (const context of activeContexts) {
     try {
       const pages = context.pages()
-      pageCount += Array.isArray(pages)
-        ? pages.filter((page) => typeof page?.isClosed !== 'function' || !page.isClosed()).length
-        : 0
+      const openPages = Array.isArray(pages)
+        ? pages.filter((page) => typeof page?.isClosed !== 'function' || !page.isClosed())
+        : []
+      // Contexts enter the active lane array only after their shop page is
+      // ready. A context with no open page (or whose pages() call throws) is no
+      // longer usable and must not keep the worker healthy.
+      if (openPages.length === 0) continue
+      contextCount += 1
+      pageCount += openPages.length
     } catch {
       // A context can disappear while status is being collected.
     }
   }
-  return { contextCount: activeContexts.length, pageCount }
+  return { contextCount, pageCount }
+}
+
+function browserContextIsReady(context) {
+  return browserResourceCounts(context ? [context] : []).contextCount === 1
 }
 
 function workerStatusIsHealthy(status, now = Date.now(), maxStaleMilliseconds = 120_000) {
@@ -696,6 +780,8 @@ module.exports = {
   ShopSyncError,
   TokenBucket,
   browserFingerprintSeed,
+  browserProfileProcessInfo,
+  browserContextIsReady,
   browserProcessIDForProfile,
   browserResourceCounts,
   camoufoxFirefoxUserPrefs,
@@ -714,6 +800,7 @@ module.exports = {
   parseShopHTTPResponse,
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
+  pressureRecoveryMode,
   proxyLanesForConcurrency,
   proxyPoolsForConcurrency,
   quoteResult,

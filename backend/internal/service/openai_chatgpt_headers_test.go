@@ -62,3 +62,43 @@ func TestResolveAndSetOpenAIChatGPTAccountHeaders(t *testing.T) {
 			"普通账号应透传自身的 chatgpt-account-id")
 	})
 }
+
+func TestSetOpenAIQuotaAccountHeadersSupportsLegacyOrganizationID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		credentials map[string]any
+		want        string
+	}{
+		{
+			name: "chatgpt account id takes precedence",
+			credentials: map[string]any{
+				"chatgpt_account_id": "workspace-current",
+				"organization_id":    "workspace-legacy",
+			},
+			want: "workspace-current",
+		},
+		{
+			name:        "legacy organization id fallback",
+			credentials: map[string]any{"organization_id": "workspace-legacy"},
+			want:        "workspace-legacy",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			account := &Account{
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeOAuth,
+				Credentials: tt.credentials,
+			}
+			headers := make(http.Header)
+
+			setOpenAIQuotaAccountHeaders(headers, account)
+
+			require.Equal(t, tt.want, headers.Get("chatgpt-account-id"))
+		})
+	}
+}

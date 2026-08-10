@@ -1399,9 +1399,14 @@ async function refreshAccountsAfterOpenAI5hWake(
 ) {
   if (!accountsViewMounted || lifecycle !== accountsViewLifecycle) return
   if (announceCompletion) notifyOpenAI5hWakeCompletion(task)
-  if (!usageRefreshedOpenAI5hWakeTasks.has(task.id)) {
-    usageRefreshedOpenAI5hWakeTasks.add(task.id)
+  // Refresh the rows that are currently mounted immediately. When the list
+  // reload has already failed, a later retry may replace those rows; advance
+  // the token again for that retry so newly mounted usage cells cannot retain
+  // a stale probe result.
+  const retryAttempt = openAI5hWakeRefreshRetryAttempts.get(task.id) ?? 0
+  if (!usageRefreshedOpenAI5hWakeTasks.has(task.id) || retryAttempt > 0) {
     usageManualRefreshToken.value += 1
+    usageRefreshedOpenAI5hWakeTasks.add(task.id)
   }
   if (handledOpenAI5hWakeTasks.has(task.id) || refreshingOpenAI5hWakeTasks.has(task.id)) return
   refreshingOpenAI5hWakeTasks.add(task.id)

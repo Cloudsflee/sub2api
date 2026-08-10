@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/accountgroup"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -103,6 +104,16 @@ func (e *cancelAfterAtomicMutationSQLExecutor) ExecContext(ctx context.Context, 
 		e.cancel()
 	}
 	return result, err
+}
+
+type signalBeforeExecSQLExecutor struct {
+	sqlExecutor
+	started chan<- struct{}
+}
+
+func (e *signalBeforeExecSQLExecutor) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	e.started <- struct{}{}
+	return e.sqlExecutor.ExecContext(ctx, query, args...)
 }
 
 func (s *schedulerCacheRecorder) DeleteAccount(ctx context.Context, accountID int64) error {
@@ -218,6 +229,98 @@ func TestOpenAICodexSnapshotConcurrentWritesKeepNewestObservation(t *testing.T) 
 	require.Equal(t, float64(writeCount-1), got.Extra["codex_5h_used_percent"])
 }
 
+func TestOpenAICodexSnapshotSparkShadowSerializesWithParentReauthorization(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	parent := mustCreateAccount(t, integrationEntClient, &service.Account{
+		Name:     fmt.Sprintf("spark-parent-lock-%d", time.Now().UnixNano()),
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "parent-before",
+			"organization_id":    "org-before",
+			"chatgpt_user_id":    "user-before",
+		},
+	})
+	shadow := mustCreateAccount(t, integrationEntClient, &service.Account{
+		Name:            fmt.Sprintf("spark-shadow-lock-%d", time.Now().UnixNano()),
+		Platform:        service.PlatformOpenAI,
+		Type:            service.AccountTypeOAuth,
+		ParentAccountID: &parent.ID,
+		QuotaDimension:  service.QuotaDimensionSpark,
+		Extra:           map[string]any{"operator_note": "preserve"},
+	})
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM scheduler_outbox WHERE account_id = ANY($1)", pq.Array([]int64{parent.ID, shadow.ID}))
+		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM account_groups WHERE account_id = ANY($1)", pq.Array([]int64{parent.ID, shadow.ID}))
+		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM accounts WHERE id = $1", shadow.ID)
+		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM accounts WHERE id = $1", parent.ID)
+	})
+
+	reauthorization, err := integrationDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = reauthorization.Rollback() }()
+	_, err = reauthorization.ExecContext(ctx, `
+		UPDATE accounts
+		SET credentials = $1::jsonb
+		WHERE id = $2
+	`, `{"chatgpt_account_id":"parent-after","organization_id":"org-after","chatgpt_user_id":"user-after"}`, parent.ID)
+	require.NoError(t, err)
+
+	started := make(chan struct{}, 1)
+	repo := newAccountRepositoryWithSQL(nil, &signalBeforeExecSQLExecutor{
+		sqlExecutor: integrationDB,
+		started:     started,
+	}, nil)
+	identity := &service.Account{
+		ID:              shadow.ID,
+		Platform:        service.PlatformOpenAI,
+		Type:            service.AccountTypeOAuth,
+		ParentAccountID: &parent.ID,
+		QuotaDimension:  service.QuotaDimensionSpark,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "parent-before",
+			"organization_id":    "org-before",
+			"chatgpt_user_id":    "user-before",
+		},
+	}
+	type snapshotResult struct {
+		applied bool
+		err     error
+	}
+	resultCh := make(chan snapshotResult, 1)
+	go func() {
+		applied, updateErr := repo.UpdateOpenAICodexSnapshot(ctx, shadow.ID, identity, nil, map[string]any{
+			"codex_5h_used_percent":                       99.0,
+			service.OpenAICodexSnapshotObservedAtExtraKey: "01775582400999999999",
+		})
+		resultCh <- snapshotResult{applied: applied, err: updateErr}
+	}()
+
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	select {
+	case result := <-resultCh:
+		t.Fatalf("stale shadow write bypassed the parent lock: applied=%v err=%v", result.applied, result.err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	require.NoError(t, reauthorization.Commit())
+
+	select {
+	case result := <-resultCh:
+		require.NoError(t, result.err)
+		require.False(t, result.applied)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	var extra []byte
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT extra FROM accounts WHERE id = $1", shadow.ID).Scan(&extra))
+	require.NotContains(t, string(extra), "codex_5h_used_percent")
+}
+
 // --- Create / GetByID / Update / Delete ---
 
 func (s *AccountRepoSuite) TestCreate() {
@@ -308,6 +411,7 @@ func (s *AccountRepoSuite) TestUpdate_ClearsOpenAIWakeSnapshotWhenIdentityChange
 		Platform: service.PlatformOpenAI,
 		Type:     service.AccountTypeOAuth,
 		Credentials: map[string]any{
+			"access_token":       "token-before",
 			"chatgpt_account_id": "account-before",
 			"organization_id":    "org-a",
 			"chatgpt_user_id":    "user-a",
@@ -322,7 +426,34 @@ func (s *AccountRepoSuite) TestUpdate_ClearsOpenAIWakeSnapshotWhenIdentityChange
 			service.OpenAI5hWakeSnapshotIdentityExtraKey: "old-marker",
 		},
 	})
+	shadow := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:            "wake-snapshot-identity-change-shadow",
+		Platform:        service.PlatformOpenAI,
+		Type:            service.AccountTypeOAuth,
+		ParentAccountID: &account.ID,
+		QuotaDimension:  service.QuotaDimensionSpark,
+		Extra: map[string]any{
+			"operator_note":                              "shadow-kept",
+			"codex_5h_used_percent":                      44.0,
+			"codex_usage_updated_at":                     "2026-08-05T07:00:00Z",
+			service.OpenAI5hWakeSnapshotIdentityExtraKey: "shadow-marker",
+		},
+	})
+	cacheRecorder := &schedulerCacheRecorder{}
+	s.repo.schedulerCache = cacheRecorder
+	_, err := s.repo.sql.ExecContext(s.ctx, "TRUNCATE scheduler_outbox")
+	s.Require().NoError(err)
+
 	loaded, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err)
+	loaded.Credentials["access_token"] = "token-rotated"
+	s.Require().NoError(s.repo.Update(s.ctx, loaded))
+	afterTokenRotation, err := s.repo.GetByID(s.ctx, shadow.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(44.0, afterTokenRotation.Extra["codex_5h_used_percent"])
+	s.Require().Equal("shadow-marker", afterTokenRotation.Extra[service.OpenAI5hWakeSnapshotIdentityExtraKey])
+
+	loaded, err = s.repo.GetByID(s.ctx, account.ID)
 	s.Require().NoError(err)
 	loaded.Credentials["chatgpt_account_id"] = "account-after"
 	s.Require().NoError(s.repo.Update(s.ctx, loaded))
@@ -333,6 +464,26 @@ func (s *AccountRepoSuite) TestUpdate_ClearsOpenAIWakeSnapshotWhenIdentityChange
 	for _, key := range openAIWakeManagedExtraKeys {
 		s.Require().NotContains(got.Extra, key)
 	}
+	gotShadow, err := s.repo.GetByID(s.ctx, shadow.ID)
+	s.Require().NoError(err)
+	s.Require().Equal("shadow-kept", gotShadow.Extra["operator_note"])
+	for _, key := range openAIWakeManagedExtraKeys {
+		s.Require().NotContains(gotShadow.Extra, key)
+	}
+	s.Require().NotNil(cacheRecorder.accounts[shadow.ID])
+	for _, key := range openAIWakeManagedExtraKeys {
+		s.Require().NotContains(cacheRecorder.accounts[shadow.ID].Extra, key)
+	}
+	var bulkOutboxCount int
+	err = scanSingleRow(
+		s.ctx,
+		s.repo.sql,
+		"SELECT COUNT(*) FROM scheduler_outbox WHERE event_type = $1",
+		[]any{service.SchedulerOutboxEventAccountBulkChanged},
+		&bulkOutboxCount,
+	)
+	s.Require().NoError(err)
+	s.Require().Equal(1, bulkOutboxCount)
 }
 
 func (s *AccountRepoSuite) TestUpdate_SyncSchedulerSnapshotOnDisabled() {
@@ -514,6 +665,77 @@ func (s *AccountRepoSuite) TestOpenAICodexSnapshotDoesNotRegressForLateResponse(
 	s.Require().Equal("preserve", got.Extra["operator_note"])
 }
 
+func (s *AccountRepoSuite) TestOpenAICodexSnapshotSparkShadowRejectsReauthorizedParent() {
+	parent := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name: "spark-cas-parent", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token":       "spark-token-before",
+			"chatgpt_account_id": "spark-parent-before",
+			"organization_id":    "spark-org-before",
+			"chatgpt_user_id":    "spark-user-before",
+		},
+	})
+	shadow := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name: "spark-cas-shadow", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials:     map[string]any{},
+		ParentAccountID: &parent.ID,
+		QuotaDimension:  service.QuotaDimensionSpark,
+		Extra:           map[string]any{"operator_note": "shadow-preserve"},
+	})
+	identity, err := s.repo.GetByID(s.ctx, shadow.ID)
+	s.Require().NoError(err)
+	// A real usage probe captures the parent's typed identity before querying
+	// /wham/usage. Reproduce that immutable request snapshot here; credentials
+	// remain absent from the persisted shadow row itself.
+	identity.Credentials = map[string]any{
+		"chatgpt_account_id": "spark-parent-before",
+		"organization_id":    "spark-org-before",
+		"chatgpt_user_id":    "spark-user-before",
+	}
+
+	applied, err := s.repo.UpdateOpenAICodexSnapshot(s.ctx, shadow.ID, identity, nil, map[string]any{
+		"codex_5h_used_percent":                       31.0,
+		service.OpenAICodexSnapshotObservedAtExtraKey: "01775582400111111111",
+	})
+	s.Require().NoError(err)
+	s.Require().True(applied)
+
+	s.Require().NoError(s.repo.UpdateCredentials(s.ctx, parent.ID, map[string]any{
+		"access_token":       "spark-token-rotated",
+		"chatgpt_account_id": "spark-parent-before",
+		"organization_id":    "spark-org-before",
+		"chatgpt_user_id":    "spark-user-before",
+	}))
+	afterTokenRotation, err := s.repo.GetByID(s.ctx, shadow.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(31.0, afterTokenRotation.Extra["codex_5h_used_percent"])
+
+	s.Require().NoError(s.repo.UpdateCredentials(s.ctx, parent.ID, map[string]any{
+		"access_token":       "spark-token-reauthorized",
+		"chatgpt_account_id": "spark-parent-after",
+		"organization_id":    "spark-org-after",
+		"chatgpt_user_id":    "spark-user-after",
+	}))
+	afterReauthorization, err := s.repo.GetByID(s.ctx, shadow.ID)
+	s.Require().NoError(err)
+	s.Require().Equal("shadow-preserve", afterReauthorization.Extra["operator_note"])
+	for _, key := range openAIWakeManagedExtraKeys {
+		s.Require().NotContains(afterReauthorization.Extra, key)
+	}
+
+	applied, err = s.repo.UpdateOpenAICodexSnapshot(s.ctx, shadow.ID, identity, nil, map[string]any{
+		"codex_5h_used_percent":                       99.0,
+		service.OpenAICodexSnapshotObservedAtExtraKey: "01775582400999999999",
+	})
+	s.Require().NoError(err)
+	s.Require().False(applied, "a late response from the old parent identity must not update the shadow")
+
+	got, err := s.repo.GetByID(s.ctx, shadow.ID)
+	s.Require().NoError(err)
+	s.Require().Equal("shadow-preserve", got.Extra["operator_note"])
+	s.Require().NotContains(got.Extra, "codex_5h_used_percent")
+}
+
 func (s *AccountRepoSuite) TestOpenAICodexSnapshotAppliesOrdinaryFieldsWhileRejectingStaleManagedFields() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{
 		Name: "wake-mixed-atomic", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
@@ -579,6 +801,7 @@ func (s *AccountRepoSuite) TestBulkUpdate_ClearsOpenAIWakeSnapshotOnIdentityEdit
 	account := mustCreateAccount(s.T(), s.client, &service.Account{
 		Name: "bulk-wake-identity", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
 		Credentials: map[string]any{
+			"access_token":       "bulk-token-before",
 			"chatgpt_account_id": "account-before", "organization_id": "org", "chatgpt_user_id": "user",
 		},
 		Extra: map[string]any{
@@ -588,7 +811,27 @@ func (s *AccountRepoSuite) TestBulkUpdate_ClearsOpenAIWakeSnapshotOnIdentityEdit
 			service.OpenAI5hWakeSnapshotIdentityExtraKey: "trusted-marker",
 		},
 	})
+	shadow := mustCreateAccount(s.T(), s.client, &service.Account{
+		Name:            "bulk-wake-identity-shadow",
+		Platform:        service.PlatformOpenAI,
+		Type:            service.AccountTypeOAuth,
+		ParentAccountID: &account.ID,
+		QuotaDimension:  service.QuotaDimensionSpark,
+		Extra: map[string]any{
+			"operator_note":          "shadow-kept",
+			"codex_5h_used_percent":  27.0,
+			"codex_usage_updated_at": "2026-08-05T07:00:00Z",
+		},
+	})
 	_, err := s.repo.BulkUpdate(s.ctx, []int64{account.ID}, service.AccountBulkUpdate{
+		Credentials: map[string]any{"access_token": "bulk-token-rotated"},
+	})
+	s.Require().NoError(err)
+	afterTokenRotation, err := s.repo.GetByID(s.ctx, shadow.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(27.0, afterTokenRotation.Extra["codex_5h_used_percent"])
+
+	_, err = s.repo.BulkUpdate(s.ctx, []int64{account.ID}, service.AccountBulkUpdate{
 		Credentials: map[string]any{"chatgpt_account_id": "account-after"},
 	})
 	s.Require().NoError(err)
@@ -596,6 +839,12 @@ func (s *AccountRepoSuite) TestBulkUpdate_ClearsOpenAIWakeSnapshotOnIdentityEdit
 	s.Require().NoError(err)
 	for _, key := range openAIWakeManagedExtraKeys {
 		s.Require().NotContains(got.Extra, key)
+	}
+	gotShadow, err := s.repo.GetByID(s.ctx, shadow.ID)
+	s.Require().NoError(err)
+	s.Require().Equal("shadow-kept", gotShadow.Extra["operator_note"])
+	for _, key := range openAIWakeManagedExtraKeys {
+		s.Require().NotContains(gotShadow.Extra, key)
 	}
 }
 
@@ -1004,6 +1253,16 @@ func (s *AccountRepoSuite) TestListByPlatform() {
 	s.Require().NoError(err, "ListByPlatform")
 	s.Require().Len(accounts, 1)
 	s.Require().Equal(service.PlatformAnthropic, accounts[0].Platform)
+}
+
+func (s *AccountRepoSuite) TestListByPlatformAllStatusesIncludesDisabled() {
+	mustCreateAccount(s.T(), s.client, &service.Account{Name: "all-active", Platform: service.PlatformOpenAI, Status: service.StatusActive})
+	mustCreateAccount(s.T(), s.client, &service.Account{Name: "all-disabled", Platform: service.PlatformOpenAI, Status: service.StatusDisabled})
+
+	accounts, err := s.repo.ListByPlatformAllStatuses(s.ctx, service.PlatformOpenAI)
+	s.Require().NoError(err, "ListByPlatformAllStatuses")
+	s.Require().Len(accounts, 2)
+	s.Require().ElementsMatch([]string{service.StatusActive, service.StatusDisabled}, []string{accounts[0].Status, accounts[1].Status})
 }
 
 // --- Preload and VirtualFields ---
@@ -1761,6 +2020,37 @@ func (s *AccountRepoSuite) TestUpdateSessionWindow() {
 	s.Require().NotNil(got.SessionWindowStart)
 	s.Require().NotNil(got.SessionWindowEnd)
 	s.Require().Equal("active", got.SessionWindowStatus)
+}
+
+func (s *AccountRepoSuite) TestUpdateSessionWindow_SyncsSchedulerSnapshotImmediately() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-win-cache"})
+	cacheRecorder := &schedulerCacheRecorder{}
+	s.repo.schedulerCache = cacheRecorder
+	start := time.Date(2025, 6, 15, 10, 0, 0, 0, time.UTC)
+	end := time.Date(2025, 6, 15, 15, 0, 0, 0, time.UTC)
+
+	s.Require().NoError(s.repo.UpdateSessionWindow(s.ctx, account.ID, &start, &end, "active"))
+
+	s.Require().Len(cacheRecorder.setAccounts, 1)
+	cached := cacheRecorder.setAccounts[0]
+	s.Require().NotNil(cached.SessionWindowStart)
+	s.Require().NotNil(cached.SessionWindowEnd)
+	s.Require().Equal(start, *cached.SessionWindowStart)
+	s.Require().Equal(end, *cached.SessionWindowEnd)
+	s.Require().Equal("active", cached.SessionWindowStatus)
+}
+
+func (s *AccountRepoSuite) TestUpdateSessionWindowEnd_SyncsSchedulerSnapshotImmediately() {
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-win-end-cache"})
+	cacheRecorder := &schedulerCacheRecorder{}
+	s.repo.schedulerCache = cacheRecorder
+	end := time.Date(2025, 6, 15, 15, 0, 0, 0, time.UTC)
+
+	s.Require().NoError(s.repo.UpdateSessionWindowEnd(s.ctx, account.ID, end))
+
+	s.Require().Len(cacheRecorder.setAccounts, 1)
+	s.Require().NotNil(cacheRecorder.setAccounts[0].SessionWindowEnd)
+	s.Require().Equal(end, *cacheRecorder.setAccounts[0].SessionWindowEnd)
 }
 
 // --- UpdateExtra ---

@@ -35,7 +35,7 @@
 - 启动时按 provider、origin 和代理身份恢复 Playwright `storageState`。会话原子写入 `/data/challenge-sessions/<sha256>.json`，目录 `0700`、文件 `0600`，损坏文件自动删除重建。
 - 会话文件保留 provider、目标 origin、代理服务器和不可逆代理身份摘要，不写入代理用户名或密码；摘要不匹配时自动丢弃并重建。
 - Camoufox 指纹种子按 lane 与代理身份稳定生成，不再依赖重建后会变化的容器 `HOSTNAME`；同一 profile 在 Worker 重启后保持相同指纹，不同 lane/出口仍彼此隔离。
-- 运行期 API 返回 HTML 时只暂停并重试失败的 API 调用，已完成的商品分类和报价不会重跑。当前 context 两次失败后立即尝试该 lane 的 fallback。
+- 运行期 API 返回 HTML 时只暂停并重试失败的 API 调用，已完成的商品分类和报价不会重跑。浏览器内 `fetch` 与 `response.text()` 共用请求截止时间并记录 API path 和超时阶段；这类超时按网络压力退避，不再立即销毁持久 context。第一次压力恢复只重载当前页，同一出口第二次失败后才切换该 lane 的 fallback；仅 Playwright 协议层本身卡死时重建 lane。
 - 商品任务超过 30 分钟租约时只取消并丢弃过期任务，不再销毁已通过 ESA 的 lane context；当前浏览器请求在自身最多 30 秒的超时后结束，再轮询新任务，避免租约边界反复制造新挑战。
 - Camoufox 关闭 Firefox BFCache 的旧文档驻留和内容进程预启动，并将浏览器内存缓存限制为 16 MiB，避免已解决的 ESA 页面与正常商品页同时常驻，给六个持久 lane 留出内存余量。
 - 每个 Camoufox context 创建后按 profile 对应的 PID 无焦点调整 X11 外框为 `1024x824`，实际内容 viewport 为 `1024x768`；挑战拖动前再独立执行精确窗口聚焦。Firefox 的 `--width`/`--height` 和持久 `xulstore.json` 在当前无窗口管理器的 Xvfb 环境中不会控制实际窗口，因此不再依赖这两种方式。

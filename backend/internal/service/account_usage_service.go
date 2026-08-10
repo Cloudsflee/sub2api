@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -105,12 +106,17 @@ type antigravityUsageCache struct {
 }
 
 const (
-	apiCacheTTL             = 3 * time.Minute
-	apiErrorCacheTTL        = 1 * time.Minute        // 负缓存 TTL：429 等错误缓存 1 分钟
-	antigravityErrorTTL     = 1 * time.Minute        // Antigravity 错误缓存 TTL（可恢复错误）
-	apiQueryMaxJitter       = 800 * time.Millisecond // 用量查询最大随机延迟
-	windowStatsCacheTTL     = 1 * time.Minute
-	openAIProbeCacheTTL     = 10 * time.Minute
+	apiCacheTTL         = 3 * time.Minute
+	apiErrorCacheTTL    = 1 * time.Minute        // 负缓存 TTL：429 等错误缓存 1 分钟
+	antigravityErrorTTL = 1 * time.Minute        // Antigravity 错误缓存 TTL（可恢复错误）
+	apiQueryMaxJitter   = 800 * time.Millisecond // 用量查询最大随机延迟
+	windowStatsCacheTTL = 1 * time.Minute
+	openAIProbeCacheTTL = 10 * time.Minute
+	// A shared probe must outlive the HTTP request that happened to start it,
+	// otherwise one disconnected caller cancels the upstream call for every
+	// same-account waiter. The regular probe has a 15s request budget and the
+	// Spark /wham/usage path has a 20s budget plus bounded persistence time.
+	openAICodexProbeTimeout = 30 * time.Second
 	grokProbeRetryTTL       = 1 * time.Minute
 	grokFreeQuotaWindow     = 24 * time.Hour
 	openAICodexProbeVersion = "0.144.1"
@@ -123,9 +129,12 @@ type UsageCache struct {
 	antigravityCache  sync.Map           // accountID -> *antigravityUsageCache
 	apiFlight         singleflight.Group // 防止同一账号的并发请求击穿缓存（Anthropic）
 	antigravityFlight singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
-	openAIProbeCache  sync.Map           // accountID -> time.Time
+	openAIProbeCache  sync.Map           // identity-aware probe key -> time.Time
+	openAIProbeFlight singleflight.Group // 防止同一 OpenAI 账号的并发探针击穿上游
 	grokProbeCache    sync.Map           // accountID -> last billing probe attempt
 }
+
+var errOpenAIUsageProbeNoSnapshot = errors.New("OpenAI usage probe returned no quota snapshot")
 
 // NewUsageCache 创建 UsageCache 实例
 func NewUsageCache() *UsageCache {
@@ -353,8 +362,8 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64, for
 	}
 
 	if account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth {
-		usage, err := s.getOpenAIUsage(ctx, account, forceProbe)
-		if err == nil {
+		usage, probeSucceeded, err := s.getOpenAIUsageWithProbeStatus(ctx, account, forceProbe)
+		if err == nil && probeSucceeded {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
 		return usage, err
@@ -701,48 +710,59 @@ func (s *AccountUsageService) syncActiveToPassive(ctx context.Context, accountID
 }
 
 func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Account, force bool) (*UsageInfo, error) {
+	usage, _, err := s.getOpenAIUsageWithProbeStatus(ctx, account, force)
+	return usage, err
+}
+
+func (s *AccountUsageService) getOpenAIUsageWithProbeStatus(ctx context.Context, account *Account, force bool) (*UsageInfo, bool, error) {
 	now := time.Now()
 	usage := &UsageInfo{UpdatedAt: &now}
 
 	if account == nil {
-		return usage, nil
+		return usage, false, nil
 	}
 
 	applyExtraToUsage(usage, account.Extra, now)
 
-	if (force || shouldRefreshOpenAICodexSnapshot(account, usage, now)) && s.shouldProbeOpenAICodexSnapshot(account.ID, now, force) {
-		if account.IsShadow() {
-			// Spark shadow accounts fetch usage from /wham/usage (bengalfox channel)
-			// via the shared OpenAIQuotaService, which resolves credentials from the
-			// parent account.  The result is written to the shadow row's own codex_*
-			// Extra keys and immediately reflected in the returned UsageInfo.
-			if s.openAIQuotaService != nil {
-				if quotaUsage, err := s.openAIQuotaService.QueryUsage(ctx, account.ID); err == nil {
-					if updates := buildCodexSparkWindowExtraUpdates(quotaUsage, now); len(updates) > 0 {
-						mergeAccountExtra(account, updates)
-						if persistErr := s.persistOpenAICodexProbeSnapshot(ctx, account, updates); persistErr != nil {
-							slog.Warn("openai_codex_probe_snapshot_persist_failed", "account_id", account.ID, "error", persistErr)
-						}
-						if usage.UpdatedAt == nil {
-							usage.UpdatedAt = &now
-						}
-						applyExtraToUsage(usage, account.Extra, now)
-					}
-				}
+	needsProbe := force || shouldRefreshOpenAICodexSnapshot(account, usage, now)
+	probeAccount := account
+	var prepareErr error
+	if needsProbe {
+		// Prepare the exact durable account snapshot before selecting a cooldown
+		// or singleflight key. In particular, an OAuth cache hit is not sufficient:
+		// the token and workspace/proxy headers must come from the same account row.
+		probeAccount, prepareErr = s.prepareOpenAICodexProbeAccount(ctx, account)
+		if prepareErr != nil && account.IsShadow() {
+			slog.Warn("openai_spark_shadow_identity_unavailable", "account_id", account.ID, "error", prepareErr)
+		}
+	}
+
+	probeSucceeded := false
+	if needsProbe && prepareErr != nil {
+		if force {
+			return usage, false, fmt.Errorf("refresh OpenAI usage snapshot: %w", prepareErr)
+		}
+		slog.Warn("openai_codex_probe_prepare_failed", "account_id", account.ID, "error", prepareErr)
+	} else if needsProbe && s.shouldProbeOpenAICodexSnapshot(probeAccount, now, force) {
+		updates, probeErr := s.refreshPreparedOpenAICodexSnapshot(ctx, probeAccount)
+		if probeErr != nil {
+			if force {
+				return usage, false, fmt.Errorf("refresh OpenAI usage snapshot: %w", probeErr)
 			}
+			slog.Warn("openai_codex_probe_failed", "account_id", account.ID, "error", probeErr)
 		} else {
-			if updates, err := s.probeOpenAICodexSnapshot(ctx, account); err == nil && len(updates) > 0 {
-				mergeAccountExtra(account, updates)
-				if usage.UpdatedAt == nil {
-					usage.UpdatedAt = &now
-				}
-				applyExtraToUsage(usage, account.Extra, now)
-			}
+			probeSucceeded = true
+			// refreshOpenAICodexSnapshot returns the complete authoritative Extra
+			// row read after the snapshot CAS. Replacing the request-local map is
+			// required: merging a late upstream response would otherwise retain or
+			// reintroduce fields that the monotonic database guard rejected.
+			account.Extra = shallowCopyMap(updates)
+			applyExtraToUsage(usage, account.Extra, now)
 		}
 	}
 
 	if s.usageLogRepo == nil {
-		return usage, nil
+		return usage, probeSucceeded, nil
 	}
 
 	if stats, err := s.usageLogRepo.GetAccountWindowStats(ctx, account.ID, codexWindowStatsStart(usage.FiveHour, 5*time.Hour, now)); err == nil {
@@ -759,7 +779,197 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 		usage.SevenDay.WindowStats = windowStatsFromAccountStats(stats)
 	}
 
-	return usage, nil
+	return usage, probeSucceeded, nil
+}
+
+func (s *AccountUsageService) refreshOpenAICodexSnapshot(ctx context.Context, account *Account) (map[string]any, error) {
+	if account == nil || account.ID <= 0 {
+		return nil, errOpenAIUsageProbeNoSnapshot
+	}
+	probeAccount, err := s.prepareOpenAICodexProbeAccount(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	return s.refreshPreparedOpenAICodexSnapshot(ctx, probeAccount)
+}
+
+// prepareOpenAICodexProbeAccount freezes all request inputs before the probe
+// enters singleflight. For ordinary OAuth accounts this includes acquiring a
+// token and reloading the durable row that owns that exact token. Spark shadows
+// keep their own row ID but capture their parent's quota identity; QueryUsage
+// performs the corresponding authenticated parent lookup.
+func (s *AccountUsageService) prepareOpenAICodexProbeAccount(ctx context.Context, account *Account) (*Account, error) {
+	probeAccount, err := s.snapshotOpenAICodexProbeAccount(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	if probeAccount == nil || probeAccount.IsShadow() || probeAccount.IsOpenAIAgentIdentity() {
+		return probeAccount, nil
+	}
+	if s == nil || s.openAIQuotaService == nil {
+		return nil, errors.New("OpenAI quota service is not configured for usage probes")
+	}
+	accessToken, authenticated, err := acquireOpenAIAuthenticatedAccountSnapshot(
+		ctx,
+		s.accountRepo,
+		s.openAIQuotaService.tokenProvider,
+		probeAccount,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("acquire OpenAI usage probe credentials: %w", err)
+	}
+	if authenticated.Credentials == nil {
+		authenticated.Credentials = make(map[string]any)
+	}
+	// The helper compares trimmed values. Store the exact returned value in the
+	// request-only snapshot so Authorization cannot reintroduce surrounding
+	// whitespace from a legacy credential row.
+	authenticated.Credentials["access_token"] = accessToken
+	return authenticated, nil
+}
+
+func (s *AccountUsageService) refreshPreparedOpenAICodexSnapshot(ctx context.Context, probeAccount *Account) (map[string]any, error) {
+	if probeAccount == nil {
+		return nil, errOpenAIUsageProbeNoSnapshot
+	}
+	flightKey := openAICodexProbeFlightKey(probeAccount)
+
+	probe := func() (any, error) {
+		probeCtx := ctx
+		if s.cache != nil {
+			// DoChan shares this closure with all callers. Preserve context values
+			// but detach cancellation/deadlines from the first HTTP request.
+			probeCtx = context.WithoutCancel(ctx)
+		}
+		probeCtx, probeCancel := context.WithTimeout(probeCtx, openAICodexProbeTimeout)
+		defer probeCancel()
+		var (
+			updates map[string]any
+			err     error
+		)
+		if probeAccount.IsShadow() {
+			// Spark shadow accounts fetch the bengalfox quota from /wham/usage using
+			// the parent credentials, then persist the snapshot on the shadow row.
+			if s.openAIQuotaService == nil {
+				return nil, errors.New("OpenAI quota service is not configured for Spark usage")
+			}
+			var quotaUsage *OpenAIQuotaUsage
+			quotaUsage, err = s.openAIQuotaService.QueryUsage(probeCtx, probeAccount.ID)
+			if err == nil {
+				updates = buildCodexSparkWindowExtraUpdates(quotaUsage, time.Now())
+				if len(updates) > 0 {
+					updates, err = s.persistAndResolveOpenAICodexProbeSnapshot(probeCtx, probeAccount, updates)
+				}
+			}
+		} else {
+			updates, err = s.probeOpenAICodexSnapshot(probeCtx, probeAccount)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(updates) == 0 {
+			return nil, errOpenAIUsageProbeNoSnapshot
+		}
+		if s.cache != nil {
+			s.cache.openAIProbeCache.Store(openAICodexProbeCacheKey(probeAccount), time.Now())
+		}
+		return updates, nil
+	}
+
+	if s.cache == nil {
+		value, err := probe()
+		if err != nil {
+			return nil, err
+		}
+		updates, _ := value.(map[string]any)
+		return updates, nil
+	}
+
+	resultCh := s.cache.openAIProbeFlight.DoChan(flightKey, probe)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-resultCh:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		updates, ok := result.Val.(map[string]any)
+		if !ok || len(updates) == 0 {
+			return nil, errOpenAIUsageProbeNoSnapshot
+		}
+		return updates, nil
+	}
+}
+
+func (s *AccountUsageService) snapshotOpenAICodexProbeAccount(ctx context.Context, account *Account) (*Account, error) {
+	if account == nil {
+		return nil, errOpenAIUsageProbeNoSnapshot
+	}
+	probeAccount := snapshotOAuthRefreshAccount(account)
+	if probeAccount == nil {
+		return nil, errOpenAIUsageProbeNoSnapshot
+	}
+	if !probeAccount.IsShadow() {
+		return probeAccount, nil
+	}
+	// A Spark shadow stores its own display snapshot but borrows credentials
+	// from the parent. Capture the parent's typed quota identity alongside the
+	// shadow before QueryUsage reloads anything; the repository CAS can then
+	// reject a response if the parent is re-authorized while the request is in
+	// flight. Never copy the access token into the shadow snapshot.
+	if s == nil || s.accountRepo == nil || probeAccount.ParentAccountID == nil {
+		return nil, errors.New("OpenAI Spark shadow parent account is unavailable")
+	}
+	parent, parentErr := s.accountRepo.GetByID(ctx, *probeAccount.ParentAccountID)
+	if parentErr != nil || parent == nil {
+		if parentErr == nil {
+			parentErr = errors.New("parent account not found")
+		}
+		return nil, fmt.Errorf("load OpenAI Spark shadow parent identity: %w", parentErr)
+	}
+	if probeAccount.Credentials == nil {
+		probeAccount.Credentials = make(map[string]any, 3)
+	}
+	for _, key := range []string{"chatgpt_account_id", "organization_id", "chatgpt_user_id"} {
+		if value, ok := parent.Credentials[key]; ok {
+			probeAccount.Credentials[key] = value
+		} else {
+			delete(probeAccount.Credentials, key)
+		}
+	}
+	return probeAccount, nil
+}
+
+// openAICodexProbeFlightKey deliberately contains only non-secret identity
+// fields.  Access-token rotation keeps the same quota identity and can share
+// an in-flight result, while a workspace/user or shadow-parent change must
+// never receive a response produced for the previous identity.
+func openAICodexProbeFlightKey(account *Account) string {
+	if account == nil {
+		return "openai-usage:invalid"
+	}
+	parentID := int64(0)
+	if account.ParentAccountID != nil {
+		parentID = *account.ParentAccountID
+	}
+	fingerprint := openAI5hWakeIdentityFingerprintFor(account)
+	return fmt.Sprintf(
+		"openai-usage:%d:%s:%s:%s:%t:%d:%s",
+		account.ID,
+		fingerprint.platform,
+		fingerprint.accountType,
+		fingerprint.quotaDimension,
+		fingerprint.shadow,
+		parentID,
+		fingerprint.identityHash,
+	)
+}
+
+// The cooldown must use the same non-secret identity tuple as singleflight.
+// Keeping it keyed only by account ID would suppress a fresh probe for up to
+// ten minutes after re-authorizing the account to a different workspace/user.
+func openAICodexProbeCacheKey(account *Account) string {
+	return openAICodexProbeFlightKey(account)
 }
 
 func shouldRefreshOpenAICodexSnapshot(account *Account, usage *UsageInfo, now time.Time) bool {
@@ -803,19 +1013,18 @@ func isOpenAICodexSnapshotStale(account *Account, now time.Time) bool {
 	return now.Sub(ts) >= openAIProbeCacheTTL
 }
 
-func (s *AccountUsageService) shouldProbeOpenAICodexSnapshot(accountID int64, now time.Time, force ...bool) bool {
-	if s == nil || s.cache == nil || accountID <= 0 {
+func (s *AccountUsageService) shouldProbeOpenAICodexSnapshot(account *Account, now time.Time, force ...bool) bool {
+	if s == nil || s.cache == nil || account == nil || account.ID <= 0 {
 		return true
 	}
 	forceProbe := len(force) > 0 && force[0]
 	if !forceProbe {
-		if cached, ok := s.cache.openAIProbeCache.Load(accountID); ok {
+		if cached, ok := s.cache.openAIProbeCache.Load(openAICodexProbeCacheKey(account)); ok {
 			if ts, ok := cached.(time.Time); ok && now.Sub(ts) < openAIProbeCacheTTL {
 				return false
 			}
 		}
 	}
-	s.cache.openAIProbeCache.Store(accountID, now)
 	return true
 }
 
@@ -871,7 +1080,7 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	// 与真实转发一致：originator 与最终 User-Agent（可能来自指纹缓存）首段配套，否则探针被上游
 	// 404（issue #3901）；缓存里的降载桶身份同样在此归一化，避免探针被回 server_is_overloaded。
 	enforceCodexIdentityHeaders(req.Header)
-	setOpenAIChatGPTAccountHeaders(req.Header, account)
+	setOpenAIQuotaAccountHeaders(req.Header, account)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -896,10 +1105,11 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 		return nil, err
 	}
 	if len(updates) > 0 {
-		if err := s.persistOpenAICodexProbeSnapshot(ctx, account, updates); err != nil {
-			return nil, fmt.Errorf("persist openai codex probe snapshot: %w", err)
+		authoritativeExtra, persistErr := s.persistAndResolveOpenAICodexProbeSnapshot(ctx, account, updates)
+		if persistErr != nil {
+			return nil, fmt.Errorf("persist openai codex probe snapshot: %w", persistErr)
 		}
-		return updates, nil
+		return authoritativeExtra, nil
 	}
 	return nil, nil
 }
@@ -919,6 +1129,50 @@ func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(ctx context.Contex
 	// concurrent credential merge cannot make the SQL CAS use a different
 	// workspace/user tuple than the response that produced this snapshot.
 	return persistOpenAICodexSnapshotForAccount(updateCtx, s.accountRepo, cloneOpenAICodexSnapshotIdentity(account), updates)
+}
+
+// persistAndResolveOpenAICodexProbeSnapshot persists a probe observation and
+// then reloads the row that the UI will render. PostgreSQL reports an UPDATE as
+// affecting one row even when the monotonic CASE expression keeps a newer
+// managed snapshot, so RowsAffected alone cannot tell callers which values won.
+func (s *AccountUsageService) persistAndResolveOpenAICodexProbeSnapshot(
+	ctx context.Context,
+	account *Account,
+	updates map[string]any,
+) (map[string]any, error) {
+	if err := s.persistOpenAICodexProbeSnapshot(ctx, account, updates); err != nil {
+		return nil, err
+	}
+	if s == nil || s.accountRepo == nil || account == nil {
+		return nil, errors.New("OpenAI usage account repository is unavailable")
+	}
+
+	readCtx, readCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer readCancel()
+	current, err := s.accountRepo.GetByID(readCtx, account.ID)
+	if err != nil {
+		return nil, fmt.Errorf("reload authoritative OpenAI usage snapshot: %w", err)
+	}
+	if current == nil || current.ID != account.ID {
+		return nil, errors.New("authoritative OpenAI usage account is unavailable")
+	}
+	currentIdentity, err := s.snapshotOpenAICodexProbeAccount(readCtx, current)
+	if err != nil {
+		return nil, fmt.Errorf("verify authoritative OpenAI usage identity: %w", err)
+	}
+	if openAICodexProbeFlightKey(currentIdentity) != openAICodexProbeFlightKey(account) {
+		return nil, errOpenAICodexSnapshotIdentityChanged
+	}
+
+	incomingObservedAt, incomingHasObservation := openAICodexSnapshotObservedAtFromExtra(updates)
+	storedObservedAt, storedHasObservation := openAICodexSnapshotObservedAtFromExtra(current.Extra)
+	if incomingHasObservation && (!storedHasObservation || storedObservedAt < incomingObservedAt) {
+		return nil, errors.New("authoritative OpenAI usage snapshot is older than the submitted observation")
+	}
+	if len(current.Extra) == 0 {
+		return nil, errOpenAIUsageProbeNoSnapshot
+	}
+	return shallowCopyMap(current.Extra), nil
 }
 
 func extractOpenAICodexProbeUpdates(resp *http.Response) (map[string]any, error) {

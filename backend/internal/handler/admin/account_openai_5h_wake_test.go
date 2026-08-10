@@ -196,6 +196,24 @@ func TestOpenAI5hWakeHandlerContracts(t *testing.T) {
 	require.NotEmpty(t, requireOpenAI5hWakeMap(t, payload["data"])["cancel_requested_at"])
 }
 
+func TestOpenAI5hWakeCreateHandlerRejectsEmptyPlan(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	taskRepo := &openAI5hWakeHandlerTaskRepo{task: &service.OpenAI5hWakeTask{ID: 31}}
+	wake := service.NewOpenAI5hWakeService(
+		taskRepo,
+		&openAI5hWakeHandlerAccountRepo{},
+		nil, nil, nil, nil, nil, nil,
+	)
+	handler := &AccountHandler{}
+	handler.SetOpenAI5hWakeService(wake)
+
+	status, payload := invokeOpenAI5hWakeHandler(t, http.MethodPost, "/tasks", nil, handler.CreateOpenAI5hWakeTask)
+
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "OPENAI_5H_WAKE_NO_ELIGIBLE_POOLS", payload["reason"])
+	require.Empty(t, taskRepo.createParams.Items)
+}
+
 func TestOpenAI5hWakeHandlerRejectsInvalidTaskID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler, _ := newOpenAI5hWakeHandler(t)

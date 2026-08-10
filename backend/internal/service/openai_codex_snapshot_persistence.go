@@ -66,11 +66,13 @@ type openAICodexSnapshotCASRepository interface {
 }
 
 func supportsOpenAICodexSnapshotCAS(account *Account) bool {
-	return account != nil &&
-		account.Platform == PlatformOpenAI &&
-		account.Type == AccountTypeOAuth &&
-		account.QuotaDimensionOrDefault() == QuotaDimensionGlobal &&
-		!account.IsShadow()
+	if account == nil || account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth {
+		return false
+	}
+	if account.IsShadow() {
+		return account.QuotaDimensionOrDefault() == QuotaDimensionSpark
+	}
+	return account.QuotaDimensionOrDefault() == QuotaDimensionGlobal
 }
 
 func cloneOpenAICodexSnapshotIdentity(account *Account) *Account {

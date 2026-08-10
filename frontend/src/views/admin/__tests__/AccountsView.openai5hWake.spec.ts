@@ -298,7 +298,9 @@ describe('AccountsView OpenAI 5h wake integration', () => {
     await vi.advanceTimersByTimeAsync(5000)
     await flushPromises()
     expect(mocks.list).toHaveBeenCalledTimes(3)
-    expect(wrapper.get('[data-testid="usage-refresh-token"]').text()).toBe('1')
+    // The retry can replace the account rows, so it must issue a fresh usage
+    // refresh generation after the list becomes available again.
+    expect(wrapper.get('[data-testid="usage-refresh-token"]').text()).toBe('2')
     expect(mocks.showSuccess).toHaveBeenCalledOnce()
 
     await vi.advanceTimersByTimeAsync(5000)

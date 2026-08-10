@@ -54,6 +54,7 @@ export interface OpenAI5hWakePreview {
     non_oauth: number
     spark_shadow: number
     non_global: number
+    no_5h_entitlement: number
     disabled: number
     unschedulable: number
     expired: number

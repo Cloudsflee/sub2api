@@ -92,17 +92,21 @@ Jobs send a heartbeat every 30 seconds and refresh the worker status timestamp.
 Missing heartbeats release a lease after 90 seconds, while a single attempt can
 run for at most 30 minutes. A heartbeat HTTP 409 immediately cancels the stale
 attempt and retains that lane's browser context and verified ESA session. An
-in-flight shop request may take up to its own 30-second timeout to return, after
-which the expired result is discarded before the lane polls another job. Stale
-attempts are never submitted as failures. HTTP
+in-flight shop request keeps browser `fetch` and `response.text()` under one
+configured request deadline. A browser-side timeout reports the API path and
+`fetch` or `response_body` phase as ordinary network pressure; only the outer
+Playwright protocol guard recreates a lane when `page.evaluate` itself cannot
+return. After the job deadline, the expired result is discarded before the
+lane polls another job. Stale attempts are never submitted as failures. HTTP
 429/502/520, proxy failures, and browser transport failures back off
 independently per lane for 1, 5, then 15 minutes with jitter. Verification
 failures use a separate 15-minute, 60-minute, then 6-hour backoff. Unsupported
-verification types use the 6-hour tier immediately. After a completed pressure
-backoff, a lane with a fallback closes its old context before opening one
-context and one page on the alternate endpoint, then continues the same
-in-memory shop snapshot. The other lanes are not restarted or sped up, and the
-worker never has more active contexts than configured lanes.
+verification types use the 6-hour tier immediately. After the first pressure
+backoff the lane reloads its current verified page. If the same operation fails
+again, a lane with a fallback closes its old context before opening one context
+and one page on the alternate endpoint, then continues the same in-memory shop
+snapshot. The other lanes are not restarted or sped up, and the worker never
+has more active contexts than configured lanes.
 Multi-lane startup and context replacement are supervised per lane. Each proxy
 gets two short initialization attempts before that lane tries its positional
 fallback; exhausting one lane pool leaves the other browser contexts running.

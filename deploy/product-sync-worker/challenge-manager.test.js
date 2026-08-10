@@ -110,9 +110,58 @@ test('snapshot collection inspects desktop and H5 child frames and response head
   assert.equal(snapshot.isChallenge, true)
 })
 
+test('snapshot collection ignores hidden captcha and slider placeholders', async (t) => {
+  const previousDocument = global.document
+  const previousLocation = global.location
+  const previousGetComputedStyle = global.getComputedStyle
+  const hiddenElement = {
+    closest: () => null,
+    getBoundingClientRect: () => ({ width: 1, height: 1 }),
+  }
+  global.document = {
+    body: { innerText: 'Products' },
+    scripts: [],
+    title: 'Shop',
+    querySelector: () => hiddenElement,
+    querySelectorAll: () => [hiddenElement],
+  }
+  global.location = { href: 'https://pay.ldxp.cn/' }
+  global.getComputedStyle = () => ({ display: 'none', visibility: 'visible', opacity: '1' })
+  t.after(() => {
+    global.document = previousDocument
+    global.location = previousLocation
+    global.getComputedStyle = previousGetComputedStyle
+  })
+
+  const snapshot = await collectChallengeSnapshot({
+    frames: () => [{ evaluate: async (fn) => fn() }],
+  }, null)
+
+  assert.equal(snapshot.frames[0].hasCaptchaDOM, false)
+  assert.equal(snapshot.frames[0].hasAliyunDOM, false)
+  assert.equal(snapshot.frames[0].hasGenericSlider, false)
+  assert.equal(snapshot.isChallenge, false)
+})
+
 test('generic slide provider is gated by verification-page classification', () => {
   const providers = defaultChallengeProviders()
   assert.equal(selectChallengeProvider(genericSnapshot(), providers).id, 'generic-slide-to-end')
+  assert.equal(selectChallengeProvider({
+    responseError: '',
+    frames: [
+      { ...clearSnapshot().frames[0], title: 'Security verification', text: 'Please complete verification' },
+      { ...clearSnapshot().frames[0], title: '', text: '', hasGenericSlider: true },
+    ],
+  }, providers).id, 'generic-slide-to-end')
+  assert.equal(selectChallengeProvider({
+    responseError: 'denied by http_custom',
+    frames: [{
+      ...clearSnapshot().frames[0],
+      hasGenericSlider: true,
+      title: '',
+      text: '',
+    }],
+  }, providers).id, 'generic-slide-to-end')
   assert.equal(selectChallengeProvider({
     responseError: '',
     frames: [{
@@ -121,6 +170,30 @@ test('generic slide provider is gated by verification-page classification', () =
       text: 'Volume',
     }],
   }, providers), null)
+})
+
+test('stale ESA header plus a normal-page slider does not select a drag provider', () => {
+  const providers = defaultChallengeProviders()
+  assert.equal(selectChallengeProvider({
+    responseError: 'denied by http_custom',
+    responseContext: 'post-drag-submission',
+    frames: [{
+      ...clearSnapshot().frames[0],
+      url: 'https://pay.ldxp.cn/',
+      hasGenericSlider: true,
+      title: 'Shop',
+      text: 'Products and volume controls',
+    }],
+  }, providers), null)
+  assert.equal(challengeContentCleared({
+    responseError: 'denied by http_custom',
+    responseContext: 'post-drag-submission',
+    frames: [{
+      ...clearSnapshot().frames[0],
+      url: 'https://pay.ldxp.cn/',
+      hasGenericSlider: true,
+    }],
+  }), true)
 })
 
 test('normal intelligent_cc_acl responses are accepted while http_custom is a challenge', () => {
@@ -132,6 +205,26 @@ test('normal intelligent_cc_acl responses are accepted while http_custom is a ch
   assert.equal(challengeSnapshotDetected(clearedWithLibraryLoaded), true)
   assert.equal(challengeCleared(clearedWithLibraryLoaded), true)
   assert.equal(challengeCleared(clearSnapshot('denied by http_custom')), false)
+  assert.equal(challengeCleared({
+    responseError: '',
+    frames: [{ ...clearSnapshot().frames[0], text: 'denied by http_custom' }],
+  }), false)
+})
+
+test('a visible generic slider keeps a classified verification page uncleared', () => {
+  const postDrag = {
+    responseError: '',
+    frames: [{
+      ...clearSnapshot().frames[0],
+      hasGenericSlider: true,
+    }],
+  }
+  assert.equal(challengeSnapshotDetected(postDrag), false)
+  assert.equal(challengeCleared(postDrag), false)
+  assert.equal(challengeContentCleared({
+    ...postDrag,
+    frames: [{ ...postDrag.frames[0], url: 'https://pay.ldxp.cn/' }],
+  }), false)
 })
 
 test('post-drag normal document is accepted when ESA leaves a stale http_custom header', () => {
@@ -141,6 +234,30 @@ test('post-drag normal document is accepted when ESA leaves a stale http_custom 
   assert.equal(challengeContentCleared(snapshot), true)
   assert.equal(challengeContentCleared({ ...snapshot, frames: [{ ...snapshot.frames[0], text: '请按住滑块，拖动到最右边' }] }), false)
   assert.equal(challengeContentCleared({ ...snapshot, frames: [{ ...snapshot.frames[0], url: 'about:blank' }] }), false)
+})
+
+test('initial normal document is not retried as a challenge when only http_custom is stale', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const snapshot = clearSnapshot('denied by http_custom')
+  snapshot.frames[0].url = 'https://pay.ldxp.cn/'
+  let drags = 0
+  const manager = new ChallengeManager({
+    enabled: true,
+    sessionDirectory: directory,
+    navigate: async () => ({}),
+    inspect: async () => snapshot,
+    providers: [{
+      id: 'aliyun-esa',
+      detect: () => true,
+      locate: async () => sliderGeometry(),
+    }],
+    drag: async () => { drags += 1 },
+  })
+
+  const result = await manager.solve({ context: {}, page: {} })
+  assert.deepEqual(result, { state: 'clear', provider: '' })
+  assert.equal(drags, 0)
 })
 
 test('slider distance is derived from the live track and handle right edges', () => {
@@ -163,8 +280,9 @@ test('drag trajectories preserve the measured hover, late acceleration, overshoo
   }
   const trajectory = generateDragTrajectory(320, { random })
   assert.ok(trajectory.steps >= 50 && trajectory.steps <= 60)
-  assert.ok(trajectory.travelDurationMilliseconds >= 1_000 && trajectory.travelDurationMilliseconds <= 1_400)
-  assert.ok(trajectory.settleDurationMilliseconds >= 450 && trajectory.settleDurationMilliseconds <= 750)
+  assert.ok(trajectory.durationMilliseconds >= 900 && trajectory.durationMilliseconds <= 1_600)
+  assert.ok(trajectory.travelDurationMilliseconds >= 600)
+  assert.ok(trajectory.settleDurationMilliseconds >= 180)
   assert.ok(trajectory.approachStartX >= 320 * 0.58 && trajectory.approachStartX <= 320 * 0.75)
   assert.ok(trajectory.approachStartY >= -8 && trajectory.approachStartY <= 4)
   assert.ok(trajectory.approachStartHoldMilliseconds >= 900 && trajectory.approachStartHoldMilliseconds <= 1_600)
@@ -186,6 +304,10 @@ test('drag trajectories preserve the measured hover, late acceleration, overshoo
   assert.ok(trajectory.startOffsetY >= 2 && trajectory.startOffsetY <= 7)
   assert.equal(trajectory.points.length, trajectory.steps)
   assert.equal(trajectory.points.reduce((sum, point) => sum + point.delayMilliseconds, 0), trajectory.durationMilliseconds)
+  assert.equal(
+    trajectory.travelDurationMilliseconds + trajectory.settleDurationMilliseconds,
+    trajectory.durationMilliseconds,
+  )
   const trackEndIndex = trajectory.points.findIndex((point) => point.x >= 320)
   assert.ok(trackEndIndex > 35)
   assert.equal(trajectory.points[trackEndIndex].x, 320)
@@ -461,10 +583,41 @@ test('challenge manager succeeds on the second drag, reloads first, and saves st
   assert.equal(fs.readdirSync(directory).filter((name) => name.endsWith('.json')).length, 1)
 })
 
+test('challenge manager does not report solved when session persistence fails', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const events = []
+  let inspectCalls = 0
+  const provider = {
+    id: 'aliyun-esa',
+    detect: () => true,
+    locate: async () => sliderGeometry(),
+  }
+  const manager = new ChallengeManager({
+    enabled: true,
+    providers: [provider],
+    sessionDirectory: directory,
+    navigate: async () => ({}),
+    inspect: async () => inspectCalls++ === 0 ? aliyunSnapshot() : clearSnapshot(),
+    drag: async () => {},
+  })
+  manager.saveSession = async () => { throw new Error('disk full') }
+
+  await assert.rejects(() => manager.solve({
+    context: {},
+    page: {},
+    onState: (event) => events.push(event),
+  }), (error) => error instanceof ChallengeError && error.challengeState === 'failed')
+  assert.equal(events.at(-1).state, 'failed')
+})
+
 test('challenge manager waits for the ESA success navigation before issuing a home request', async (t) => {
   const directory = temporaryDirectory()
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
-  const snapshots = [aliyunSnapshot(), clearSnapshot()]
+  const postDragNormalPage = clearSnapshot('denied by http_custom')
+  postDragNormalPage.frames[0].url = 'https://pay.ldxp.cn/'
+  postDragNormalPage.frames[0].hasGenericSlider = true
+  const snapshots = [aliyunSnapshot(), postDragNormalPage]
   let navigateCalls = 0
   let dragCalls = 0
   let navigationArmed = false
@@ -581,6 +734,32 @@ test('challenge manager reinspects the ESA page when its callback aborts the fal
   assert.equal(result.state, 'solved')
   assert.equal(gotoCalls, 2)
   assert.equal(loadStateCalls, 1)
+})
+
+test('challenge navigation tolerates Firefox and Chromium superseded-navigation errors', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+
+  for (const message of [
+    'page.goto: NS_ERROR_ABORT (0x80004004)',
+    'page.goto: net::ERR_ABORTED at https://pay.ldxp.cn/',
+  ]) {
+    let loadStateCalls = 0
+    const manager = new ChallengeManager({
+      enabled: true,
+      sessionDirectory: directory,
+      inspect: async () => clearSnapshot(),
+    })
+    const result = await manager.solve({
+      context: {},
+      page: {
+        goto: async () => { throw new Error(message) },
+        waitForLoadState: async () => { loadStateCalls += 1 },
+      },
+    })
+    assert.equal(result.state, 'clear')
+    assert.equal(loadStateCalls, 1)
+  }
 })
 
 test('challenge manager observes a closed-page navigation waiter and falls back without an unhandled rejection', async (t) => {
@@ -728,6 +907,7 @@ test('a queued lane can cancel without entering the challenge lock', async (t) =
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
   let releaseFirst
   let navigations = 0
+  const secondStates = []
   const firstGate = new Promise((resolve) => { releaseFirst = resolve })
   const manager = new ChallengeManager({
     enabled: true,
@@ -742,9 +922,15 @@ test('a queued lane can cancel without entering the challenge lock', async (t) =
   const first = manager.solve({ context: {}, page: {} })
   await new Promise((resolve) => setTimeout(resolve, 5))
   const controller = new AbortController()
-  const second = manager.solve({ context: {}, page: {}, signal: controller.signal })
+  const second = manager.solve({
+    context: {},
+    page: {},
+    signal: controller.signal,
+    onState: (event) => secondStates.push(event.state),
+  })
   controller.abort(new Error('lane stopped'))
   await assert.rejects(() => second, /lane stopped/)
+  assert.deepEqual(secondStates, ['queued', 'cancelled'])
   releaseFirst()
   await first
   assert.equal(navigations, 1)
@@ -788,6 +974,44 @@ test('challenge recovery switches to a fallback only after the current context f
     solveCurrent: async () => { throw new ChallengeError('failed', 'primary') },
     switchTo: async () => { throw new ChallengeError('failed', 'fallback') },
   }), (error) => error.restartLane === true)
+})
+
+test('challenge proxy recovery propagates cancellation without touching fallbacks', async () => {
+  const controller = new AbortController()
+  const reason = new Error('job lease lost')
+  let switches = 0
+  await assert.rejects(() => recoverChallengeAcrossProxyPool({
+    poolSize: 3,
+    currentIndex: 0,
+    signal: controller.signal,
+    solveCurrent: async () => {
+      controller.abort(reason)
+      throw reason
+    },
+    switchTo: async () => { switches += 1 },
+  }), (error) => error === reason)
+  assert.equal(switches, 0)
+})
+
+test('operation retry stops when the proxy pool reports a lane restart', async () => {
+  let attempts = 0
+  let recoveries = 0
+  const terminal = new ChallengeError('failed', 'all exits rejected verification')
+  terminal.restartLane = true
+
+  await assert.rejects(() => retryFailedChallengeOperation(
+    async () => {
+      attempts += 1
+      throw new ChallengeError('failed', 'HTML challenge')
+    },
+    async () => {
+      recoveries += 1
+      throw terminal
+    }
+  ), (error) => error === terminal && error.restartLane === true)
+
+  assert.equal(attempts, 1)
+  assert.equal(recoveries, 1)
 })
 
 test('challenge backoff is independent at 15 minutes, 60 minutes, and 6 hours', () => {
@@ -839,6 +1063,48 @@ test('corrupt session state is ignored and removed for automatic rebuilding', (t
   fs.writeFileSync(file, '{broken')
   assert.equal(readStoredSession(directory, providers, 'https://pay.ldxp.cn', null), null)
   assert.equal(fs.existsSync(file), false)
+})
+
+test('corrupt session state remains non-blocking when cleanup cannot remove the file', (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const providers = [{ id: 'aliyun-esa' }]
+  const file = sessionFilePath(directory, providers[0].id, 'https://pay.ldxp.cn', null)
+  fs.writeFileSync(file, '{broken')
+
+  const originalRemove = fs.rmSync
+  fs.rmSync = (target, options) => {
+    if (target === file) {
+      const error = new Error('read-only session directory')
+      error.code = 'EACCES'
+      throw error
+    }
+    return originalRemove(target, options)
+  }
+  try {
+    assert.doesNotThrow(() => readStoredSession(directory, providers, 'https://pay.ldxp.cn', null))
+    assert.equal(fs.existsSync(file), true)
+  } finally {
+    fs.rmSync = originalRemove
+  }
+})
+
+test('structurally invalid cookie and origin state is removed before Playwright restore', (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const providers = [{ id: 'aliyun-esa' }]
+  const file = sessionFilePath(directory, providers[0].id, 'https://pay.ldxp.cn', null)
+  const invalidStates = [
+    { cookies: [{ name: 'esa', value: 'ok', domain: '.ldxp.cn' }], origins: [] },
+    { cookies: [{ name: 'esa', value: 'ok', domain: '.ldxp.cn', path: '/', sameSite: 'invalid' }], origins: [] },
+    { cookies: [], origins: [{ origin: 'not-an-origin', localStorage: [] }] },
+  ]
+
+  for (const state of invalidStates) {
+    fs.writeFileSync(file, JSON.stringify(state))
+    assert.equal(readStoredSession(directory, providers, 'https://pay.ldxp.cn', null), null)
+    assert.equal(fs.existsSync(file), false)
+  }
 })
 
 test('resource blocking is disabled only while challenge assets are needed', () => {

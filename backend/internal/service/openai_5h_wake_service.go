@@ -12,12 +12,14 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	openaipkg "github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 	"github.com/google/uuid"
 )
 
@@ -39,8 +41,12 @@ const (
 	openAI5hWakeCleanupInterval       = 24 * time.Hour
 	openAI5hWakeEventTimeout          = 3 * time.Second
 	openAI5hWakeEventMessageMax       = 2000
+	openAI5hWakeDiagnosticMax         = 600
 	openAI5hWakeMaxItemAttempts       = 3
 	openAI5hWakeResponseBodyMax       = 1 << 20
+	openAI5hWakeConfirmationTimeout   = 8 * time.Second
+	openAI5hWakeConfirmationDelay     = 250 * time.Millisecond
+	openAI5hWakeConfirmationMaxDelay  = 2 * time.Second
 	openAI5hWakeInstructions          = "Reply with OK."
 	openAI5hWakeInput                 = "hi"
 	openAI5hWakeAuditPath             = "/api/v1/admin/accounts/openai-5h-wake/tasks/:id"
@@ -61,6 +67,12 @@ type openAI5hWakeMonitorTimings struct {
 	cancelPollTimeout  time.Duration
 }
 
+type openAI5hWakeConfirmationTimings struct {
+	timeout  time.Duration
+	delay    time.Duration
+	maxDelay time.Duration
+}
+
 var defaultOpenAI5hWakeMonitorTimings = openAI5hWakeMonitorTimings{
 	heartbeatInterval:  openAI5hWakeHeartbeat,
 	cancelPollInterval: openAI5hWakeCancelPoll,
@@ -69,8 +81,16 @@ var defaultOpenAI5hWakeMonitorTimings = openAI5hWakeMonitorTimings{
 	cancelPollTimeout:  3 * time.Second,
 }
 
+var defaultOpenAI5hWakeConfirmationTimings = openAI5hWakeConfirmationTimings{
+	timeout:  openAI5hWakeConfirmationTimeout,
+	delay:    openAI5hWakeConfirmationDelay,
+	maxDelay: openAI5hWakeConfirmationMaxDelay,
+}
+
 var errOpenAI5hWakeSnapshotPersist = errors.New("openai 5h wake snapshot persistence failed")
 var errOpenAI5hWakeIdentityChanged = errOpenAICodexSnapshotIdentityChanged
+var errOpenAI5hWakeNoEntitlement = errors.New("openai 5h wake account has no 5h entitlement")
+var errOpenAI5hWakeRepositoryContract = errors.New("openai 5h wake repository returned a nil task")
 
 type openAI5hWakeQuotaGroup struct {
 	identityHash string
@@ -211,6 +231,18 @@ func (s *OpenAI5hWakeService) CreateTask(ctx context.Context, requestedByUserID 
 	if err != nil {
 		return nil, false, err
 	}
+	// The SQL repository rejects an empty plan before INSERT, but keep this
+	// invariant at the service boundary as well. Implementations used by tests,
+	// migrations, or alternate storage backends may still return a newly-created
+	// zero-item task; such a task can never make progress and must not be
+	// reported as accepted. An already-active task is intentionally allowed so
+	// concurrent callers retain the idempotent "return active task" behavior.
+	if created && len(seeds) == 0 {
+		return nil, false, ErrOpenAI5hWakeNoEligiblePools
+	}
+	if task == nil {
+		return nil, false, errOpenAI5hWakeRepositoryContract
+	}
 	if created {
 		slog.Info("openai_5h_wake_started", "task_id", task.ID, "accounts", task.EligibleAccountCount, "pools", task.TotalItems, "estimated_requests", task.EstimatedRequestCount)
 		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelInfo, "task_created", fmt.Sprintf(
@@ -227,6 +259,9 @@ func (s *OpenAI5hWakeService) GetTask(ctx context.Context, id int64) (*OpenAI5hW
 	if err != nil {
 		return nil, err
 	}
+	if task == nil {
+		return nil, ErrOpenAI5hWakeTaskNotFound
+	}
 	return s.populateRunningItemCount(ctx, task)
 }
 
@@ -239,6 +274,9 @@ func (s *OpenAI5hWakeService) GetLatestTask(ctx context.Context) (*OpenAI5hWakeT
 }
 
 func (s *OpenAI5hWakeService) populateRunningItemCount(ctx context.Context, task *OpenAI5hWakeTask) (*OpenAI5hWakeTask, error) {
+	if task == nil {
+		return nil, ErrOpenAI5hWakeTaskNotFound
+	}
 	count, err := s.repo.CountRunningTaskItems(ctx, task.ID)
 	if err != nil {
 		return nil, err
@@ -259,6 +297,9 @@ func (s *OpenAI5hWakeService) CancelTask(ctx context.Context, taskID int64) (*Op
 	task, requested, err := s.repo.RequestCancel(ctx, taskID, time.Now().UTC())
 	if err != nil {
 		return nil, err
+	}
+	if task == nil {
+		return nil, ErrOpenAI5hWakeTaskNotFound
 	}
 	if !requested {
 		return task, nil
@@ -283,7 +324,7 @@ func (s *OpenAI5hWakeService) signalWorker() {
 }
 
 func (s *OpenAI5hWakeService) buildPlan(ctx context.Context, now time.Time) (*openAI5hWakePlan, error) {
-	accounts, err := s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+	accounts, err := listOpenAI5hWakeAccounts(ctx, s.accountRepo)
 	if err != nil {
 		return nil, err
 	}
@@ -314,6 +355,22 @@ func (s *OpenAI5hWakeService) buildPlan(ctx context.Context, now time.Time) (*op
 	return plan, nil
 }
 
+// openAI5hWakeAllStatusRepository is deliberately optional.  Most account
+// repository consumers rely on ListByPlatform's active-only behavior, while a
+// wake preview must see disabled accounts so its exclusion totals are honest.
+// Keeping this capability out of AccountRepository avoids widening every test
+// double and every alternate repository implementation.
+type openAI5hWakeAllStatusRepository interface {
+	ListByPlatformAllStatuses(context.Context, string) ([]Account, error)
+}
+
+func listOpenAI5hWakeAccounts(ctx context.Context, repository AccountRepository) ([]Account, error) {
+	if allStatuses, ok := repository.(openAI5hWakeAllStatusRepository); ok {
+		return allStatuses.ListByPlatformAllStatuses(ctx, PlatformOpenAI)
+	}
+	return repository.ListByPlatform(ctx, PlatformOpenAI)
+}
+
 func classifyOpenAI5hWakeExclusion(account *Account, now time.Time) string {
 	if account == nil {
 		return "disabled"
@@ -333,6 +390,9 @@ func classifyOpenAI5hWakeExclusion(account *Account, now time.Time) string {
 	if account.Status != StatusActive {
 		return "disabled"
 	}
+	if openAI5hWakeHasKnownNoEntitlement(account) {
+		return "no_5h_entitlement"
+	}
 	if !account.Schedulable {
 		return "unschedulable"
 	}
@@ -349,6 +409,46 @@ func classifyOpenAI5hWakeExclusion(account *Account, now time.Time) string {
 	return ""
 }
 
+func openAI5hWakeHasKnownNoEntitlement(account *Account) bool {
+	if account == nil || !account.IsOpenAIOAuth() {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(account.GetCredential("plan_type"))) {
+	case "free", "abnormal":
+		return true
+	}
+	windowMinutes, observed := openAI5hWakeWindowMinutes(account.Extra)
+	return observed && windowMinutes == 0
+}
+
+func openAI5hWakeWindowMinutes(extra map[string]any) (int64, bool) {
+	if extra == nil {
+		return 0, false
+	}
+	value, exists := extra["codex_5h_window_minutes"]
+	if !exists || value == nil {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), true
+	case int32:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	case float64:
+		return int64(typed), float64(int64(typed)) == typed
+	case json.Number:
+		parsed, err := typed.Int64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
 func incrementOpenAI5hWakeExclusion(excluded *OpenAI5hWakeExclusions, reason string) {
 	switch reason {
 	case "api_key":
@@ -359,6 +459,8 @@ func incrementOpenAI5hWakeExclusion(excluded *OpenAI5hWakeExclusions, reason str
 		excluded.SparkShadow++
 	case "non_global":
 		excluded.NonGlobal++
+	case "no_5h_entitlement":
+		excluded.No5hEntitlement++
 	case "disabled":
 		excluded.Disabled++
 	case "unschedulable":
@@ -446,13 +548,20 @@ func (s *OpenAI5hWakeService) runWorker() {
 	defer cleanupTicker.Stop()
 	s.cleanupTasks()
 	for {
-		now := time.Now().UTC()
+		claimStarted := time.Now()
+		now := claimStarted.UTC()
 		claimCtx, claimCancel := context.WithTimeout(context.Background(), openAI5hWakeClaimTimeout)
 		task, err := s.repo.ClaimTask(claimCtx, s.owner, now, now.Add(openAI5hWakeLeaseDuration))
 		claimCancel()
 		if err != nil {
 			slog.Error("openai_5h_wake_claim_failed", "error", err)
 		} else if task != nil {
+			// ClaimTask signs the lease with database NOW() so host clock skew
+			// cannot steal another worker's lease. The local monitor must therefore
+			// use an elapsed-time deadline from the claim attempt, not compare the
+			// database's absolute timestamp with this process's wall clock. Starting
+			// at claimStarted is conservative by the query round-trip duration.
+			setOpenAI5hWakeLocalLeaseDeadline(task, claimStarted)
 			s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelInfo, "task_claimed", fmt.Sprintf(
 				"processed=%d total=%d", task.ProcessedItems, task.TotalItems,
 			))
@@ -466,6 +575,14 @@ func (s *OpenAI5hWakeService) runWorker() {
 			s.cleanupTasks()
 		}
 	}
+}
+
+func setOpenAI5hWakeLocalLeaseDeadline(task *OpenAI5hWakeTask, claimStarted time.Time) {
+	if task == nil {
+		return
+	}
+	localLeaseDeadline := claimStarted.Add(openAI5hWakeLeaseDuration)
+	task.LeaseExpiresAt = &localLeaseDeadline
 }
 
 func (s *OpenAI5hWakeService) cleanupTasks() {
@@ -485,6 +602,12 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.runningMu.Lock()
+	// Tests and alternate wiring may construct the service as a struct literal
+	// instead of going through NewOpenAI5hWakeService. Keep task cancellation
+	// safe for that valid zero-value-adjacent construction as well.
+	if s.running == nil {
+		s.running = make(map[int64]context.CancelFunc)
+	}
 	s.running[task.ID] = cancel
 	s.runningMu.Unlock()
 	defer func() {
@@ -557,6 +680,9 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 			cancel()
 			s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelWarn, "cancel_observed", "")
 		}
+	}
+	if !cancelRequested && task.TotalItems == 0 {
+		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "empty_task", "task contains no quota-pool items and cannot be reported as successful")
 	}
 
 	var fatalMu sync.Mutex
@@ -671,6 +797,12 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 	finalTask, err := s.repo.FinalizeTask(finalizeCtx, task.ID, s.owner, cancelRequested, time.Now().UTC())
 	if err != nil {
 		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "task_finalize_failed", wakeEventErrorMessage(err))
+		slog.Error("openai_5h_wake_finalize_failed", "task_id", task.ID, "error", err)
+		return
+	}
+	if finalTask == nil {
+		err := errOpenAI5hWakeRepositoryContract
+		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "task_finalize_failed", err.Error())
 		slog.Error("openai_5h_wake_finalize_failed", "task_id", task.ID, "error", err)
 		return
 	}
@@ -878,7 +1010,7 @@ func wakeEventErrorMessage(err error) string {
 	if err == nil {
 		return ""
 	}
-	return truncateWakeEventMessage(err.Error())
+	return truncateWakeEventMessage(logredact.RedactText(err.Error()))
 }
 
 func shortWakeIdentityHash(identityHash string) string {
@@ -929,6 +1061,90 @@ func wakeItemEventMessage(result OpenAI5hWakeCompleteItemParams) string {
 	return strings.Join(parts, " ")
 }
 
+func openAI5hWakeAttemptMessage(accountID int64, candidate, total int, phase string, status int, contentType, errorCode, diagnostic string) string {
+	parts := []string{
+		fmt.Sprintf("account_id=%d", accountID),
+		fmt.Sprintf("candidate=%d/%d", candidate, total),
+		"phase=" + strings.TrimSpace(phase),
+	}
+	if status > 0 {
+		parts = append(parts, fmt.Sprintf("status=%d", status))
+	}
+	if contentType = truncateWakeDiagnostic(logredact.RedactText(contentType)); contentType != "" {
+		parts = append(parts, fmt.Sprintf("content_type=%q", contentType))
+	}
+	if errorCode = strings.TrimSpace(errorCode); errorCode != "" {
+		parts = append(parts, "error_code="+errorCode)
+	}
+	if diagnostic = truncateWakeDiagnostic(logredact.RedactText(diagnostic)); diagnostic != "" {
+		parts = append(parts, fmt.Sprintf("diagnostic=%q", diagnostic))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (s *OpenAI5hWakeService) recordWakeAttemptFailure(
+	taskID, itemID, accountID int64,
+	candidate, total int,
+	eventCode, phase string,
+	status int,
+	contentType, errorCode, diagnostic string,
+) {
+	message := openAI5hWakeAttemptMessage(accountID, candidate, total, phase, status, contentType, errorCode, diagnostic)
+	eventLevel := OpenAI5hWakeEventLevelError
+	if eventCode == "usage_check_failed" {
+		eventLevel = OpenAI5hWakeEventLevelWarn
+	}
+	s.recordTaskEvent(taskID, &itemID, eventLevel, eventCode, message)
+	slog.Warn("openai_5h_wake_account_attempt_failed",
+		"task_id", taskID,
+		"item_id", itemID,
+		"account_id", accountID,
+		"candidate", candidate,
+		"candidate_total", total,
+		"phase", phase,
+		"status", status,
+		"content_type", truncateWakeDiagnostic(logredact.RedactText(contentType)),
+		"error_code", errorCode,
+		"diagnostic", truncateWakeDiagnostic(logredact.RedactText(diagnostic)),
+	)
+}
+
+func (s *OpenAI5hWakeService) recordWakeRequestAccepted(
+	taskID, itemID, accountID int64,
+	candidate, total, status int,
+	contentType string,
+) {
+	message := openAI5hWakeAttemptMessage(accountID, candidate, total, "upstream_request", status, contentType, "", "")
+	s.recordTaskEvent(taskID, &itemID, OpenAI5hWakeEventLevelInfo, "wake_request_accepted", message)
+	slog.Info("openai_5h_wake_request_accepted",
+		"task_id", taskID,
+		"item_id", itemID,
+		"account_id", accountID,
+		"candidate", candidate,
+		"candidate_total", total,
+		"status", status,
+		"content_type", truncateWakeDiagnostic(logredact.RedactText(contentType)),
+	)
+}
+
+func (s *OpenAI5hWakeService) recordWakeRequestSucceeded(
+	taskID, itemID, accountID int64,
+	candidate, total int,
+	resetAt time.Time,
+) {
+	message := openAI5hWakeAttemptMessage(accountID, candidate, total, "window_confirmation", 0, "", "", "")
+	message += " reset_at=" + resetAt.UTC().Format(time.RFC3339)
+	s.recordTaskEvent(taskID, &itemID, OpenAI5hWakeEventLevelInfo, "wake_request_succeeded", message)
+	slog.Info("openai_5h_wake_request_succeeded",
+		"task_id", taskID,
+		"item_id", itemID,
+		"account_id", accountID,
+		"candidate", candidate,
+		"candidate_total", total,
+		"reset_at", resetAt.UTC().Format(time.RFC3339),
+	)
+}
+
 func (s *OpenAI5hWakeService) recordFinalAudit(task *OpenAI5hWakeTask) {
 	if s.auditService == nil || task == nil {
 		return
@@ -959,7 +1175,17 @@ func (s *OpenAI5hWakeService) recordFinalAudit(task *OpenAI5hWakeTask) {
 }
 
 func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWakeTaskItem) OpenAI5hWakeCompleteItemParams {
+	if item == nil {
+		return OpenAI5hWakeCompleteItemParams{
+			Status:    OpenAI5hWakeItemStatusFailed,
+			ErrorCode: "invalid_item",
+		}
+	}
 	result := OpenAI5hWakeCompleteItemParams{ItemID: item.ID, Status: OpenAI5hWakeItemStatusFailed}
+	if s == nil || s.accountRepo == nil {
+		result.ErrorCode = wakeErrorCode(ctx, "account_reload_failed")
+		return result
+	}
 	accounts, err := s.accountRepo.GetByIDs(ctx, item.MemberAccountIDs)
 	if err != nil {
 		result.ErrorCode = wakeErrorCode(ctx, "account_reload_failed")
@@ -996,58 +1222,140 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 		return result
 	}
 
-	wakeRequestSucceeded := false
+	type acceptedWakeRequest struct {
+		accountID int64
+		candidate int
+		total     int
+	}
+	var acceptedRequest *acceptedWakeRequest
+	recordConfirmedRequest := func(resetAt *time.Time) {
+		if acceptedRequest == nil || resetAt == nil {
+			return
+		}
+		s.recordWakeRequestSucceeded(
+			item.TaskID, item.ID, acceptedRequest.accountID,
+			acceptedRequest.candidate, acceptedRequest.total, *resetAt,
+		)
+	}
 	lastErrorCode := "window_unconfirmed"
 	for candidateIndex, account := range candidates {
 		if ctx.Err() != nil {
 			result.ErrorCode = wakeErrorCode(ctx, "cancelled")
 			return result
 		}
+		candidateNumber := candidateIndex + 1
+		recordAttemptFailureCode := func(eventCode, phase string, status int, errorCode, diagnostic string, contentTypes ...string) {
+			contentType := ""
+			if len(contentTypes) > 0 {
+				contentType = contentTypes[0]
+			}
+			s.recordWakeAttemptFailure(
+				item.TaskID, item.ID, account.ID,
+				candidateNumber, len(candidates),
+				eventCode, phase, status, contentType, errorCode, diagnostic,
+			)
+		}
+		recordAttemptFailure := func(phase string, status int, errorCode, diagnostic string, contentTypes ...string) {
+			recordAttemptFailureCode("account_attempt_failed", phase, status, errorCode, diagnostic, contentTypes...)
+		}
 		result.AttemptedAccountIDs = append(result.AttemptedAccountIDs, account.ID)
 		s.recordTaskEvent(item.TaskID, &item.ID, OpenAI5hWakeEventLevelInfo, "account_attempt_started", fmt.Sprintf(
-			"account_id=%d candidate=%d/%d phase=usage_check", account.ID, candidateIndex+1, len(candidates),
+			"account_id=%d candidate=%d/%d phase=usage_check", account.ID, candidateNumber, len(candidates),
 		))
 		attemptCtx, attemptCancel := context.WithTimeout(ctx, openAI5hWakeAccountAttemptTimeout)
 		_, resetAt, queryErr := s.queryAndPersistGlobalUsage(attemptCtx, account)
 		if errors.Is(queryErr, errOpenAI5hWakeIdentityChanged) {
-			attemptCancel()
 			lastErrorCode = "identity_changed"
+			recordAttemptFailure("usage_check", 0, lastErrorCode, wakeEventErrorMessage(queryErr))
+			attemptCancel()
 			continue
 		}
 		if errors.Is(queryErr, errOpenAI5hWakeSnapshotPersist) {
-			attemptCancel()
 			lastErrorCode = "snapshot_persist_failed"
+			recordAttemptFailure("usage_check", 0, lastErrorCode, wakeEventErrorMessage(queryErr))
+			attemptCancel()
 			continue
+		}
+		if errors.Is(queryErr, errOpenAI5hWakeNoEntitlement) {
+			lastErrorCode = "no_5h_entitlement"
+			recordAttemptFailureCode(
+				"no_5h_entitlement", "usage_check", 0, lastErrorCode,
+				"upstream usage response reports no 5h entitlement",
+			)
+			attemptCancel()
+			continue
+		}
+		if queryErr != nil {
+			// A probe failure does not prove that the wake request would be
+			// rejected, so retain the existing fallback behavior and still send
+			// the request. Persist the probe phase explicitly so an operator can
+			// distinguish it from an upstream wake failure.
+			lastErrorCode = "usage_check_failed"
+			recordAttemptFailureCode(
+				"usage_check_failed", "usage_check", 0, lastErrorCode,
+				wakeEventErrorMessage(queryErr),
+			)
 		}
 		if queryErr == nil && resetAt != nil && resetAt.After(time.Now()) {
 			attemptCancel()
 			result.Status = OpenAI5hWakeItemStatusSkippedActive
-			if wakeRequestSucceeded {
+			successID := account.ID
+			if acceptedRequest != nil {
 				result.Status = OpenAI5hWakeItemStatusWoken
+				successID = acceptedRequest.accountID
+				recordConfirmedRequest(resetAt)
 			}
 			result.ResetAt = resetAt
-			successID := account.ID
 			result.SuccessfulAccountID = &successID
 			return result
 		}
 
 		s.recordTaskEvent(item.TaskID, &item.ID, OpenAI5hWakeEventLevelInfo, "wake_request_started", fmt.Sprintf(
-			"account_id=%d candidate=%d/%d", account.ID, candidateIndex+1, len(candidates),
+			"account_id=%d candidate=%d/%d phase=upstream_request", account.ID, candidateNumber, len(candidates),
 		))
 		wakeCtx, wakeCancel := context.WithTimeout(attemptCtx, openAI5hWakeRequestTimeout)
-		wakeResult := s.sendMinimumWakeRequest(wakeCtx, account)
+		wakeResult := s.sendMinimumWakeRequest(wakeCtx, account, item.IdentityHash)
 		wakeCancel()
+		requestAccount := account
+		if wakeResult.requestAccount != nil {
+			requestAccount = wakeResult.requestAccount
+		}
+		wakePhase := strings.TrimSpace(wakeResult.phase)
+		if wakePhase == "" {
+			wakePhase = "upstream_request"
+		}
+		wakeError := strings.TrimSpace(wakeResult.errorCode)
+		if wakeError == "" && (wakeResult.statusCode < http.StatusOK || wakeResult.statusCode >= http.StatusMultipleChoices) {
+			wakeError = wakeHTTPErrorCode(wakeResult.statusCode)
+		}
+		if wakeResult.statusCode >= http.StatusOK && wakeResult.statusCode < http.StatusMultipleChoices {
+			acceptedRequest = &acceptedWakeRequest{accountID: account.ID, candidate: candidateNumber, total: len(candidates)}
+			s.recordWakeRequestAccepted(
+				item.TaskID, item.ID, account.ID,
+				candidateNumber, len(candidates), wakeResult.statusCode, wakeResult.contentType,
+			)
+		}
+		recordRequestFailure := func() {
+			s.recordWakeAttemptFailure(
+				item.TaskID, item.ID, account.ID,
+				candidateNumber, len(candidates),
+				"wake_request_failed", wakePhase, wakeResult.statusCode, wakeResult.contentType, wakeError, wakeResult.diagnostic,
+			)
+		}
 		if wakeResult.err != nil {
 			// A 2xx response can still carry a failed/incomplete SSE stream. The
 			// request may nevertheless have activated an already-shared window, so
 			// perform a fresh usage check before treating it as a hard failure.
 			if wakeResult.statusCode >= http.StatusOK && wakeResult.statusCode < http.StatusMultipleChoices {
-				_, confirmedReset, confirmErr := s.queryAndPersistGlobalUsage(attemptCtx, account)
+				confirmedReset, confirmErr := s.confirmWakeWindow(
+					attemptCtx, item.TaskID, item.ID, requestAccount, candidateNumber, len(candidates),
+				)
 				if confirmErr == nil && confirmedReset != nil && confirmedReset.After(time.Now().UTC()) {
 					// The pre-request probe found no active window and the upstream
 					// accepted this request with a 2xx status. An incomplete stream
 					// does not undo the request side effect, so report this pool as
 					// woken once the follow-up usage check confirms the new window.
+					recordConfirmedRequest(confirmedReset)
 					result.Status = OpenAI5hWakeItemStatusWoken
 					result.ResetAt = confirmedReset
 					successID := account.ID
@@ -1057,107 +1365,130 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 				}
 				if errors.Is(confirmErr, errOpenAI5hWakeIdentityChanged) {
 					lastErrorCode = "identity_changed"
+					recordRequestFailure()
+					recordAttemptFailure("post_usage_check", wakeResult.statusCode, lastErrorCode, wakeEventErrorMessage(confirmErr), wakeResult.contentType)
 					attemptCancel()
 					continue
 				}
 				if errors.Is(confirmErr, errOpenAI5hWakeSnapshotPersist) {
 					lastErrorCode = "snapshot_persist_failed"
+					recordRequestFailure()
+					recordAttemptFailure("post_usage_check", wakeResult.statusCode, lastErrorCode, wakeEventErrorMessage(confirmErr), wakeResult.contentType)
+					attemptCancel()
+					continue
+				}
+				if errors.Is(confirmErr, errOpenAI5hWakeNoEntitlement) {
+					lastErrorCode = "no_5h_entitlement"
+					recordRequestFailure()
+					recordAttemptFailure("post_usage_check", wakeResult.statusCode, lastErrorCode, lastErrorCode, wakeResult.contentType)
 					attemptCancel()
 					continue
 				}
 			}
-			lastErrorCode = wakeResult.errorCode
+			if wakeError == "" {
+				wakeError = wakeErrorCode(attemptCtx, "request_failed")
+			}
+			lastErrorCode = wakeError
+			recordRequestFailure()
+			recordAttemptFailure(wakePhase, wakeResult.statusCode, lastErrorCode, wakeResult.diagnostic, wakeResult.contentType)
 			attemptCancel()
 			continue
 		}
-		if wakeResult.statusCode >= http.StatusOK && wakeResult.statusCode < http.StatusMultipleChoices {
-			wakeRequestSucceeded = true
-		}
 		if wakeResult.statusCode == http.StatusUnauthorized {
 			lastErrorCode = "unauthorized"
+			wakeError = lastErrorCode
+			recordRequestFailure()
+			recordAttemptFailure(wakePhase, wakeResult.statusCode, lastErrorCode, wakeResult.diagnostic, wakeResult.contentType)
 			attemptCancel()
 			continue
 		}
 		if wakeResult.statusCode == http.StatusForbidden {
 			lastErrorCode = "forbidden"
+			wakeError = lastErrorCode
+			recordRequestFailure()
+			recordAttemptFailure(wakePhase, wakeResult.statusCode, lastErrorCode, wakeResult.diagnostic, wakeResult.contentType)
 			attemptCancel()
 			continue
 		}
-		if wakeResult.resetAt != nil && wakeResult.resetAt.After(time.Now()) {
-			if wakeResult.statusCode == http.StatusTooManyRequests {
-				if len(wakeResult.updates) > 0 {
-					if persistErr := s.persistWakeSnapshot(attemptCtx, account, wakeResult.updates); persistErr != nil {
-						if errors.Is(persistErr, errOpenAI5hWakeIdentityChanged) {
-							lastErrorCode = "identity_changed"
-							attemptCancel()
-							continue
-						}
-						lastErrorCode = "snapshot_persist_failed"
-						attemptCancel()
-						continue
-					}
-				}
-				result.Status = OpenAI5hWakeItemStatusSkippedActive
-			} else if wakeResult.statusCode >= 200 && wakeResult.statusCode < 300 {
-				if len(wakeResult.updates) > 0 {
-					if persistErr := s.persistWakeSnapshot(attemptCtx, account, wakeResult.updates); persistErr != nil {
-						if errors.Is(persistErr, errOpenAI5hWakeIdentityChanged) {
-							lastErrorCode = "identity_changed"
-							attemptCancel()
-							continue
-						}
-						lastErrorCode = "snapshot_persist_failed"
-						attemptCancel()
-						continue
-					}
-				}
-				result.Status = OpenAI5hWakeItemStatusWoken
-			} else {
-				lastErrorCode = wakeHTTPErrorCode(wakeResult.statusCode)
-				attemptCancel()
-				continue
-			}
-			result.ResetAt = wakeResult.resetAt
-			successID := account.ID
-			result.SuccessfulAccountID = &successID
-			attemptCancel()
-			return result
-		}
 		if wakeResult.statusCode < 200 || wakeResult.statusCode >= 300 {
+			if wakeResult.statusCode == http.StatusTooManyRequests && len(wakeResult.updates) > 0 {
+				resetAt, persistErr := s.persistWakeSnapshotAndResolve(attemptCtx, requestAccount, wakeResult.updates)
+				if persistErr != nil {
+					lastErrorCode = "snapshot_persist_failed"
+					if errors.Is(persistErr, errOpenAI5hWakeIdentityChanged) {
+						lastErrorCode = "identity_changed"
+					}
+					recordAttemptFailure("snapshot_persist", wakeResult.statusCode, lastErrorCode, wakeEventErrorMessage(persistErr), wakeResult.contentType)
+					attemptCancel()
+					continue
+				}
+				if resetAt != nil && resetAt.After(time.Now().UTC()) {
+					result.Status = OpenAI5hWakeItemStatusSkippedActive
+					result.ResetAt = resetAt
+					successID := account.ID
+					if acceptedRequest != nil {
+						result.Status = OpenAI5hWakeItemStatusWoken
+						successID = acceptedRequest.accountID
+						recordConfirmedRequest(resetAt)
+					}
+					result.SuccessfulAccountID = &successID
+					attemptCancel()
+					return result
+				}
+			}
 			lastErrorCode = wakeHTTPErrorCode(wakeResult.statusCode)
+			wakeError = lastErrorCode
+			recordRequestFailure()
+			recordAttemptFailure(wakePhase, wakeResult.statusCode, lastErrorCode, wakeResult.diagnostic, wakeResult.contentType)
 			attemptCancel()
 			continue
 		}
 		if len(wakeResult.updates) > 0 {
-			if persistErr := s.persistWakeSnapshot(attemptCtx, account, wakeResult.updates); persistErr != nil {
+			resetAt, persistErr := s.persistWakeSnapshotAndResolve(attemptCtx, requestAccount, wakeResult.updates)
+			if persistErr != nil {
+				lastErrorCode = "snapshot_persist_failed"
 				if errors.Is(persistErr, errOpenAI5hWakeIdentityChanged) {
 					lastErrorCode = "identity_changed"
-					attemptCancel()
-					continue
 				}
-				lastErrorCode = "snapshot_persist_failed"
+				recordAttemptFailure("snapshot_persist", wakeResult.statusCode, lastErrorCode, wakeEventErrorMessage(persistErr), wakeResult.contentType)
 				attemptCancel()
 				continue
 			}
+			if resetAt != nil && resetAt.After(time.Now().UTC()) {
+				recordConfirmedRequest(resetAt)
+				result.Status = OpenAI5hWakeItemStatusWoken
+				result.ResetAt = resetAt
+				successID := account.ID
+				result.SuccessfulAccountID = &successID
+				attemptCancel()
+				return result
+			}
 		}
-		_, resetAt, queryErr = s.queryAndPersistGlobalUsage(attemptCtx, account)
+		resetAt, queryErr = s.confirmWakeWindow(
+			attemptCtx, item.TaskID, item.ID, requestAccount, candidateNumber, len(candidates),
+		)
 		if queryErr != nil {
 			lastErrorCode = "post_usage_check_failed"
 			if errors.Is(queryErr, errOpenAI5hWakeIdentityChanged) {
 				lastErrorCode = "identity_changed"
 			} else if errors.Is(queryErr, errOpenAI5hWakeSnapshotPersist) {
 				lastErrorCode = "snapshot_persist_failed"
+			} else if errors.Is(queryErr, errOpenAI5hWakeNoEntitlement) {
+				lastErrorCode = "no_5h_entitlement"
 			}
+			recordAttemptFailure("post_usage_check", wakeResult.statusCode, lastErrorCode, wakeEventErrorMessage(queryErr), wakeResult.contentType)
 			attemptCancel()
 			continue
 		}
 		if resetAt == nil || !resetAt.After(time.Now()) {
 			lastErrorCode = "window_unconfirmed"
+			recordAttemptFailure("post_usage_check", wakeResult.statusCode, lastErrorCode, "wake request returned success but no active 5h window was observed", wakeResult.contentType)
 			attemptCancel()
 			continue
 		}
 		result.Status = OpenAI5hWakeItemStatusWoken
 		result.ResetAt = resetAt
+		recordConfirmedRequest(resetAt)
 		successID := account.ID
 		result.SuccessfulAccountID = &successID
 		attemptCancel()
@@ -1200,6 +1531,12 @@ func (s *OpenAI5hWakeService) queryAndPersistGlobalUsage(ctx context.Context, ac
 	if err != nil {
 		return nil, nil, err
 	}
+	if openAI5hWakeUsageHasNoEntitlement(usage) {
+		// Do not persist a possibly misleading window from a plan that cannot
+		// start the requested 5h bucket. The caller will try another member of
+		// the shared pool and will never send a wake request for this account.
+		return nil, nil, errOpenAI5hWakeNoEntitlement
+	}
 	// FetchedAt is intentionally exposed as Unix seconds for the API, but it is
 	// too coarse to order concurrent probe responses. Use the local receipt time
 	// for the persisted snapshot sequence and reset countdown instead.
@@ -1208,11 +1545,8 @@ func (s *OpenAI5hWakeService) queryAndPersistGlobalUsage(ctx context.Context, ac
 	if len(updates) == 0 {
 		return nil, nil, nil
 	}
-	var resetAt *time.Time
-	if parsed, ok := openAIWakeResetAt(updates); ok {
-		resetAt = &parsed
-	}
-	if err := s.persistWakeSnapshot(ctx, account, updates); err != nil {
+	resetAt, err := s.persistWakeSnapshotAndResolve(ctx, account, updates)
+	if err != nil {
 		// Preserve both the persistence category and a CAS identity conflict so
 		// processItem can safely try another member of the same quota pool.
 		return updates, resetAt, fmt.Errorf("%w: %w", errOpenAI5hWakeSnapshotPersist, err)
@@ -1220,12 +1554,119 @@ func (s *OpenAI5hWakeService) queryAndPersistGlobalUsage(ctx context.Context, ac
 	return updates, resetAt, nil
 }
 
+func openAI5hWakeUsageHasNoEntitlement(usage *OpenAIQuotaUsage) bool {
+	if usage == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(usage.PlanType)) {
+	case "free", "abnormal":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *OpenAI5hWakeService) confirmWakeWindow(
+	ctx context.Context,
+	taskID, itemID int64,
+	account *Account,
+	candidate, total int,
+) (*time.Time, error) {
+	return s.confirmWakeWindowWithTimings(
+		ctx, taskID, itemID, account, candidate, total,
+		defaultOpenAI5hWakeConfirmationTimings,
+	)
+}
+
+func (s *OpenAI5hWakeService) confirmWakeWindowWithTimings(
+	ctx context.Context,
+	taskID, itemID int64,
+	account *Account,
+	candidate, total int,
+	timings openAI5hWakeConfirmationTimings,
+) (*time.Time, error) {
+	if timings.timeout <= 0 {
+		return nil, nil
+	}
+	if timings.delay <= 0 {
+		timings.delay = time.Millisecond
+	}
+	if timings.maxDelay < timings.delay {
+		timings.maxDelay = timings.delay
+	}
+	confirmCtx, cancel := context.WithTimeout(ctx, timings.timeout)
+	defer cancel()
+
+	delay := timings.delay
+	for attempt := 1; ; attempt++ {
+		_, resetAt, err := s.queryAndPersistGlobalUsage(confirmCtx, account)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if confirmCtx.Err() != nil {
+				return nil, nil
+			}
+			return nil, err
+		}
+		if resetAt != nil && resetAt.After(time.Now().UTC()) {
+			return resetAt, nil
+		}
+
+		deadline, ok := confirmCtx.Deadline()
+		if !ok {
+			return nil, nil
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, nil
+		}
+		wait := delay
+		if wait > remaining {
+			wait = remaining
+		}
+		s.recordTaskEvent(taskID, &itemID, OpenAI5hWakeEventLevelInfo, "wake_confirmation_pending", fmt.Sprintf(
+			"account_id=%d candidate=%d/%d confirmation_attempt=%d retry_in_milliseconds=%d",
+			account.ID, candidate, total, attempt, wait.Milliseconds(),
+		))
+
+		timer := time.NewTimer(wait)
+		select {
+		case <-confirmCtx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, nil
+		case <-timer.C:
+		}
+		if delay < timings.maxDelay {
+			delay *= 2
+			if delay > timings.maxDelay {
+				delay = timings.maxDelay
+			}
+		}
+	}
+}
+
 type openAI5hWakeHTTPResult struct {
-	statusCode int
-	updates    map[string]any
-	resetAt    *time.Time
-	errorCode  string
-	err        error
+	statusCode  int
+	contentType string
+	phase       string
+	diagnostic  string
+	updates     map[string]any
+	resetAt     *time.Time
+	// requestAccount is the durable account snapshot paired with the exact
+	// authentication token and request headers sent upstream. Any response
+	// snapshot must use this identity for its repository CAS.
+	requestAccount *Account
+	errorCode      string
+	err            error
 }
 
 func buildOpenAI5hWakePayload(account *Account) ([]byte, error) {
@@ -1251,28 +1692,85 @@ func buildOpenAI5hWakePayload(account *Account) ([]byte, error) {
 	return json.Marshal(payload)
 }
 
-func (s *OpenAI5hWakeService) sendMinimumWakeRequest(ctx context.Context, account *Account) openAI5hWakeHTTPResult {
+func (s *OpenAI5hWakeService) sendMinimumWakeRequest(ctx context.Context, account *Account, expectedIdentityHash ...string) openAI5hWakeHTTPResult {
 	if s.httpUpstream == nil {
-		return openAI5hWakeHTTPResult{errorCode: "upstream_unavailable", err: fmt.Errorf("HTTP upstream unavailable")}
+		return openAI5hWakeHTTPResult{
+			phase:      "setup",
+			errorCode:  "upstream_unavailable",
+			diagnostic: "HTTP upstream unavailable",
+			err:        fmt.Errorf("HTTP upstream unavailable"),
+		}
 	}
-	payload, err := buildOpenAI5hWakePayload(account)
-	if err != nil {
-		return openAI5hWakeHTTPResult{errorCode: "payload_build_failed", err: err}
+	if account == nil {
+		err := fmt.Errorf("account unavailable")
+		return openAI5hWakeHTTPResult{
+			phase:      "setup",
+			errorCode:  "account_unavailable",
+			diagnostic: wakeSafeErrorMessage(err),
+			err:        err,
+		}
 	}
-	for recovered := false; ; {
-		authToken := ""
-		if !account.IsOpenAIAgentIdentity() {
-			if s.tokenProvider == nil {
-				return openAI5hWakeHTTPResult{errorCode: "token_unavailable", err: fmt.Errorf("token provider unavailable")}
-			}
-			authToken, err = s.tokenProvider.GetAccessToken(ctx, account)
-			if err != nil || strings.TrimSpace(authToken) == "" {
-				return openAI5hWakeHTTPResult{errorCode: "token_unavailable", err: fmt.Errorf("access token unavailable")}
+
+	requestAccount := account
+	authToken := ""
+	var err error
+	if !account.IsOpenAIAgentIdentity() {
+		authToken, requestAccount, err = acquireOpenAIAuthenticatedAccountSnapshot(ctx, s.accountRepo, s.tokenProvider, account)
+		if err != nil {
+			return openAI5hWakeHTTPResult{
+				phase:      "token",
+				errorCode:  "token_unavailable",
+				diagnostic: wakeSafeErrorMessage(err),
+				err:        err,
 			}
 		}
+	}
+	if len(expectedIdentityHash) > 0 && strings.TrimSpace(expectedIdentityHash[0]) != "" {
+		expected := strings.TrimSpace(expectedIdentityHash[0])
+		if openAI5hWakeIdentityHash(requestAccount) != expected {
+			err = errOpenAI5hWakeIdentityChanged
+			return openAI5hWakeHTTPResult{
+				phase:          "identity_check",
+				errorCode:      "identity_changed",
+				diagnostic:     wakeSafeErrorMessage(err),
+				requestAccount: snapshotOAuthRefreshAccount(requestAccount),
+				err:            err,
+			}
+		}
+		if reason := classifyOpenAI5hWakeExclusion(requestAccount, time.Now().UTC()); reason != "" {
+			errorCode := "account_ineligible"
+			if reason == "no_5h_entitlement" {
+				errorCode = reason
+			}
+			err = fmt.Errorf("account became ineligible before wake request: %s", reason)
+			return openAI5hWakeHTTPResult{
+				phase:          "eligibility_check",
+				errorCode:      errorCode,
+				diagnostic:     wakeSafeErrorMessage(err),
+				requestAccount: snapshotOAuthRefreshAccount(requestAccount),
+				err:            err,
+			}
+		}
+	}
+
+	payload, err := buildOpenAI5hWakePayload(requestAccount)
+	if err != nil {
+		return openAI5hWakeHTTPResult{
+			phase:      "request_build",
+			errorCode:  "payload_build_failed",
+			diagnostic: wakeSafeErrorMessage(err),
+			err:        err,
+		}
+	}
+	for recovered := false; ; {
 		req, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, chatgptCodexAPIURL, bytes.NewReader(payload))
 		if requestErr != nil {
-			return openAI5hWakeHTTPResult{errorCode: "request_build_failed", err: requestErr}
+			return openAI5hWakeHTTPResult{
+				phase:      "request_build",
+				errorCode:  "request_build_failed",
+				diagnostic: wakeSafeErrorMessage(requestErr),
+				err:        requestErr,
+			}
 		}
 		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 		req.Host = "chatgpt.com"
@@ -1280,15 +1778,20 @@ func (s *OpenAI5hWakeService) sendMinimumWakeRequest(ctx context.Context, accoun
 		req.Header.Set("Accept", "text/event-stream")
 		req.Header.Set("OpenAI-Beta", "responses=experimental")
 		req.Header.Set("Originator", "codex_cli_rs")
-		if customUA := strings.TrimSpace(account.GetOpenAIUserAgent()); customUA != "" {
+		if customUA := strings.TrimSpace(requestAccount.GetOpenAIUserAgent()); customUA != "" {
 			req.Header.Set("User-Agent", customUA)
 		} else {
 			req.Header.Set("User-Agent", codexCLIUserAgent)
 		}
-		if account.IsOpenAIAgentIdentity() {
-			authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityMu, account)
+		if requestAccount.IsOpenAIAgentIdentity() {
+			authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityMu, requestAccount)
 			if authErr != nil {
-				return openAI5hWakeHTTPResult{errorCode: "auth_build_failed", err: authErr}
+				return openAI5hWakeHTTPResult{
+					phase:      "auth_recovery",
+					errorCode:  "auth_build_failed",
+					diagnostic: wakeSafeErrorMessage(authErr),
+					err:        authErr,
+				}
 			}
 			for key, values := range authHeaders {
 				for _, value := range values {
@@ -1298,28 +1801,44 @@ func (s *OpenAI5hWakeService) sendMinimumWakeRequest(ctx context.Context, accoun
 		} else {
 			req.Header.Set("Authorization", "Bearer "+authToken)
 		}
-		setOpenAIChatGPTAccountHeaders(req.Header, account)
+		setOpenAIQuotaAccountHeaders(req.Header, requestAccount)
 		enforceCodexIdentityHeaders(req.Header)
-		account.ApplyHeaderOverrides(req.Header)
+		requestAccount.ApplyHeaderOverrides(req.Header)
 
 		proxyURL := ""
-		if account.ProxyID != nil && account.Proxy != nil {
-			proxyURL = account.Proxy.URL()
+		if requestAccount.ProxyID != nil && requestAccount.Proxy != nil {
+			proxyURL = requestAccount.Proxy.URL()
 		}
 		var resp *http.Response
 		var sendErr error
 		if s.tlsProfiles != nil {
-			resp, sendErr = s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsProfiles.ResolveTLSProfile(account))
+			resp, sendErr = s.httpUpstream.DoWithTLS(req, proxyURL, requestAccount.ID, requestAccount.Concurrency, s.tlsProfiles.ResolveTLSProfile(requestAccount))
 		} else {
-			resp, sendErr = s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, nil)
+			resp, sendErr = s.httpUpstream.DoWithTLS(req, proxyURL, requestAccount.ID, requestAccount.Concurrency, nil)
 		}
 		if sendErr != nil {
-			return openAI5hWakeHTTPResult{errorCode: wakeErrorCode(ctx, "request_failed"), err: sendErr}
+			return openAI5hWakeHTTPResult{
+				phase:      "upstream_request",
+				errorCode:  wakeErrorCode(ctx, "request_failed"),
+				diagnostic: wakeSafeErrorMessage(sendErr),
+				err:        sendErr,
+			}
 		}
 		if resp == nil {
-			return openAI5hWakeHTTPResult{errorCode: "empty_response", err: fmt.Errorf("upstream returned no response")}
+			err = fmt.Errorf("upstream returned no response")
+			return openAI5hWakeHTTPResult{
+				phase:      "upstream_request",
+				errorCode:  "empty_response",
+				diagnostic: wakeSafeErrorMessage(err),
+				err:        err,
+			}
 		}
-		result := openAI5hWakeHTTPResult{statusCode: resp.StatusCode}
+		result := openAI5hWakeHTTPResult{
+			statusCode:     resp.StatusCode,
+			contentType:    strings.TrimSpace(resp.Header.Get("Content-Type")),
+			phase:          "upstream_request",
+			requestAccount: snapshotOAuthRefreshAccount(requestAccount),
+		}
 		if updates, updateErr := extractOpenAICodexProbeUpdates(resp); updateErr == nil {
 			result.updates = updates
 			if resetAt, ok := openAIWakeResetAt(updates); ok {
@@ -1328,30 +1847,43 @@ func (s *OpenAI5hWakeService) sendMinimumWakeRequest(ctx context.Context, accoun
 		}
 		body, bodyErr := readOpenAI5hWakeResponseBody(resp)
 		if bodyErr != nil {
-			return openAI5hWakeHTTPResult{
-				statusCode: result.statusCode,
-				updates:    result.updates,
-				resetAt:    result.resetAt,
-				errorCode:  "response_body_read_failed",
-				err:        bodyErr,
-			}
+			result.phase = "response_body"
+			result.errorCode = "response_body_read_failed"
+			result.diagnostic = wakeSafeErrorMessage(bodyErr)
+			result.err = bodyErr
+			return result
 		}
-		if account.IsOpenAIAgentIdentity() && !recovered && resp.StatusCode >= 400 && result.resetAt == nil {
+		if requestAccount.IsOpenAIAgentIdentity() && !recovered && resp.StatusCode >= 400 && result.resetAt == nil {
 			if isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
 				recovered = true
-				expectedTaskID := account.GetCredential("task_id")
-				if recoverErr := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityMu, account, expectedTaskID); recoverErr != nil {
-					return openAI5hWakeHTTPResult{errorCode: "auth_recovery_failed", err: recoverErr}
+				expectedTaskID := requestAccount.GetCredential("task_id")
+				if recoverErr := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityMu, requestAccount, expectedTaskID); recoverErr != nil {
+					result.phase = "auth_recovery"
+					result.errorCode = "auth_recovery_failed"
+					result.diagnostic = wakeSafeErrorMessage(recoverErr)
+					result.err = recoverErr
+					return result
 				}
 				continue
 			}
 		}
 		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 			if streamErr := validateOpenAI5hWakeResponseBody(body); streamErr != nil {
+				result.phase = "response_stream"
 				result.errorCode = "response_stream_incomplete"
+				result.diagnostic = wakeDiagnosticFromBody(body)
+				if result.diagnostic == "" {
+					result.diagnostic = wakeSafeErrorMessage(streamErr)
+				}
 				result.err = streamErr
 				return result
 			}
+			return result
+		}
+		result.errorCode = wakeHTTPErrorCode(resp.StatusCode)
+		result.diagnostic = wakeDiagnosticFromBody(body)
+		if result.diagnostic == "" {
+			result.diagnostic = http.StatusText(resp.StatusCode)
 		}
 		return result
 	}
@@ -1370,6 +1902,97 @@ func readOpenAI5hWakeResponseBody(resp *http.Response) ([]byte, error) {
 		return nil, fmt.Errorf("response body exceeds %d bytes", openAI5hWakeResponseBodyMax)
 	}
 	return body, nil
+}
+
+func wakeSafeErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	return truncateWakeDiagnostic(logredact.RedactText(err.Error()))
+}
+
+// wakeDiagnosticFromBody extracts only a small, allow-listed set of fields
+// from an upstream JSON/SSE error. The complete response is intentionally
+// never persisted because it can contain credentials, request metadata, or
+// proxy-generated HTML.
+func wakeDiagnosticFromBody(body []byte) string {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, 4)
+	seen := make(map[string]struct{})
+	add := func(label, value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		value = truncateWakeDiagnostic(logredact.RedactText(value))
+		key := label + "=" + value
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		parts = append(parts, key)
+	}
+	var visit func(any, int)
+	visit = func(value any, depth int) {
+		if depth > 4 {
+			return
+		}
+		object, ok := value.(map[string]any)
+		if !ok {
+			return
+		}
+		for _, field := range []struct {
+			key   string
+			label string
+		}{
+			{key: "code", label: "upstream_error_code"},
+			{key: "type", label: "upstream_error_type"},
+			{key: "message", label: "upstream_error_message"},
+			{key: "detail", label: "upstream_error_detail"},
+		} {
+			if raw, exists := object[field.key]; exists {
+				if text, ok := raw.(string); ok {
+					add(field.label, text)
+				}
+			}
+		}
+		for _, key := range []string{"error", "response", "data"} {
+			if nested, exists := object[key]; exists {
+				visit(nested, depth+1)
+			}
+		}
+	}
+
+	var direct any
+	if json.Unmarshal(bytes.TrimSpace(body), &direct) == nil {
+		visit(direct, 0)
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var event any
+		if json.Unmarshal([]byte(payload), &event) == nil {
+			visit(event, 0)
+		}
+	}
+	return truncateWakeDiagnostic(strings.Join(parts, " "))
+}
+
+func truncateWakeDiagnostic(value string) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= openAI5hWakeDiagnosticMax {
+		return value
+	}
+	return string(runes[:openAI5hWakeDiagnosticMax])
 }
 
 func validateOpenAI5hWakeResponseBody(body []byte) error {
@@ -1610,4 +2233,36 @@ func (s *OpenAI5hWakeService) persistWakeSnapshot(ctx context.Context, account *
 		return err
 	}
 	return nil
+}
+
+func (s *OpenAI5hWakeService) persistWakeSnapshotAndResolve(ctx context.Context, account *Account, updates map[string]any) (*time.Time, error) {
+	if err := s.persistWakeSnapshot(ctx, account, updates); err != nil {
+		return nil, err
+	}
+	if s == nil || s.accountRepo == nil || account == nil {
+		return nil, fmt.Errorf("account repository unavailable")
+	}
+
+	current, err := s.accountRepo.GetByID(ctx, account.ID)
+	if err != nil {
+		return nil, fmt.Errorf("verify persisted OpenAI 5h wake snapshot: %w", err)
+	}
+	if current == nil || current.ID != account.ID ||
+		openAI5hWakeIdentityFingerprintFor(current) != openAI5hWakeIdentityFingerprintFor(account) {
+		return nil, errOpenAI5hWakeIdentityChanged
+	}
+
+	incomingObservedAt, incomingHasObservation := openAICodexSnapshotObservedAtFromExtra(updates)
+	storedObservedAt, storedHasObservation := openAICodexSnapshotObservedAtFromExtra(current.Extra)
+	if incomingHasObservation && (!storedHasObservation || storedObservedAt < incomingObservedAt) {
+		return nil, fmt.Errorf("persisted OpenAI 5h wake snapshot is older than the submitted observation")
+	}
+	if !hasTrustedOpenAI5hWakeSnapshot(current) {
+		return nil, nil
+	}
+	resetAt, ok := openAIWakeResetAt(current.Extra)
+	if !ok || !resetAt.After(time.Now().UTC()) {
+		return nil, nil
+	}
+	return &resetAt, nil
 }

@@ -17,6 +17,12 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 )
 
+func expectNoOpenAIParentQuotaIdentityChange(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(`(?s)SELECT id, .* AS identity_changed.*FOR NO KEY UPDATE`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "identity_changed"}))
+}
+
 func TestLockAndMergeAccountProbeExtraUsesCurrentDatabaseSnapshot(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -414,6 +420,7 @@ func TestUpdateCredentialsAtomicallyClearsProbeForOpenAIAPIKeyIdentityChange(t *
 	t.Cleanup(func() { _ = client.Close() })
 
 	mock.ExpectBegin()
+	expectNoOpenAIParentQuotaIdentityChange(mock)
 	mock.ExpectExec(`(?s)UPDATE accounts.*credentials IS DISTINCT FROM \$1::jsonb.*- 'upstream_billing_probe'`).
 		WithArgs(`{"api_key":"sk-new"}`, int64(27)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -438,6 +445,7 @@ func TestUpdateCredentialsInvalidatesWakeMarkerOnlyThroughTypedOpenAIIdentityGua
 
 	marker := regexp.QuoteMeta("- '" + service.OpenAI5hWakeSnapshotIdentityExtraKey + "'")
 	mock.ExpectBegin()
+	expectNoOpenAIParentQuotaIdentityChange(mock)
 	mock.ExpectExec(`(?s)UPDATE accounts.*platform = 'openai'.*type = 'oauth'.*chatgpt_account_id.*organization_id.*chatgpt_user_id.*`+marker).
 		WithArgs(`{"access_token":"token","chatgpt_account_id":"account-after"}`, int64(27)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -469,8 +477,8 @@ func TestUpdateOpenAICodexSnapshotUsesIdentityCAS(t *testing.T) {
 			"chatgpt_account_id": "account-a", "organization_id": "org-a", "chatgpt_user_id": "user-a",
 		},
 	}
-	mock.ExpectExec(`(?s)UPDATE accounts.*quota_dimension = 'global'.*chatgpt_account_id.*organization_id.*chatgpt_user_id`).
-		WithArgs(`{"codex_5h_used_percent":42}`, int64(27), "account-a", "org-a", "user-a").
+	mock.ExpectExec(`(?s)UPDATE accounts.*quota_dimension::text = \$6.*parent_account_id IS NOT DISTINCT FROM \$7.*chatgpt_account_id.*organization_id.*chatgpt_user_id`).
+		WithArgs(`{"codex_5h_used_percent":42}`, int64(27), "account-a", "org-a", "user-a", service.QuotaDimensionGlobal, nil).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	applied, err := repo.UpdateOpenAICodexSnapshot(context.Background(), account.ID, account, nil, map[string]any{
@@ -494,8 +502,8 @@ func TestUpdateOpenAICodexSnapshotReportsIdentityConflict(t *testing.T) {
 			"chatgpt_account_id": "account-a", "organization_id": "org-a", "chatgpt_user_id": "user-a",
 		},
 	}
-	mock.ExpectExec(`(?s)UPDATE accounts.*WHERE id = \$2.*chatgpt_user_id`).
-		WithArgs(`{"codex_5h_used_percent":42}`, int64(28), "account-a", "org-a", "user-a").
+	mock.ExpectExec(`(?s)UPDATE accounts.*WHERE account.id = \$2.*quota_dimension::text = \$6.*chatgpt_user_id`).
+		WithArgs(`{"codex_5h_used_percent":42}`, int64(28), "account-a", "org-a", "user-a", service.QuotaDimensionGlobal, nil).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	applied, err := repo.UpdateOpenAICodexSnapshot(context.Background(), account.ID, account, nil, map[string]any{
@@ -521,8 +529,8 @@ func TestUpdateOpenAICodexSnapshotUsesMonotonicObservationGuard(t *testing.T) {
 	}
 	observedAt := "01775582400123456789"
 	payload := `{"codex_5h_used_percent":42,"codex_usage_observed_at_unix_nano":"01775582400123456789"}`
-	mock.ExpectExec(`(?s)UPDATE accounts.*SET extra = COALESCE.*\|\| \$1::jsonb \|\| CASE.*codex_usage_observed_at_unix_nano.*< \$7.*updated_at = CASE.*WHERE id = \$3`).
-		WithArgs(`{}`, payload, int64(29), "account-a", "org-a", "user-a", observedAt, false).
+	mock.ExpectExec(`(?s)UPDATE accounts.*SET extra = COALESCE.*\|\| \$1::jsonb \|\| CASE.*codex_usage_observed_at_unix_nano.*< \$9.*updated_at = CASE.*WHERE account.id = \$3`).
+		WithArgs(`{}`, payload, int64(29), "account-a", "org-a", "user-a", service.QuotaDimensionGlobal, nil, observedAt, false).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	applied, err := repo.UpdateOpenAICodexSnapshot(context.Background(), account.ID, account, nil, map[string]any{
@@ -550,8 +558,8 @@ func TestUpdateOpenAICodexSnapshotPersistsOrdinaryAndManagedPartsInOneCAS(t *tes
 	observedAt := "01775582400123456789"
 	ordinaryPayload := `{"openai_compact_last_status":200,"openai_compact_supported":true}`
 	managedPayload := `{"codex_5h_used_percent":42,"codex_usage_observed_at_unix_nano":"01775582400123456789"}`
-	mock.ExpectExec(`(?s)UPDATE accounts.*\|\| \$1::jsonb \|\| CASE.*THEN \$2::jsonb.*WHERE id = \$3`).
-		WithArgs(ordinaryPayload, managedPayload, int64(30), "account-a", "org-a", "user-a", observedAt, true).
+	mock.ExpectExec(`(?s)UPDATE accounts.*\|\| \$1::jsonb \|\| CASE.*THEN \$2::jsonb.*WHERE account.id = \$3`).
+		WithArgs(ordinaryPayload, managedPayload, int64(30), "account-a", "org-a", "user-a", service.QuotaDimensionGlobal, nil, observedAt, true).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	applied, err := repo.UpdateOpenAICodexSnapshot(
@@ -581,6 +589,7 @@ func TestBulkUpdateOpenAIIdentityCredentialsClearWakeSnapshotWithoutExtraPatch(t
 
 	marker := regexp.QuoteMeta("- '" + service.OpenAI5hWakeSnapshotIdentityExtraKey + "'")
 	mock.ExpectBegin()
+	expectNoOpenAIParentQuotaIdentityChange(mock)
 	mock.ExpectExec(`(?s)UPDATE accounts SET credentials = .*extra = CASE WHEN platform = 'openai'.*chatgpt_account_id.*`+marker+`.*WHERE id = ANY\(\$2\)`).
 		WithArgs([]byte(`{"chatgpt_account_id":"account-after"}`), `{27}`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -673,6 +682,7 @@ func TestUpdateCredentialsRollsBackWhenOutboxFails(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 
 	mock.ExpectBegin()
+	expectNoOpenAIParentQuotaIdentityChange(mock)
 	mock.ExpectExec(`(?s)UPDATE accounts.*credentials IS DISTINCT FROM \$1::jsonb.*- 'upstream_billing_probe'`).
 		WithArgs(`{"api_key":"sk-new"}`, int64(27)).
 		WillReturnResult(sqlmock.NewResult(0, 1))

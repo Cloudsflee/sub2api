@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -63,7 +64,9 @@ func TestPublicAccountImportShopsSubmitDeduplicatesAndPersists(t *testing.T) {
 	data, err := os.ReadFile(storePath)
 	require.NoError(t, err)
 	require.True(t, json.Valid(data))
-	require.Equal(t, os.FileMode(0o600), requireFileMode(t, storePath))
+	if runtime.GOOS != "windows" {
+		require.Equal(t, os.FileMode(0o600), requireFileMode(t, storePath))
+	}
 }
 
 func TestLoadPublicAccountImportShopsDefaultsMissingAndUnknownTrustLevels(t *testing.T) {

@@ -3,7 +3,32 @@ package service
 import (
 	"context"
 	"net/http"
+	"strings"
 )
+
+// openAIQuotaAccountID returns the workspace identifier accepted by ChatGPT's
+// quota and Codex endpoints. Older imported OAuth rows persisted the same poid
+// only as organization_id, so request paths that intentionally support those
+// rows must use this resolver consistently.
+func openAIQuotaAccountID(account *Account) string {
+	if account == nil || !account.IsOpenAIOAuth() {
+		return ""
+	}
+	if accountID := strings.TrimSpace(account.GetCredential("chatgpt_account_id")); accountID != "" {
+		return accountID
+	}
+	return strings.TrimSpace(account.GetCredential("organization_id"))
+}
+
+func setOpenAIQuotaAccountHeaders(headers http.Header, account *Account) {
+	setOpenAIChatGPTAccountHeaders(headers, account)
+	if headers == nil || headers.Get("chatgpt-account-id") != "" {
+		return
+	}
+	if accountID := openAIQuotaAccountID(account); accountID != "" {
+		headers.Set("chatgpt-account-id", accountID)
+	}
+}
 
 func setOpenAIChatGPTAccountHeaders(headers http.Header, account *Account) {
 	if headers == nil || account == nil || !account.IsOpenAIOAuth() {

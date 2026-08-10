@@ -107,7 +107,13 @@ export default {
           final_cancel_check_failed: 'Final cancellation check failed',
           item_started: 'Quota pool processing started',
           account_attempt_started: 'Account attempt started',
+          account_attempt_failed: 'Account attempt failed',
+          usage_check_failed: 'Usage check failed',
           wake_request_started: 'Wake request started',
+          wake_request_failed: 'Wake request failed',
+          wake_request_accepted: 'Wake request accepted upstream',
+          wake_request_succeeded: '5h window confirmed active',
+          wake_confirmation_pending: 'Waiting for the 5h window to become active',
           item_woken: 'Quota pool window woken',
           item_skipped_active: 'Quota pool window already active',
           item_failed: 'Quota pool processing failed',
@@ -116,6 +122,7 @@ export default {
           item_complete_failed: 'Task item result persistence failed',
           item_recovery_failed: 'Task item recovery failed',
           items_retry_exhausted: 'Task item retry limit reached',
+          empty_task: 'Task contains no executable quota pools',
           heartbeat_failed: 'Task heartbeat failed',
           lease_lost: 'Task execution lease lost',
           task_processing_failed: 'Task processing interrupted',
@@ -127,6 +134,7 @@ export default {
           non_oauth: 'Non-OAuth account',
           spark_shadow: 'Spark shadow account',
           non_global: 'Non-global quota dimension',
+          no_5h_entitlement: 'No 5h quota entitlement',
           disabled: 'Disabled account',
           unschedulable: 'Not schedulable',
           expired: 'Expired account',
@@ -1517,7 +1525,9 @@ export default {
       linkCopied: 'Link Copied',
       needsReauth: 'Re-auth Required',
       rateLimited: 'Rate Limited',
-      usageError: 'Fetch Error'
+      usageError: 'Fetch Error',
+      usageRefreshFailed: 'Failed to refresh usage',
+      usageRefreshFailedStale: 'Refresh failed; showing the last successful data'
     },
 
     // Scheduled Tests

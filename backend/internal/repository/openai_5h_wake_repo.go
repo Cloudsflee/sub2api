@@ -143,6 +143,16 @@ func isWakeUniqueViolation(err error) bool {
 }
 
 func (r *openAI5hWakeRepository) CreateOrGetActive(ctx context.Context, params service.OpenAI5hWakeCreateParams) (*service.OpenAI5hWakeTask, bool, error) {
+	active, err := r.getActiveTask(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if active != nil {
+		return active, false, nil
+	}
+	if len(params.Items) == 0 {
+		return nil, false, service.ErrOpenAI5hWakeNoEligiblePools
+	}
 	for attempt := 0; attempt < 2; attempt++ {
 		task, err := r.createTask(ctx, params)
 		if err == nil {
@@ -313,12 +323,13 @@ VALUES ($1, $2, $3, $4, $5, NOW())`,
 func (r *openAI5hWakeRepository) ClaimTask(ctx context.Context, owner string, now, leaseUntil time.Time) (*service.OpenAI5hWakeTask, error) {
 	row := r.db.QueryRowContext(ctx, `
 UPDATE openai_5h_wake_tasks
-SET status = 'running', lease_owner = $1, lease_expires_at = $3, heartbeat_at = $2,
-    started_at = COALESCE(started_at, $2), updated_at = $2
+SET status = 'running', lease_owner = $1,
+    lease_expires_at = NOW() + ($3::timestamptz - $2::timestamptz),
+    heartbeat_at = NOW(), started_at = COALESCE(started_at, NOW()), updated_at = NOW()
 WHERE id = (
     SELECT id FROM openai_5h_wake_tasks
     WHERE status = 'pending'
-       OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < $2))
+       OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < NOW()))
     ORDER BY id ASC
     LIMIT 1
     FOR UPDATE SKIP LOCKED
@@ -337,7 +348,9 @@ RETURNING id, status, eligible_account_count, active_window_count, estimated_req
 func (r *openAI5hWakeRepository) HeartbeatTask(ctx context.Context, taskID int64, owner string, now, leaseUntil time.Time) (bool, error) {
 	result, err := r.db.ExecContext(ctx, `
 UPDATE openai_5h_wake_tasks
-SET heartbeat_at = $3, lease_expires_at = $4, updated_at = $3
+SET heartbeat_at = NOW(),
+    lease_expires_at = NOW() + ($4::timestamptz - $3::timestamptz),
+    updated_at = NOW()
 WHERE id = $1 AND status = 'running' AND lease_owner = $2
   AND lease_expires_at > NOW()`, taskID, owner, now, leaseUntil)
 	if err != nil {
@@ -372,7 +385,9 @@ FOR UPDATE`, taskID, owner).Scan(&cancelRequested)
 	}
 	if _, err = tx.ExecContext(ctx, `
 UPDATE openai_5h_wake_task_items
-SET status = 'pending', updated_at = NOW()
+SET status = 'pending', attempted_account_ids = '[]'::jsonb,
+    successful_account_id = NULL, error_code = NULL, reset_at = NULL,
+    finished_at = NULL, updated_at = NOW()
 WHERE task_id = $1 AND status = 'running'`, taskID); err != nil {
 		return 0, err
 	}
@@ -450,6 +465,9 @@ WITH owned_task AS MATERIALIZED (
 )
 UPDATE openai_5h_wake_task_items
 SET status = 'running', attempt_count = attempt_count + 1,
+    attempted_account_ids = '[]'::jsonb,
+    successful_account_id = NULL, error_code = NULL, reset_at = NULL,
+    finished_at = NULL,
     started_at = COALESCE(started_at, NOW()), updated_at = NOW()
 WHERE id = (SELECT id FROM next_item)
 RETURNING id, task_id, identity_hash, member_account_ids, attempted_account_ids,
@@ -558,8 +576,8 @@ func (r *openAI5hWakeRepository) FinalizeTask(ctx context.Context, taskID int64,
 SELECT id, cancel_requested_at IS NOT NULL
 FROM openai_5h_wake_tasks
 WHERE id = $1 AND status = 'running' AND lease_owner = $2
-  AND lease_expires_at > $3
-FOR UPDATE`, taskID, owner, now).Scan(&lockedTaskID, &cancelAlreadyRequested)
+  AND lease_expires_at > NOW()
+FOR UPDATE`, taskID, owner).Scan(&lockedTaskID, &cancelAlreadyRequested)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("wake task %d lease is no longer owned", taskID)
 	}
@@ -576,22 +594,24 @@ FOR UPDATE`, taskID, owner, now).Scan(&lockedTaskID, &cancelAlreadyRequested)
 		if err := tx.QueryRowContext(ctx, `
 WITH cancelled AS (
     UPDATE openai_5h_wake_task_items
-    SET status = 'cancelled', error_code = NULL, finished_at = $2, updated_at = $2
+    SET status = 'cancelled', attempted_account_ids = '[]'::jsonb,
+        successful_account_id = NULL, error_code = NULL, reset_at = NULL,
+        finished_at = NOW(), updated_at = NOW()
     WHERE task_id = $1 AND status IN ('pending', 'running')
     RETURNING id
 )
-SELECT COUNT(*) FROM cancelled`, taskID, now).Scan(&cancelledItems); err != nil {
+SELECT COUNT(*) FROM cancelled`, taskID).Scan(&cancelledItems); err != nil {
 			return nil, err
 		}
 		result, err := tx.ExecContext(ctx, `
 UPDATE openai_5h_wake_tasks
 SET status = 'cancelled',
-    processed_items = processed_items + $4,
-    cancelled_count = cancelled_count + $4,
+    processed_items = processed_items + $3,
+    cancelled_count = cancelled_count + $3,
     lease_owner = NULL, lease_expires_at = NULL,
-    finished_at = $3, updated_at = $3
+    finished_at = NOW(), updated_at = NOW()
 WHERE id = $1 AND status = 'running' AND lease_owner = $2
-  AND lease_expires_at > $3`, taskID, owner, now, cancelledItems)
+  AND lease_expires_at > NOW()`, taskID, owner, cancelledItems)
 		if err != nil {
 			return nil, err
 		}
@@ -605,15 +625,16 @@ WHERE id = $1 AND status = 'running' AND lease_owner = $2
 		result, err := tx.ExecContext(ctx, `
 UPDATE openai_5h_wake_tasks
 SET status = CASE
-        WHEN failed_count = 0 THEN 'succeeded'
+		WHEN total_items = 0 THEN 'failed'
+		WHEN failed_count = 0 THEN 'succeeded'
         WHEN woken_count + skipped_active_count > 0 THEN 'partial_succeeded'
         ELSE 'failed'
     END,
     lease_owner = NULL, lease_expires_at = NULL,
-    finished_at = $3, updated_at = $3
+    finished_at = NOW(), updated_at = NOW()
 WHERE id = $1 AND status = 'running' AND lease_owner = $2
-  AND lease_expires_at > $3
-  AND processed_items >= total_items`, taskID, owner, now)
+  AND lease_expires_at > NOW()
+  AND processed_items >= total_items`, taskID, owner)
 		if err != nil {
 			return nil, err
 		}

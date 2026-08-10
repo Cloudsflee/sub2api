@@ -11,6 +11,7 @@ const {
   ShopSyncError,
   TokenBucket,
   browserFingerprintSeed,
+  browserProfileProcessInfo,
   browserProcessIDForProfile,
   browserResourceCounts,
   camoufoxFirefoxUserPrefs,
@@ -27,6 +28,7 @@ const {
   parseShopHTTPResponse,
   parseSyncConcurrency,
   pressureBackoffMilliseconds,
+  pressureRecoveryMode,
   proxyLanesForConcurrency,
   proxyPoolsForConcurrency,
   quoteResult,
@@ -36,6 +38,7 @@ const {
   shopUnavailableMessage,
   simulatedTokenBucketDuration,
   takeRequestTokens,
+  waitForPromiseOrAbort,
   waitWithStatusRefresh,
   withPressureRecovery,
   workerStatusIsHealthy,
@@ -127,6 +130,54 @@ test('parseShopHTTPResponse separates verification pages from HTTP 429/502/520 p
     && error.challengeResponse.responseError === 'denied by http_custom'
     && error.challengeResponse.text.includes('captcha-element')
   ))
+
+  for (const status of [429, 502, 520]) {
+    assert.throws(() => parseShopHTTPResponse({
+      status,
+      contentType: 'text/html',
+      responseError: 'denied by http_custom',
+      text: '<div id="captcha-element">Please slide to verify</div>',
+    }), (error) => (
+      error instanceof ShopSyncError
+        && error.kind === 'verification'
+        && !isPressureError(error)
+    ))
+  }
+
+  assert.throws(() => parseShopHTTPResponse({
+    status: 500,
+    contentType: 'text/html',
+    text: '<html><title>Internal Server Error</title><body>upstream failed</body></html>',
+  }), (error) => (
+    error instanceof ShopSyncError
+      && error.kind === 'network'
+      && isPressureError(error)
+  ))
+  assert.throws(() => parseShopHTTPResponse({
+    status: 404,
+    contentType: 'text/html',
+    text: '<html><title>Not Found</title><body>missing route</body></html>',
+  }), (error) => (
+    error instanceof ShopSyncError
+      && error.kind === 'unknown'
+      && !isPressureError(error)
+  ))
+})
+
+test('parseShopHTTPResponse turns a browser body timeout into pressure without restarting the lane', () => {
+  assert.throws(() => parseShopHTTPResponse({
+    browserTimeout: true,
+    requestPath: '/shopApi/Shop/goodsList',
+    timeoutPhase: 'response_body',
+    timeoutMilliseconds: 20_000,
+  }), (error) => (
+    error.kind === 'network'
+      && error.path === '/shopApi/Shop/goodsList'
+      && error.timeoutPhase === 'response_body'
+      && error.browserTimeout === true
+      && !error.restartLane
+      && isPressureError(error)
+  ))
 })
 
 test('shopRequestError classifies browser transport failures as pressure errors', () => {
@@ -146,6 +197,26 @@ test('shopRequestError classifies browser transport failures as pressure errors'
   const applicationError = shopRequestError('/shopApi/Shop/goodsList', new Error('execution context was destroyed'))
   assert.equal(applicationError.kind, 'unknown')
   assert.equal(isPressureError(applicationError), false)
+})
+
+test('waitForPromiseOrAbort consumes a late rejection when the signal is already aborted', async () => {
+  const controller = new AbortController()
+  controller.abort(new Error('lane stopped'))
+  let rejectUnderlying
+  const underlying = new Promise((resolve, reject) => {
+    rejectUnderlying = reject
+  })
+  const unhandled = []
+  const onUnhandled = (reason) => unhandled.push(reason)
+  process.on('unhandledRejection', onUnhandled)
+  try {
+    await assert.rejects(waitForPromiseOrAbort(underlying, controller.signal), /lane stopped/)
+    rejectUnderlying(new Error('navigation finished after cancellation'))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(unhandled, [])
+  } finally {
+    process.off('unhandledRejection', onUnhandled)
+  }
 })
 
 test('shopRequestError restarts only the lane when its browser context closes', () => {
@@ -302,6 +373,12 @@ test('pressure backoff uses one, five, and fifteen minute tiers with bounded jit
   assert.equal(pressureBackoffMilliseconds(1, () => 1), 66_000)
 })
 
+test('pressure recovery reloads once before switching to a lane-local fallback', () => {
+  assert.equal(pressureRecoveryMode(1, 2), 'reload_current_exit')
+  assert.equal(pressureRecoveryMode(2, 2), 'switch_fallback')
+  assert.equal(pressureRecoveryMode(10, 1), 'reload_current_exit')
+})
+
 test('pressure recovery retries the active operation without discarding completed shop work', async () => {
   const waits = []
   const backoffs = []
@@ -325,10 +402,34 @@ test('pressure recovery retries the active operation without discarding complete
 
   assert.equal(result, 'verified quote')
   assert.equal(attempts, 3)
-  assert.equal(state.failureCount, 2)
+  assert.equal(state.failureCount, 0)
   assert.deepEqual(waits, [60_000, 300_000])
   assert.deepEqual(backoffs, [1, 2])
   assert.deepEqual(recoveries, [1, 2])
+})
+
+test('pressure recovery counts only consecutive failures across shop API calls', async () => {
+  const state = { failureCount: 0 }
+  const recoveries = []
+
+  for (let request = 0; request < 2; request += 1) {
+    let attempts = 0
+    await withPressureRecovery(async () => {
+      attempts += 1
+      if (attempts === 1) throw new ShopSyncError('network', `transient-${request}`)
+      return 'ok'
+    }, {
+      state,
+      deadlineAt: 30 * 60_000,
+      now: () => 0,
+      random: () => 0.5,
+      sleep: async () => {},
+      recover: async ({ failureCount }) => recoveries.push(failureCount),
+    })
+  }
+
+  assert.deepEqual(recoveries, [1, 1])
+  assert.equal(state.failureCount, 0)
 })
 
 test('pressure recovery stops before a backoff would exceed the shop deadline', async () => {
@@ -341,7 +442,13 @@ test('pressure recovery stops before a backoff would exceed the shop deadline', 
       random: () => 0.5,
       sleep: async () => { slept = true },
     }
-  ), /before its deadline/)
+  ), (error) => {
+    assert.match(error.message, /before its deadline/)
+    assert.equal(error.kind, 'network')
+    assert.equal(error.pressureDeadlineExceeded, true)
+    assert.equal(error.pressureFailureCount, 1)
+    return true
+  })
   assert.equal(slept, false)
 })
 
@@ -437,6 +544,8 @@ test('browserProcessIDForProfile resolves the browser owning a persistent profil
   assert.equal(browserProcessIDForProfile(profileDirectory, directory), 314)
   assert.equal(browserProcessIDForProfile(path.join(directory, 'other-profile'), directory), 0)
   assert.equal(browserProcessIDForProfile('', directory), 0)
+  assert.deepEqual(browserProfileProcessInfo(profileDirectory, directory), { available: true, pid: 314 })
+  assert.deepEqual(browserProfileProcessInfo(profileDirectory, path.join(directory, 'missing-proc')), { available: false, pid: 0 })
 })
 
 test('proxyLanesForConcurrency rejects unsafe concurrency fallback to one exit IP', () => {

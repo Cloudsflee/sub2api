@@ -32,13 +32,19 @@ function throwIfAborted(signal) {
 }
 
 function waitForPromiseOrAbort(promise, signal) {
-  if (!signal) return Promise.resolve(promise)
-  if (signal.aborted) return Promise.reject(abortReason(signal))
+  const settledPromise = Promise.resolve(promise)
+  if (!signal) return settledPromise
+  if (signal.aborted) {
+    // A navigation or drag can reject after a lane has been cancelled. Attach
+    // a sink before returning the abort error to avoid an unhandled rejection.
+    settledPromise.catch(() => {})
+    return Promise.reject(abortReason(signal))
+  }
 
   return new Promise((resolve, reject) => {
     const onAbort = () => reject(abortReason(signal))
     signal.addEventListener('abort', onAbort, { once: true })
-    Promise.resolve(promise).then(
+    settledPromise.then(
       (value) => {
         signal.removeEventListener('abort', onAbort)
         resolve(value)
@@ -148,16 +154,34 @@ function challengeTextDetected(title, text) {
     || /(?:拖动|拖拽|滑动|滑块).{0,30}(?:验证|最右|右边|尽头)/i.test(normalizedText)
 }
 
-function challengeSnapshotDetected(snapshot) {
-  if (!snapshot || typeof snapshot !== 'object') return false
-  if (isHTTPCustomDenial(snapshot.responseError)) return true
-  return (snapshot.frames || []).some((frame) => (
-    frame?.hasCaptchaDOM
+function challengeFrameEvidenceDetected(frame) {
+  return frame?.hasCaptchaDOM
     || frame?.hasAliyunDOM
     || frame?.hasAliyunScript
     || isHTTPCustomDenial(frame?.text)
     || challengeTextDetected(frame?.title, frame?.text)
-  ))
+}
+
+function challengeEvidenceDetected(snapshot) {
+  return (snapshot?.frames || []).some((frame) => challengeFrameEvidenceDetected(frame))
+}
+
+// The response delivering an initial/reloaded challenge is authoritative.
+// After a successful drag, however, ESA can leave http_custom on the callback
+// navigation even though the resulting document is already the normal shop.
+function trustedHTTPCustomResponseEvidence(snapshot) {
+  return isHTTPCustomDenial(snapshot?.responseError)
+    && snapshot?.responseContext !== 'post-drag-submission'
+}
+
+function challengePageEvidenceDetected(snapshot) {
+  return challengeEvidenceDetected(snapshot) || trustedHTTPCustomResponseEvidence(snapshot)
+}
+
+function challengeSnapshotDetected(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return false
+  if (isHTTPCustomDenial(snapshot.responseError)) return true
+  return challengeEvidenceDetected(snapshot)
 }
 
 function challengeCleared(snapshot) {
@@ -165,6 +189,12 @@ function challengeCleared(snapshot) {
   return !(snapshot.frames || []).some((frame) => (
     frame?.hasCaptchaDOM
     || frame?.hasAliyunDOM
+    // A generic provider is selected only after the page has already been
+    // classified as a verification page. Keep its visible slider in the
+    // uncleared set as well; otherwise a drag that merely removes the copy
+    // can be reported as solved while the actual control is still present.
+    || frame?.hasGenericSlider
+    || isHTTPCustomDenial(frame?.text)
     || challengeTextDetected(frame?.title, frame?.text)
   ))
 }
@@ -179,18 +209,44 @@ function challengeContentCleared(snapshot) {
   if (!snapshot || typeof snapshot !== 'object') return false
   const frames = Array.isArray(snapshot.frames) ? snapshot.frames : []
   if (!frames.some((frame) => /^https?:\/\//i.test(String(frame?.url || '')))) return false
+  const ignoreGenericSlider = snapshot.responseContext === 'post-drag-submission'
   return !frames.some((frame) => (
     frame?.hasCaptchaDOM
     || frame?.hasAliyunDOM
+    || (!ignoreGenericSlider && frame?.hasGenericSlider)
+    || isHTTPCustomDenial(frame?.text)
     || challengeTextDetected(frame?.title, frame?.text)
   ))
 }
 
 function aliyunSnapshotDetected(snapshot) {
-  if (isHTTPCustomDenial(snapshot?.responseError)) return true
-  return (snapshot?.frames || []).some((frame) => (
+  const frames = Array.isArray(snapshot?.frames) ? snapshot.frames : []
+  const hasAliyunEvidence = frames.some((frame) => (
     frame?.hasAliyunDOM || frame?.hasAliyunScript || isHTTPCustomDenial(frame?.text)
   ))
+  if (hasAliyunEvidence) return true
+  if (isHTTPCustomDenial(snapshot?.responseError)) {
+    // Keep header-only ESA detection for the shell that has not painted its
+    // slider yet, but do not let that stale header claim an unrelated visible
+    // slider on an otherwise normal shop page.
+    return !frames.some((frame) => frame?.hasGenericSlider)
+  }
+  return false
+}
+
+function genericSlideSnapshotDetected(snapshot) {
+  if (!snapshot?.isChallenge) return false
+  const frames = Array.isArray(snapshot.frames) ? snapshot.frames : []
+  // DOM evidence can live in a parent frame while the control is rendered in
+  // a child H5 iframe. A fresh http_custom response is also authoritative, but
+  // the same header is deliberately ignored on the post-drag callback page.
+  const hasVerificationEvidence = challengePageEvidenceDetected(snapshot)
+  return hasVerificationEvidence && frames.some((frame) => frame?.hasGenericSlider)
+}
+
+function withChallengeResponseContext(snapshot, responseContext) {
+  if (!snapshot || typeof snapshot !== 'object') return snapshot
+  return { ...snapshot, responseContext }
 }
 
 function selectChallengeProvider(snapshot, providers = defaultChallengeProviders()) {
@@ -225,25 +281,35 @@ async function collectChallengeSnapshot(page, response) {
           .map((script) => `${script.src || ''}\n${script.id || ''}\n${script.textContent || ''}`)
           .join('\n')
           .slice(0, 100_000)
-        const hasAliyunDOM = Boolean(document.querySelector([
+        const visible = (element) => {
+          if (!element || element.closest?.('[hidden],[aria-hidden="true"]')) return false
+          const style = getComputedStyle(element)
+          if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false
+          const rect = element.getBoundingClientRect()
+          return rect.width > 0 && rect.height > 0
+        }
+        const hasVisible = (selectors) => Array.from(document.querySelectorAll(selectors)).some(visible)
+        const aliyunSelectors = [
           '#aliyunCaptcha-sliding-slider',
           '#aliyunCaptcha-sliding-wrapper',
           '#captcha-element',
           '[id*="aliyunCaptcha"]',
           '[class*="aliyunCaptcha"]',
           '[class*="aliyun-captcha"]',
-        ].join(',')))
-        const hasCaptchaDOM = hasAliyunDOM || Boolean(document.querySelector([
+        ].join(',')
+        const captchaSelectors = [
           '[id*="captcha" i]',
           '[class*="captcha" i]',
           '[data-captcha]',
-        ].join(',')))
-        const hasGenericSlider = Boolean(document.querySelector([
+        ].join(',')
+        const hasAliyunDOM = hasVisible(aliyunSelectors)
+        const hasCaptchaDOM = hasAliyunDOM || hasVisible(captchaSelectors)
+        const hasGenericSlider = hasVisible([
           '[class*="slide" i]',
           '[class*="slider" i]',
           '[class*="drag" i]',
           '[aria-valuemax]',
-        ].join(',')))
+        ].join(','))
         return {
           url: location.href,
           title: document.title,
@@ -357,14 +423,42 @@ function generateDragTrajectory(distance, options = {}) {
     : boundedRandomInteger(50, 60, random)
   const settleSteps = Math.min(8, Math.max(5, Math.round(steps * 0.11)))
   const travelSteps = steps - settleSteps
-  const travelDurationMilliseconds = Number.isFinite(options.travelDurationMilliseconds)
-    ? Math.max(900, Math.min(1_600, Math.round(options.travelDurationMilliseconds)))
-    : Number.isFinite(options.durationMilliseconds)
-      ? Math.max(900, Math.min(1_600, Math.round(options.durationMilliseconds)))
-      : boundedRandomInteger(1_000, 1_400, random)
-  const settleDurationMilliseconds = Number.isFinite(options.settleDurationMilliseconds)
-    ? Math.max(300, Math.min(900, Math.round(options.settleDurationMilliseconds)))
-    : boundedRandomInteger(450, 750, random)
+  // Bound the pressed portion as one budget. Keeping travel and end-correction
+  // independent previously produced 1.45-2.15s gestures, outside the
+  // recovery contract's 900-1600ms trajectory range.
+  const hasExplicitTravel = Number.isFinite(options.travelDurationMilliseconds)
+  const hasExplicitSettle = Number.isFinite(options.settleDurationMilliseconds)
+  const hasExplicitDuration = Number.isFinite(options.durationMilliseconds)
+  let durationMilliseconds
+  let travelDurationMilliseconds
+  let settleDurationMilliseconds
+  if (hasExplicitDuration) {
+    durationMilliseconds = Math.max(900, Math.min(1_600, Math.round(options.durationMilliseconds)))
+    settleDurationMilliseconds = hasExplicitSettle
+      ? Math.max(180, Math.min(600, Math.round(options.settleDurationMilliseconds)))
+      : boundedRandomInteger(220, Math.min(400, durationMilliseconds - 600), random)
+    settleDurationMilliseconds = Math.min(settleDurationMilliseconds, durationMilliseconds - 600)
+    travelDurationMilliseconds = durationMilliseconds - settleDurationMilliseconds
+  } else if (hasExplicitTravel || hasExplicitSettle) {
+    travelDurationMilliseconds = hasExplicitTravel
+      ? Math.max(600, Math.min(1_400, Math.round(options.travelDurationMilliseconds)))
+      : 1_000
+    settleDurationMilliseconds = hasExplicitSettle
+      ? Math.max(180, Math.min(600, Math.round(options.settleDurationMilliseconds)))
+      : 300
+    durationMilliseconds = Math.max(900, Math.min(1_600, travelDurationMilliseconds + settleDurationMilliseconds))
+    const scale = durationMilliseconds / (travelDurationMilliseconds + settleDurationMilliseconds)
+    travelDurationMilliseconds = Math.max(600, Math.round(travelDurationMilliseconds * scale))
+    settleDurationMilliseconds = durationMilliseconds - travelDurationMilliseconds
+    if (settleDurationMilliseconds < 180) {
+      settleDurationMilliseconds = 180
+      travelDurationMilliseconds = durationMilliseconds - settleDurationMilliseconds
+    }
+  } else {
+    durationMilliseconds = boundedRandomInteger(1_200, 1_600, random)
+    settleDurationMilliseconds = boundedRandomInteger(220, Math.min(400, durationMilliseconds - 600), random)
+    travelDurationMilliseconds = durationMilliseconds - settleDurationMilliseconds
+  }
   const hoverMilliseconds = Number.isFinite(options.hoverMilliseconds)
     ? Math.max(0, Math.min(4_000, Math.round(options.hoverMilliseconds)))
     : boundedRandomInteger(800, 1_400, random)
@@ -458,7 +552,7 @@ function generateDragTrajectory(distance, options = {}) {
 
   return {
     steps,
-    durationMilliseconds: travelDurationMilliseconds + settleDurationMilliseconds,
+    durationMilliseconds,
     travelDurationMilliseconds,
     settleDurationMilliseconds,
     approachStartX,
@@ -479,8 +573,8 @@ function sliderMarkerToken() {
   return crypto.randomBytes(8).toString('hex')
 }
 
-async function markSliderCandidate(frame, providerID, token) {
-  return frame.evaluate(({ providerID, token }) => {
+async function markSliderCandidate(frame, providerID, token, options = {}) {
+  return frame.evaluate(({ providerID, token, allowPageEvidence }) => {
     const visible = (element) => {
       const style = getComputedStyle(element)
       const box = element.getBoundingClientRect()
@@ -489,6 +583,9 @@ async function markSliderCandidate(frame, providerID, token) {
     }
     const descriptor = (element) => `${element.id || ''} ${element.className || ''} ${element.getAttribute('role') || ''}`.toLowerCase()
     const all = Array.from(document.querySelectorAll('*')).filter(visible)
+    const bodyText = String(document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, 2_000)
+    const frameDescriptor = `${location.href} ${document.title} ${bodyText}`.toLowerCase()
+    const frameHasVerificationEvidence = /(?:captcha|aliyun|alicloud|alibabacloud|verify|verification|challenge|security check|人机|验证|滑块|拖动|拖拽|最右|尽头)/i.test(frameDescriptor)
     const challengeRoots = all.filter((element) => /captcha|aliyun|verify|slide|slider|drag/.test(descriptor(element)))
     const trackCandidates = new Set(challengeRoots)
     for (const root of challengeRoots) {
@@ -523,6 +620,10 @@ async function markSliderCandidate(frame, providerID, token) {
         if (distance < 60 || distance > trackBox.width) continue
         const aliyunScope = /aliyun|captcha/.test(`${trackName} ${handleName}`)
           || Boolean(track.closest('#captcha-element,[id*="captcha" i],[class*="captcha" i]'))
+          || frameHasVerificationEvidence
+          || allowPageEvidence
+        if (providerID === 'aliyun-esa' && !aliyunScope) continue
+        if (providerID === 'generic-slide-to-end' && !frameHasVerificationEvidence && !allowPageEvidence) continue
         let score = 0
         if (aliyunScope) score += 100
         if (providerID === 'aliyun-esa' && !aliyunScope) score -= 40
@@ -538,7 +639,7 @@ async function markSliderCandidate(frame, providerID, token) {
     best.track.setAttribute('data-sub2api-challenge-track', token)
     best.handle.setAttribute('data-sub2api-challenge-handle', token)
     return true
-  }, { providerID, token })
+    }, { providerID, token, allowPageEvidence: Boolean(options.allowPageEvidence) })
 }
 
 async function locateSlider(page, providerID, options = {}) {
@@ -554,7 +655,9 @@ async function locateSlider(page, providerID, options = {}) {
     for (const frame of page.frames()) {
       const token = sliderMarkerToken()
       try {
-        if (!await markSliderCandidate(frame, providerID, token)) continue
+        if (!await markSliderCandidate(frame, providerID, token, {
+          allowPageEvidence: options.allowPageEvidence,
+        })) continue
         const track = frame.locator(`[data-sub2api-challenge-track="${token}"]`).first()
         const handle = frame.locator(`[data-sub2api-challenge-handle="${token}"]`).first()
         const [trackBox, handleBox] = await Promise.all([track.boundingBox(), handle.boundingBox()])
@@ -898,8 +1001,7 @@ function defaultChallengeProviders() {
     },
     {
       id: 'generic-slide-to-end',
-      detect: (snapshot) => snapshot.isChallenge
-        && (snapshot.frames || []).some((frame) => frame?.hasGenericSlider),
+      detect: genericSlideSnapshotDetected,
       locate: (page, options) => locateSlider(page, 'generic-slide-to-end', options),
     },
   ]
@@ -927,12 +1029,31 @@ function sessionFilePath(sessionDirectory, providerID, origin, proxy) {
 function validStorageState(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || !Array.isArray(value.cookies) || !Array.isArray(value.origins)) return false
-  const validCookie = (cookie) => cookie && typeof cookie === 'object' && !Array.isArray(cookie)
-    && typeof cookie.name === 'string' && cookie.name.length > 0
-    && typeof cookie.value === 'string'
-    && (typeof cookie.url === 'string' || typeof cookie.domain === 'string')
+  const validCookieURL = (value) => {
+    if (typeof value !== 'string' || value.length === 0) return false
+    try {
+      return ['http:', 'https:'].includes(new URL(value).protocol)
+    } catch {
+      return false
+    }
+  }
+  const validCookie = (cookie) => {
+    if (!cookie || typeof cookie !== 'object' || Array.isArray(cookie)
+      || typeof cookie.name !== 'string' || cookie.name.length === 0
+      || typeof cookie.value !== 'string') return false
+    const hasURL = validCookieURL(cookie.url)
+    const hasDomainAndPath = typeof cookie.domain === 'string' && cookie.domain.length > 0
+      && typeof cookie.path === 'string' && cookie.path.startsWith('/')
+    if (!hasURL && !hasDomainAndPath) return false
+    if (cookie.expires !== undefined && !Number.isFinite(cookie.expires)) return false
+    if (cookie.httpOnly !== undefined && typeof cookie.httpOnly !== 'boolean') return false
+    if (cookie.secure !== undefined && typeof cookie.secure !== 'boolean') return false
+    if (cookie.sameSite !== undefined && !['Strict', 'Lax', 'None'].includes(cookie.sameSite)) return false
+    if (cookie.partitionKey !== undefined && typeof cookie.partitionKey !== 'string') return false
+    return true
+  }
   const validOrigin = (entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
-    && typeof entry.origin === 'string'
+    && validCookieURL(entry.origin)
     && Array.isArray(entry.localStorage)
     && entry.localStorage.every((item) => item && typeof item === 'object'
       && typeof item.name === 'string' && typeof item.value === 'string')
@@ -991,7 +1112,15 @@ function readStoredSession(sessionDirectory, providers, origin, proxy) {
       fs.chmodSync(file, 0o600)
       return { provider: provider.id, storageState }
     } catch {
-      fs.rmSync(file, { force: true })
+      // A corrupt session must never keep a lane in a restart loop.  Cleanup
+      // is best effort; the next load will still ignore the same file and a
+      // later successful solve can replace it atomically.
+      try {
+        fs.rmSync(file, { force: true })
+      } catch {
+        // The session directory may be temporarily read-only.  Treat the
+        // state as absent and let the caller rebuild it in memory.
+      }
     }
   }
   return null
@@ -1017,6 +1146,10 @@ function writeStoredSession(sessionDirectory, providerID, origin, proxy, storage
   return destination
 }
 
+function isExpectedNavigationAbort(error) {
+  return /\b(?:NS_BINDING_ABORTED|NS_ERROR_ABORT|ERR_ABORTED)\b/i.test(String(error?.message || ''))
+}
+
 async function navigateHome(page, origin, timeoutMilliseconds) {
   try {
     return await page.goto(`${origin}/`, {
@@ -1024,7 +1157,7 @@ async function navigateHome(page, origin, timeoutMilliseconds) {
       timeout: timeoutMilliseconds,
     })
   } catch (error) {
-    if (error?.name !== 'TimeoutError' && !/NS_BINDING_ABORTED/i.test(String(error?.message || ''))) throw error
+    if (error?.name !== 'TimeoutError' && !isExpectedNavigationAbort(error)) throw error
     if (error?.name !== 'TimeoutError' && typeof page.waitForLoadState === 'function') {
       await page.waitForLoadState('domcontentloaded', {
         timeout: Math.min(5_000, timeoutMilliseconds),
@@ -1038,7 +1171,7 @@ async function reloadChallenge(page, timeoutMilliseconds) {
   try {
     return await page.reload({ waitUntil: 'domcontentloaded', timeout: timeoutMilliseconds })
   } catch (error) {
-    if (error?.name !== 'TimeoutError' && !/NS_BINDING_ABORTED/i.test(String(error?.message || ''))) throw error
+    if (error?.name !== 'TimeoutError' && !isExpectedNavigationAbort(error)) throw error
     if (error?.name !== 'TimeoutError' && typeof page.waitForLoadState === 'function') {
       await page.waitForLoadState('domcontentloaded', {
         timeout: Math.min(5_000, timeoutMilliseconds),
@@ -1148,7 +1281,14 @@ class ChallengeManager {
         queueSignal
       )
     } catch (error) {
-      if (options.signal?.aborted || this.stopSignal?.aborted) throw abortReason(options.signal?.aborted ? options.signal : this.stopSignal)
+      if (options.signal?.aborted || this.stopSignal?.aborted) {
+        // A lane can be cancelled while waiting for the shared challenge lock.
+        // Publish a terminal state even though solveLocked never started; an
+        // otherwise harmless lease loss would leave the lane displayed as
+        // permanently queued until the next challenge attempt.
+        report({ state: 'cancelled' })
+        throw abortReason(options.signal?.aborted ? options.signal : this.stopSignal)
+      }
       const finalError = timeoutController?.signal.aborted ? timeoutError : error
       if (finalError instanceof ChallengeError) {
         report({ state: finalError.challengeState })
@@ -1173,7 +1313,10 @@ class ChallengeManager {
 
     try {
       let response = await this.operation(this.navigate(page, this.navigationTimeoutMilliseconds, signal), signal)
-      let snapshot = await this.operation(this.inspect(page, response), signal)
+      let snapshot = withChallengeResponseContext(
+        await this.operation(this.inspect(page, response), signal),
+        'initial-navigation'
+      )
       // ESA's loader script can remain on an otherwise normal page after a
       // successful verification. Treat the page as clear when the challenge
       // DOM/copy is gone; a stale http_custom header on the navigation is
@@ -1194,7 +1337,10 @@ class ChallengeManager {
         throwIfAborted(signal)
         if (attempt > 0) {
           response = await this.operation(this.reload(page, this.navigationTimeoutMilliseconds, signal), signal)
-          snapshot = await this.operation(this.inspect(page, response), signal)
+          snapshot = withChallengeResponseContext(
+            await this.operation(this.inspect(page, response), signal),
+            'reload-navigation'
+          )
           if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
             await this.persistSolvedSession(context, provider.id, proxy)
             const solvedAt = new Date(this.now()).toISOString()
@@ -1207,6 +1353,7 @@ class ChallengeManager {
         let geometry = await this.operation(provider.locate(page, {
           signal,
           deadlineAt: this.now() + Math.min(45_000, this.timeoutMilliseconds),
+          allowPageEvidence: challengePageEvidenceDetected(snapshot),
         }), signal)
         // A valid ESA page can briefly expose only the verification shell
         // while its SDK replaces the shell with the slider. Refresh once on
@@ -1214,7 +1361,10 @@ class ChallengeManager {
         // an unsupported challenge and parked for the six-hour backoff.
         if (!geometry && attempt === 0) {
           response = await this.operation(this.reload(page, this.navigationTimeoutMilliseconds, signal), signal)
-          snapshot = await this.operation(this.inspect(page, response), signal)
+          snapshot = withChallengeResponseContext(
+            await this.operation(this.inspect(page, response), signal),
+            'reload-navigation'
+          )
           if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
             await this.persistSolvedSession(context, provider.id, proxy)
             const solvedAt = new Date(this.now()).toISOString()
@@ -1225,6 +1375,7 @@ class ChallengeManager {
           geometry = await this.operation(provider.locate(page, {
             signal,
             deadlineAt: this.now() + Math.min(45_000, this.timeoutMilliseconds),
+            allowPageEvidence: challengePageEvidenceDetected(snapshot),
           }), signal)
         }
         if (!geometry) {
@@ -1258,10 +1409,14 @@ class ChallengeManager {
         response = submissionNavigation
           ? await this.operation(submissionNavigation, signal)
           : null
+        const responseContext = response ? 'post-drag-submission' : 'post-drag-fallback'
         if (!response) {
           response = await this.operation(this.navigate(page, this.navigationTimeoutMilliseconds, signal), signal)
         }
-        snapshot = await this.operation(this.inspect(page, response), signal)
+        snapshot = withChallengeResponseContext(
+          await this.operation(this.inspect(page, response), signal),
+          responseContext
+        )
         if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
           await this.persistSolvedSession(context, provider.id, proxy)
           const solvedAt = new Date(this.now()).toISOString()
@@ -1277,9 +1432,14 @@ class ChallengeManager {
 
   async persistSolvedSession(context, providerID, proxy) {
     try {
-      await this.saveSession(context, providerID, proxy)
+      return await this.saveSession(context, providerID, proxy)
     } catch (error) {
       this.logger.error?.(`${new Date().toISOString()} failed to save verification session: ${String(error?.message || error)}`)
+      throw new ChallengeError(
+        'failed',
+        `verification succeeded but its session could not be saved: ${String(error?.message || error)}`,
+        { cause: error }
+      )
     }
   }
 }
@@ -1287,23 +1447,28 @@ class ChallengeManager {
 async function recoverChallengeAcrossProxyPool(options = {}) {
   const poolSize = Number(options.poolSize) || 0
   const currentIndex = Number(options.currentIndex) || 0
+  const signal = options.signal
   if (poolSize < 1 || typeof options.solveCurrent !== 'function' || typeof options.switchTo !== 'function') {
     throw new Error('challenge proxy recovery requires a pool, current solver, and switch callback')
   }
+  throwIfAborted(signal)
   let lastError
   try {
     await options.solveCurrent()
     return currentIndex
   } catch (error) {
+    throwIfAborted(signal)
     lastError = error
   }
 
   for (let offset = 1; offset < poolSize; offset += 1) {
+    throwIfAborted(signal)
     const proxyIndex = (currentIndex + offset) % poolSize
     try {
       await options.switchTo(proxyIndex)
       return proxyIndex
     } catch (error) {
+      throwIfAborted(signal)
       lastError = error
     }
   }
@@ -1355,6 +1520,8 @@ module.exports = {
   challengeCleared,
   challengeSnapshotDetected,
   challengeTextDetected,
+  challengePageEvidenceDetected,
+  genericSlideSnapshotDetected,
   collectChallengeSnapshot,
   computeDragDistance,
   defaultChallengeProviders,
@@ -1362,6 +1529,7 @@ module.exports = {
   dragSliderNative,
   generateDragTrajectory,
   isChallengeError,
+  isExpectedNavigationAbort,
   isHTTPCustomDenial,
   readStoredSession,
   recoverChallengeAcrossProxyPool,

@@ -160,8 +160,8 @@ func TestPersistOpenAICodexSnapshotForAccountKeepsShadowPath(t *testing.T) {
 	})
 	require.NoError(t, err)
 	casCalls, updateExtraCalls := repo.counts()
-	require.Zero(t, casCalls)
-	require.Equal(t, 1, updateExtraCalls)
+	require.Equal(t, 1, casCalls)
+	require.Zero(t, updateExtraCalls)
 }
 
 func TestOpenAIGatewayCodexSnapshotCapturesIdentityBeforeAsyncWrite(t *testing.T) {

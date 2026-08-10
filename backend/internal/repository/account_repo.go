@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -93,6 +94,12 @@ var openAIWakeManagedExtraKeys = []string{
 	"codex_7d_window_minutes",
 	"codex_7d_reset_at",
 	service.OpenAI5hWakeSnapshotIdentityExtraKey,
+}
+
+var openAIQuotaIdentityCredentialKeys = []string{
+	"chatgpt_account_id",
+	"organization_id",
+	"chatgpt_user_id",
 }
 
 func subtractOpenAIWakeManagedExtra(expression string) string {
@@ -478,7 +485,7 @@ func (r *accountRepository) updateAccount(
 		}
 	}
 
-	updated, err := r.updateLockedAccount(
+	updated, openAIQuotaIdentityChanged, err := r.updateLockedAccount(
 		ctx,
 		client,
 		account,
@@ -488,6 +495,19 @@ func (r *accountRepository) updateAccount(
 	)
 	if err != nil {
 		return translatePersistenceError(err, service.ErrAccountNotFound, nil)
+	}
+	var invalidatedShadowIDs []int64
+	if openAIQuotaIdentityChanged {
+		invalidatedShadowIDs, err = invalidateOpenAISparkShadowSnapshots(ctx, client, []int64{account.ID})
+		if err != nil {
+			return err
+		}
+		if len(invalidatedShadowIDs) > 0 {
+			payload := map[string]any{"account_ids": invalidatedShadowIDs}
+			if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, payload); err != nil {
+				return err
+			}
+		}
 	}
 	if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &account.ID, nil, buildSchedulerGroupPayload(account.GroupIDs)); err != nil {
 		return err
@@ -502,7 +522,8 @@ func (r *accountRepository) updateAccount(
 	// 普通账号编辑（如 model_mapping / credentials）也需要立即刷新单账号快照，
 	// 否则网关在 outbox worker 延迟或异常时仍可能读到旧配置。
 	if contextTx == nil {
-		r.syncSchedulerAccountSnapshot(baseCtx, account.ID)
+		syncIDs := append([]int64{account.ID}, invalidatedShadowIDs...)
+		r.syncSchedulerAccountSnapshots(baseCtx, syncIDs)
 	}
 	return nil
 }
@@ -514,10 +535,18 @@ func (r *accountRepository) updateLockedAccount(
 	explicitProbeEnabled *bool,
 	explicitRateSyncEnabled *bool,
 	explicitRateMultiplier *float64,
-) (*dbent.Account, error) {
-	extra, err := lockAndMergeAccountProbeExtra(ctx, client, account, explicitProbeEnabled, explicitRateSyncEnabled)
+) (*dbent.Account, bool, error) {
+	openAIQuotaIdentityChanged := false
+	extra, err := lockAndMergeAccountProbeExtraWithIdentity(
+		ctx,
+		client,
+		account,
+		explicitProbeEnabled,
+		explicitRateSyncEnabled,
+		&openAIQuotaIdentityChanged,
+	)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	account.Extra = extra
 
@@ -601,7 +630,8 @@ func (r *accountRepository) updateLockedAccount(
 	builder.SetQuotaDimension(dbaccount.QuotaDimension(account.QuotaDimensionOrDefault()))
 	builder.SetNillableParentAccountID(account.ParentAccountID)
 
-	return builder.Save(ctx)
+	updated, err := builder.Save(ctx)
+	return updated, openAIQuotaIdentityChanged, err
 }
 
 func lockAndMergeAccountProbeExtra(
@@ -610,6 +640,24 @@ func lockAndMergeAccountProbeExtra(
 	account *service.Account,
 	explicitProbeEnabled *bool,
 	explicitRateSyncEnabled *bool,
+) (map[string]any, error) {
+	return lockAndMergeAccountProbeExtraWithIdentity(
+		ctx,
+		client,
+		account,
+		explicitProbeEnabled,
+		explicitRateSyncEnabled,
+		nil,
+	)
+}
+
+func lockAndMergeAccountProbeExtraWithIdentity(
+	ctx context.Context,
+	client *dbent.Client,
+	account *service.Account,
+	explicitProbeEnabled *bool,
+	explicitRateSyncEnabled *bool,
+	openAIQuotaIdentityChanged *bool,
 ) (map[string]any, error) {
 	credentials, err := json.Marshal(normalizeJSONMap(account.Credentials))
 	if err != nil {
@@ -715,6 +763,9 @@ func lockAndMergeAccountProbeExtra(
 		account.Type == service.AccountTypeOAuth &&
 		account.QuotaDimensionOrDefault() == service.QuotaDimensionGlobal &&
 		!account.IsShadow()
+	if openAIQuotaIdentityChanged != nil {
+		*openAIQuotaIdentityChanged = (currentWakeScope || newWakeScope) && !wakeIdentityUnchanged
+	}
 	if currentWakeScope || newWakeScope {
 		for _, key := range openAIWakeManagedExtraKeys {
 			delete(extra, key)
@@ -831,6 +882,124 @@ func decodeAccountExtraJSON(raw []byte) (any, bool, error) {
 	return value, true, nil
 }
 
+// lockOpenAIParentQuotaIdentityChanges locks every selected global OpenAI
+// parent and returns only those whose typed quota identity would change. A
+// replacement is used by UpdateCredentials; bulk updates merge their payload.
+func lockOpenAIParentQuotaIdentityChanges(
+	ctx context.Context,
+	exec sqlExecutor,
+	ids []int64,
+	credentials map[string]any,
+	merge bool,
+) ([]int64, error) {
+	if exec == nil || len(ids) == 0 {
+		return nil, nil
+	}
+
+	keys := openAIQuotaIdentityCredentialKeys
+	if merge {
+		keys = make([]string, 0, len(openAIQuotaIdentityCredentialKeys))
+		for _, key := range openAIQuotaIdentityCredentialKeys {
+			if _, ok := credentials[key]; ok {
+				keys = append(keys, key)
+			}
+		}
+		if len(keys) == 0 {
+			return nil, nil
+		}
+	}
+
+	payload, err := json.Marshal(normalizeJSONMap(credentials))
+	if err != nil {
+		return nil, err
+	}
+	newCredentials := "$2::jsonb"
+	if merge {
+		newCredentials = "(COALESCE(credentials, '{}'::jsonb) || $2::jsonb)"
+	}
+	identityChanges := make([]string, 0, len(keys))
+	for _, key := range keys {
+		identityChanges = append(identityChanges,
+			"btrim(COALESCE(credentials ->> '"+key+"', '')) IS DISTINCT FROM "+
+				"btrim(COALESCE("+newCredentials+" ->> '"+key+"', ''))")
+	}
+
+	rows, err := exec.QueryContext(ctx, `
+		SELECT id, (`+joinClauses(identityChanges, " OR ")+`) AS identity_changed
+		FROM accounts
+		WHERE id = ANY($1)
+		  AND deleted_at IS NULL
+		  AND platform = 'openai'
+		  AND type = 'oauth'
+		  AND quota_dimension = 'global'
+		  AND parent_account_id IS NULL
+		ORDER BY id
+		FOR NO KEY UPDATE
+	`, pq.Array(ids), string(payload))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	changedIDs := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		var changed bool
+		if err := rows.Scan(&id, &changed); err != nil {
+			return nil, err
+		}
+		if changed {
+			changedIDs = append(changedIDs, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return changedIDs, nil
+}
+
+// invalidateOpenAISparkShadowSnapshots removes quota observations produced by
+// a parent's previous identity. It intentionally preserves operator-owned
+// fields and only updates shadows that currently contain managed snapshot keys.
+func invalidateOpenAISparkShadowSnapshots(
+	ctx context.Context,
+	exec sqlExecutor,
+	parentIDs []int64,
+) ([]int64, error) {
+	if exec == nil || len(parentIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := exec.QueryContext(ctx, `
+		UPDATE accounts
+		SET extra = `+subtractOpenAIWakeManagedExtra("COALESCE(extra, '{}'::jsonb)")+`,
+			updated_at = NOW()
+		WHERE parent_account_id = ANY($1)
+		  AND deleted_at IS NULL
+		  AND platform = 'openai'
+		  AND type = 'oauth'
+		  AND quota_dimension = 'spark'
+		  AND COALESCE(extra, '{}'::jsonb) ?| $2::text[]
+		RETURNING id
+	`, pq.Array(parentIDs), pq.Array(openAIWakeManagedExtraKeys))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	shadowIDs := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		shadowIDs = append(shadowIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return shadowIDs, nil
+}
+
 func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, credentials map[string]any) error {
 	payload, err := json.Marshal(normalizeJSONMap(credentials))
 	if err != nil {
@@ -853,6 +1022,16 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 			ctx = dbent.NewTxContext(ctx, tx)
 			client = tx.Client()
 		}
+	}
+	changedParentIDs, err := lockOpenAIParentQuotaIdentityChanges(
+		ctx,
+		client,
+		[]int64{id},
+		credentials,
+		false,
+	)
+	if err != nil {
+		return err
 	}
 	result, err := client.ExecContext(ctx, `
 		UPDATE accounts
@@ -881,11 +1060,13 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 				-- identity field invalidates it so the new account is queried once.
 				WHEN platform = 'openai'
 					AND type = 'oauth'
+					AND quota_dimension = 'global'
+					AND parent_account_id IS NULL
 					AND credentials IS DISTINCT FROM $1::jsonb
 					AND (
-						credentials ->> 'chatgpt_account_id' IS DISTINCT FROM $1::jsonb ->> 'chatgpt_account_id'
-						OR credentials ->> 'organization_id' IS DISTINCT FROM $1::jsonb ->> 'organization_id'
-						OR credentials ->> 'chatgpt_user_id' IS DISTINCT FROM $1::jsonb ->> 'chatgpt_user_id'
+						btrim(COALESCE(credentials ->> 'chatgpt_account_id', '')) IS DISTINCT FROM btrim(COALESCE($1::jsonb ->> 'chatgpt_account_id', ''))
+						OR btrim(COALESCE(credentials ->> 'organization_id', '')) IS DISTINCT FROM btrim(COALESCE($1::jsonb ->> 'organization_id', ''))
+						OR btrim(COALESCE(credentials ->> 'chatgpt_user_id', '')) IS DISTINCT FROM btrim(COALESCE($1::jsonb ->> 'chatgpt_user_id', ''))
 					)
 				THEN `+subtractOpenAIWakeManagedExtra("COALESCE(extra, '{}'::jsonb)")+`
 				-- 上游倍率探测已放宽到全部 API-key 平台：凭证变化即视为探测
@@ -908,8 +1089,18 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 	if affected == 0 {
 		return service.ErrAccountNotFound
 	}
+	invalidatedShadowIDs, err := invalidateOpenAISparkShadowSnapshots(ctx, client, changedParentIDs)
+	if err != nil {
+		return err
+	}
 	if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
 		return err
+	}
+	if len(invalidatedShadowIDs) > 0 {
+		payload := map[string]any{"account_ids": invalidatedShadowIDs}
+		if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, payload); err != nil {
+			return err
+		}
 	}
 	if tx != nil {
 		if err := tx.Commit(); err != nil {
@@ -917,7 +1108,8 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 		}
 	}
 	if contextTx == nil {
-		r.syncSchedulerAccountSnapshot(baseCtx, id)
+		syncIDs := append([]int64{id}, invalidatedShadowIDs...)
+		r.syncSchedulerAccountSnapshots(baseCtx, syncIDs)
 	}
 	return nil
 }
@@ -1352,6 +1544,22 @@ func (r *accountRepository) ListByPlatform(ctx context.Context, platform string)
 			dbaccount.PlatformEQ(platform),
 			dbaccount.StatusEQ(service.StatusActive),
 		).
+		Order(dbent.Asc(dbaccount.FieldPriority)).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.accountsToService(ctx, accounts)
+}
+
+// ListByPlatformAllStatuses returns every account for a platform, including
+// disabled accounts.  The general ListByPlatform contract intentionally stays
+// active-only because it is used by schedulers and other callers that should
+// never hydrate disabled accounts.  Administrative preview flows can opt into
+// this narrower method when they need accurate exclusion counts.
+func (r *accountRepository) ListByPlatformAllStatuses(ctx context.Context, platform string) ([]service.Account, error) {
+	accounts, err := r.client.Account.Query().
+		Where(dbaccount.PlatformEQ(platform)).
 		Order(dbent.Asc(dbaccount.FieldPriority)).
 		All(ctx)
 	if err != nil {
@@ -2517,7 +2725,8 @@ func (r *accountRepository) ClearModelRateLimits(ctx context.Context, id int64) 
 }
 
 func (r *accountRepository) UpdateSessionWindow(ctx context.Context, id int64, start, end *time.Time, status string) error {
-	builder := r.client.Account.Update().
+	client := clientFromContext(ctx, r.client)
+	builder := client.Account.Update().
 		Where(dbaccount.IDEQ(id)).
 		SetSessionWindowStatus(status)
 	if start != nil {
@@ -2532,23 +2741,35 @@ func (r *accountRepository) UpdateSessionWindow(ctx context.Context, id int64, s
 	}
 	// 触发调度器缓存更新（仅当窗口时间有变化时）
 	if start != nil || end != nil {
-		if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+		if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
 			logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue session window update failed: account=%d err=%v", id, err)
+		}
+		// The outbox poller is intentionally eventual. Refresh the per-account
+		// snapshot immediately so routing and sticky-session reads see the new
+		// window boundary without waiting for the next poll tick.
+		if dbent.TxFromContext(ctx) == nil {
+			r.syncSchedulerAccountSnapshot(ctx, id)
 		}
 	}
 	return nil
 }
 
 func (r *accountRepository) UpdateSessionWindowEnd(ctx context.Context, id int64, end time.Time) error {
-	_, err := r.client.Account.Update().
+	client := clientFromContext(ctx, r.client)
+	_, err := client.Account.Update().
 		Where(dbaccount.IDEQ(id)).
 		SetSessionWindowEnd(end).
 		Save(ctx)
 	if err != nil {
 		return err
 	}
-	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+	if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue session window end update failed: account=%d err=%v", id, err)
+	}
+	// Keep the hot-path account cache in step with the persisted 5h reset time;
+	// the outbox remains the durable fallback for rebuilds and other processes.
+	if dbent.TxFromContext(ctx) == nil {
+		r.syncSchedulerAccountSnapshot(ctx, id)
 	}
 	return nil
 }
@@ -2699,8 +2920,10 @@ func (r *accountRepository) UpdateOpenAICodexSnapshot(
 	if len(ordinaryUpdates) == 0 && len(managedUpdates) == 0 {
 		return true, nil
 	}
+	globalAccount := account.QuotaDimensionOrDefault() == service.QuotaDimensionGlobal && !account.IsShadow()
+	sparkShadow := account.QuotaDimensionOrDefault() == service.QuotaDimensionSpark && account.IsShadow()
 	if account.Platform != service.PlatformOpenAI || account.Type != service.AccountTypeOAuth ||
-		account.QuotaDimensionOrDefault() != service.QuotaDimensionGlobal || account.IsShadow() {
+		(!globalAccount && !sparkShadow) {
 		return false, nil
 	}
 	exec := r.sql
@@ -2710,6 +2933,11 @@ func (r *accountRepository) UpdateOpenAICodexSnapshot(
 	if exec == nil {
 		return false, errors.New("account SQL executor not configured")
 	}
+	var parentAccountID any
+	if account.ParentAccountID != nil {
+		parentAccountID = *account.ParentAccountID
+	}
+	quotaDimension := account.QuotaDimensionOrDefault()
 	observedAt, hasObservedAt := openAICodexSnapshotObservedAt(managedUpdates)
 	var result sql.Result
 	var err error
@@ -2722,33 +2950,37 @@ func (r *accountRepository) UpdateOpenAICodexSnapshot(
 		if marshalErr != nil {
 			return false, marshalErr
 		}
+		// Global accounts compare their own credentials; Spark shadows compare
+		// the captured parent credentials. Both branches stay in one UPDATE so
+		// the identity check and observed-at CAS are atomic.
+		identityPredicate := openAICodexSnapshotIdentityPredicate("$4", "$5", "$6")
 		result, err = exec.ExecContext(ctx, `
-		UPDATE accounts
-		SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb || CASE
-				WHEN jsonb_typeof(COALESCE(extra, '{}'::jsonb) -> 'codex_usage_observed_at_unix_nano') IS DISTINCT FROM 'string'
-				  OR (COALESCE(extra, '{}'::jsonb) ->> 'codex_usage_observed_at_unix_nano') !~ '^[0-9]{20}$'
-				  OR (COALESCE(extra, '{}'::jsonb) ->> 'codex_usage_observed_at_unix_nano') < $7
+		UPDATE accounts AS account
+		SET extra = COALESCE(account.extra, '{}'::jsonb) || $1::jsonb || CASE
+				WHEN jsonb_typeof(COALESCE(account.extra, '{}'::jsonb) -> 'codex_usage_observed_at_unix_nano') IS DISTINCT FROM 'string'
+				  OR (COALESCE(account.extra, '{}'::jsonb) ->> 'codex_usage_observed_at_unix_nano') !~ '^[0-9]{20}$'
+				  OR (COALESCE(account.extra, '{}'::jsonb) ->> 'codex_usage_observed_at_unix_nano') < $9
 				THEN $2::jsonb
 				ELSE '{}'::jsonb
 			END,
 			updated_at = CASE
-				WHEN $8
-				  OR jsonb_typeof(COALESCE(extra, '{}'::jsonb) -> 'codex_usage_observed_at_unix_nano') IS DISTINCT FROM 'string'
-				  OR (COALESCE(extra, '{}'::jsonb) ->> 'codex_usage_observed_at_unix_nano') !~ '^[0-9]{20}$'
-				  OR (COALESCE(extra, '{}'::jsonb) ->> 'codex_usage_observed_at_unix_nano') < $7
+				WHEN $10
+				  OR jsonb_typeof(COALESCE(account.extra, '{}'::jsonb) -> 'codex_usage_observed_at_unix_nano') IS DISTINCT FROM 'string'
+				  OR (COALESCE(account.extra, '{}'::jsonb) ->> 'codex_usage_observed_at_unix_nano') !~ '^[0-9]{20}$'
+				  OR (COALESCE(account.extra, '{}'::jsonb) ->> 'codex_usage_observed_at_unix_nano') < $9
 				THEN NOW()
-				ELSE updated_at
+				ELSE account.updated_at
 			END
-		WHERE id = $3 AND deleted_at IS NULL
-		  AND platform = 'openai' AND type = 'oauth'
-		  AND quota_dimension = 'global' AND parent_account_id IS NULL
-		  AND btrim(COALESCE(credentials ->> 'chatgpt_account_id', '')) = $4
-		  AND btrim(COALESCE(credentials ->> 'organization_id', '')) = $5
-		  AND btrim(COALESCE(credentials ->> 'chatgpt_user_id', '')) = $6
+		WHERE account.id = $3 AND account.deleted_at IS NULL
+		  AND account.platform = 'openai' AND account.type = 'oauth'
+		  AND account.quota_dimension::text = $7
+		  AND account.parent_account_id IS NOT DISTINCT FROM $8
+		`+identityPredicate+`
 	`, string(ordinaryPayload), string(managedPayload), id,
 			strings.TrimSpace(account.GetCredential("chatgpt_account_id")),
 			strings.TrimSpace(account.GetCredential("organization_id")),
-			strings.TrimSpace(account.GetCredential("chatgpt_user_id")), observedAt, len(ordinaryUpdates) > 0)
+			strings.TrimSpace(account.GetCredential("chatgpt_user_id")), quotaDimension, parentAccountID,
+			observedAt, len(ordinaryUpdates) > 0)
 	} else {
 		updates := make(map[string]any, len(ordinaryUpdates)+len(managedUpdates))
 		for key, value := range ordinaryUpdates {
@@ -2761,20 +2993,20 @@ func (r *accountRepository) UpdateOpenAICodexSnapshot(
 		if marshalErr != nil {
 			return false, marshalErr
 		}
+		identityPredicate := openAICodexSnapshotIdentityPredicate("$3", "$4", "$5")
 		result, err = exec.ExecContext(ctx, `
-		UPDATE accounts
-		SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb,
+		UPDATE accounts AS account
+		SET extra = COALESCE(account.extra, '{}'::jsonb) || $1::jsonb,
 			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL
-		  AND platform = 'openai' AND type = 'oauth'
-		  AND quota_dimension = 'global' AND parent_account_id IS NULL
-		  AND btrim(COALESCE(credentials ->> 'chatgpt_account_id', '')) = $3
-		  AND btrim(COALESCE(credentials ->> 'organization_id', '')) = $4
-		  AND btrim(COALESCE(credentials ->> 'chatgpt_user_id', '')) = $5
+		WHERE account.id = $2 AND account.deleted_at IS NULL
+		  AND account.platform = 'openai' AND account.type = 'oauth'
+		  AND account.quota_dimension::text = $6
+		  AND account.parent_account_id IS NOT DISTINCT FROM $7
+		`+identityPredicate+`
 	`, string(payload), id,
 			strings.TrimSpace(account.GetCredential("chatgpt_account_id")),
 			strings.TrimSpace(account.GetCredential("organization_id")),
-			strings.TrimSpace(account.GetCredential("chatgpt_user_id")))
+			strings.TrimSpace(account.GetCredential("chatgpt_user_id")), quotaDimension, parentAccountID)
 	}
 	if err != nil {
 		return false, err
@@ -2790,6 +3022,33 @@ func (r *accountRepository) UpdateOpenAICodexSnapshot(
 		r.syncSchedulerAccountSnapshotDetached(ctx, id)
 	}
 	return affected == 1, nil
+}
+
+// openAICodexSnapshotIdentityPredicate compares the credentials used by the
+// probe. Normal accounts own those credentials; Spark shadows borrow them from
+// their live parent row. Placeholder names are supplied by the caller because
+// the observed-at branch and the ordinary branch have different argument
+// layouts.
+func openAICodexSnapshotIdentityPredicate(accountIDParam, organizationIDParam, userIDParam string) string {
+	return fmt.Sprintf(`
+		  AND (
+			(account.parent_account_id IS NULL
+			 AND btrim(COALESCE(account.credentials ->> 'chatgpt_account_id', '')) = %s
+			 AND btrim(COALESCE(account.credentials ->> 'organization_id', '')) = %s
+			 AND btrim(COALESCE(account.credentials ->> 'chatgpt_user_id', '')) = %s)
+			OR
+			(account.parent_account_id IS NOT NULL AND EXISTS (
+				SELECT 1
+				FROM accounts AS parent
+				WHERE parent.id = account.parent_account_id
+				  AND parent.deleted_at IS NULL
+				  AND btrim(COALESCE(parent.credentials ->> 'chatgpt_account_id', '')) = %s
+				  AND btrim(COALESCE(parent.credentials ->> 'organization_id', '')) = %s
+				  AND btrim(COALESCE(parent.credentials ->> 'chatgpt_user_id', '')) = %s
+				FOR NO KEY UPDATE
+			))
+		  )`, accountIDParam, organizationIDParam, userIDParam,
+		accountIDParam, organizationIDParam, userIDParam)
 }
 
 func openAICodexSnapshotObservedAt(updates map[string]any) (string, bool) {
@@ -3097,7 +3356,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				" AND "+ollamaCloudBaseURLMatchesSQL(credentialPlaceholder+"::jsonb ->> 'base_url'")+")")
 	}
 	openAIWakeIdentityCredentialUpdate := false
-	for _, key := range []string{"chatgpt_account_id", "organization_id", "chatgpt_user_id"} {
+	for _, key := range openAIQuotaIdentityCredentialKeys {
 		if _, ok := updates.Credentials[key]; ok {
 			openAIWakeIdentityCredentialUpdate = true
 			break
@@ -3128,10 +3387,11 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		if credentialPlaceholder != "" {
 			mergedCredentials := "(COALESCE(credentials, '{}'::jsonb) || " + credentialPlaceholder + "::jsonb)"
 			identityChanges := make([]string, 0, 3)
-			for _, key := range []string{"chatgpt_account_id", "organization_id", "chatgpt_user_id"} {
+			for _, key := range openAIQuotaIdentityCredentialKeys {
 				if _, ok := updates.Credentials[key]; ok {
 					identityChanges = append(identityChanges,
-						"credentials ->> '"+key+"' IS DISTINCT FROM "+mergedCredentials+" ->> '"+key+"'")
+						"btrim(COALESCE(credentials ->> '"+key+"', '')) IS DISTINCT FROM "+
+							"btrim(COALESCE("+mergedCredentials+" ->> '"+key+"', ''))")
 				}
 			}
 			if len(identityChanges) > 0 {
@@ -3204,6 +3464,22 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			exec = tx.Client()
 		}
 	}
+	var (
+		changedParentIDs []int64
+		err              error
+	)
+	if updates.ProbeEnabled == nil {
+		changedParentIDs, err = lockOpenAIParentQuotaIdentityChanges(
+			ctx,
+			exec,
+			ids,
+			updates.Credentials,
+			true,
+		)
+		if err != nil {
+			return 0, err
+		}
+	}
 
 	result, err := exec.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -3227,8 +3503,16 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			return 0, service.ErrUpstreamBillingProbeAccountInvalid
 		}
 	}
+	var invalidatedShadowIDs []int64
 	if rows > 0 {
-		payload := map[string]any{"account_ids": ids}
+		invalidatedShadowIDs, err = invalidateOpenAISparkShadowSnapshots(ctx, exec, changedParentIDs)
+		if err != nil {
+			return 0, err
+		}
+	}
+	if rows > 0 {
+		changedAccountIDs := append(append([]int64(nil), ids...), invalidatedShadowIDs...)
+		payload := map[string]any{"account_ids": changedAccountIDs}
 		if err := enqueueSchedulerOutbox(ctx, exec, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, payload); err != nil {
 			return 0, err
 		}
@@ -3246,8 +3530,12 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		if updates.Schedulable != nil && !*updates.Schedulable {
 			shouldSync = true
 		}
+		syncIDs := append(append([]int64(nil), changedParentIDs...), invalidatedShadowIDs...)
 		if shouldSync {
-			r.syncSchedulerAccountSnapshots(baseCtx, ids)
+			syncIDs = append(syncIDs, ids...)
+		}
+		if len(syncIDs) > 0 {
+			r.syncSchedulerAccountSnapshots(baseCtx, syncIDs)
 		}
 	}
 	return rows, nil

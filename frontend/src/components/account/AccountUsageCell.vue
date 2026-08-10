@@ -121,6 +121,13 @@
     <!-- OpenAI OAuth accounts: single source from /usage API -->
     <template v-else-if="account.platform === 'openai' && account.type === 'oauth'">
       <div v-if="hasOpenAIUsageFallback" class="space-y-1">
+        <div
+          v-if="error"
+          data-test="openai-usage-refresh-error"
+          class="text-[10px] text-amber-600 dark:text-amber-400"
+        >
+          {{ error }}
+        </div>
         <UsageProgressBar
           v-if="usageInfo?.five_hour"
           label="5h"
@@ -148,6 +155,7 @@
           <template #pre-actions>
             <button
               type="button"
+              data-test="openai-active-usage"
               class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
               :disabled="activeQueryLoading"
               @click="loadActiveUsage"
@@ -182,6 +190,18 @@
           <div class="h-1.5 w-8 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
           <div class="h-3 w-[32px] animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
         </div>
+      </div>
+      <div v-else-if="error" class="space-y-1">
+        <div
+          data-test="openai-usage-refresh-error"
+          class="text-[10px] text-amber-600 dark:text-amber-400"
+        >
+          {{ error }}
+        </div>
+        <OpenAIQuotaResetCell
+          :account="account"
+          @account-updated="handleQuotaResetAccountUpdated"
+        />
       </div>
       <div v-else>
         <div class="text-xs text-gray-400">-</div>
@@ -1283,7 +1303,11 @@ const isAnthropicOAuthOrSetupToken = computed(() => {
   return props.account.platform === 'anthropic' && (props.account.type === 'oauth' || props.account.type === 'setup-token')
 })
 
-const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?: boolean }) => {
+const loadUsage = async (options?: {
+  source?: 'passive' | 'active'
+  bypassCache?: boolean
+  force?: boolean
+}) => {
   if (!shouldFetchUsage.value) return
 
   // A user-triggered active query is authoritative. Automatic row refreshes
@@ -1310,9 +1334,12 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
   error.value = null
 
   try {
-    const fetchFn = () => options?.source
-      ? adminAPI.accounts.getUsage(accountID, options.source)
-      : adminAPI.accounts.getUsage(accountID)
+    const fetchFn = () => {
+      if (options?.source !== undefined || options?.force !== undefined) {
+        return adminAPI.accounts.getUsage(accountID, options.source, options.force)
+      }
+      return adminAPI.accounts.getUsage(accountID)
+    }
     const result = await enqueueUsageRequest(account, fetchFn)
     if (isCurrentUsageRequest(requestSequence, accountID)) {
       usageInfo.value = result
@@ -1320,7 +1347,13 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
     }
   } catch (e: any) {
     if (isCurrentUsageRequest(requestSequence, accountID)) {
-      error.value = t('common.error')
+      if (options?.force && props.account.platform === 'openai' && props.account.type === 'oauth') {
+        error.value = hasOpenAIUsageFallback.value
+          ? t('admin.accounts.usageRefreshFailedStale')
+          : t('admin.accounts.usageRefreshFailed')
+      } else {
+        error.value = t('common.error')
+      }
       console.error('Failed to load usage:', e)
     }
   } finally {
@@ -1385,6 +1418,7 @@ const loadActiveUsage = async () => {
   // This request supersedes any older automatic request for the row.
   loading.value = false
   activeQueryLoading.value = true
+  error.value = null
   try {
     const result = await adminAPI.accounts.getUsage(accountID, 'active', true)
     if (isCurrentUsageRequest(requestSequence, accountID)) {
@@ -1393,6 +1427,9 @@ const loadActiveUsage = async () => {
     }
   } catch (e: any) {
     if (isCurrentUsageRequest(requestSequence, accountID)) {
+      error.value = hasOpenAIUsageFallback.value
+        ? t('admin.accounts.usageRefreshFailedStale')
+        : t('admin.accounts.usageRefreshFailed')
       console.error('Failed to load active usage:', e)
     }
   } finally {
@@ -1587,7 +1624,11 @@ watch(
 
     const source = isAnthropicOAuthOrSetupToken.value ? 'passive' : undefined
     _usageCache.delete(props.account.id)
-    loadUsage({ source, bypassCache: true }).catch((e) => {
+    loadUsage({
+      source,
+      bypassCache: true,
+      force: props.account.platform === 'openai' && props.account.type === 'oauth'
+    }).catch((e) => {
       console.error('Failed to refresh usage after manual refresh:', e)
     })
   }

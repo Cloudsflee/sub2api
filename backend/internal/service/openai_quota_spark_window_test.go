@@ -143,6 +143,65 @@ func TestBuildCodexSparkWindowExtraUpdates_ContainsCodexKeys(t *testing.T) {
 	// 数值验证（primary=5h, secondary=7d）
 	require.InDelta(t, 0.42, updates["codex_5h_used_percent"], 1e-9)
 	require.InDelta(t, 0.15, updates["codex_7d_used_percent"], 1e-9)
+	require.Regexp(t, `^[0-9]{20}$`, updates[OpenAICodexSnapshotObservedAtExtraKey],
+		"spark snapshots must carry a monotonic observed-at marker")
+}
+
+func TestBuildCodexSparkWindowExtraUpdatesPrefersFutureResetAt(t *testing.T) {
+	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	usage := &OpenAIQuotaUsage{
+		AdditionalRateLimits: []OpenAIAdditionalRateLimit{{
+			MeteredFeature: "codex_bengalfox",
+			RateLimit: &OpenAIRateLimit{
+				PrimaryWindow: &OpenAIRateLimitWindow{
+					UsedPercent:        12,
+					LimitWindowSeconds: 5 * 60 * 60,
+					ResetAfterSeconds:  7,
+					ResetAt:            now.Add(2 * time.Hour).Unix(),
+				},
+				SecondaryWindow: &OpenAIRateLimitWindow{
+					UsedPercent:        34,
+					LimitWindowSeconds: 7 * 24 * 60 * 60,
+					ResetAfterSeconds:  11,
+					ResetAt:            now.Add(24 * time.Hour).Unix(),
+				},
+			},
+		}},
+	}
+
+	updates := buildCodexSparkWindowExtraUpdates(usage, now)
+	require.Equal(t, 2*60*60, updates["codex_5h_reset_after_seconds"])
+	require.Equal(t, 24*60*60, updates["codex_7d_reset_after_seconds"])
+	require.Equal(t, now.Add(2*time.Hour).Format(time.RFC3339), updates["codex_5h_reset_at"])
+	require.Equal(t, now.Add(24*time.Hour).Format(time.RFC3339), updates["codex_7d_reset_at"])
+}
+
+func TestBuildCodexSparkWindowExtraUpdatesFallsBackToRelativeReset(t *testing.T) {
+	now := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	usage := &OpenAIQuotaUsage{
+		AdditionalRateLimits: []OpenAIAdditionalRateLimit{{
+			MeteredFeature: "codex_bengalfox",
+			RateLimit: &OpenAIRateLimit{
+				PrimaryWindow: &OpenAIRateLimitWindow{
+					UsedPercent:        12,
+					LimitWindowSeconds: 5 * 60 * 60,
+					ResetAfterSeconds:  77,
+					ResetAt:            now.Add(-time.Minute).Unix(),
+				},
+				SecondaryWindow: &OpenAIRateLimitWindow{
+					UsedPercent:        34,
+					LimitWindowSeconds: 7 * 24 * 60 * 60,
+					ResetAfterSeconds:  88,
+				},
+			},
+		}},
+	}
+
+	updates := buildCodexSparkWindowExtraUpdates(usage, now)
+	require.Equal(t, 77, updates["codex_5h_reset_after_seconds"])
+	require.Equal(t, 88, updates["codex_7d_reset_after_seconds"])
+	require.Equal(t, now.Add(77*time.Second).Format(time.RFC3339), updates["codex_5h_reset_at"])
+	require.Equal(t, now.Add(88*time.Second).Format(time.RFC3339), updates["codex_7d_reset_at"])
 }
 
 // TestBuildCodexSparkWindowExtraUpdates_NilUsage 验证 nil usage 返回 nil。
@@ -386,6 +445,7 @@ func TestPrepareUpstreamCallShadowResolve(t *testing.T) {
 		Status:   StatusActive,
 		Credentials: map[string]any{
 			"chatgpt_account_id": "org-parent123",
+			"access_token":       "fake-access-token",
 		},
 	}
 	repo := &stubQuotaAccountRepo{accounts: map[int64]*Account{200: shadow, 100: parent}}
@@ -559,6 +619,7 @@ func TestQueryUsageIncludesResetCreditExpirations_EndToEnd(t *testing.T) {
 		Status:   StatusActive,
 		Credentials: map[string]any{
 			"chatgpt_account_id": "org-parent123",
+			"access_token":       "fake-token",
 		},
 	}
 	repo := &stubQuotaAccountRepo{accounts: map[int64]*Account{100: account}}
@@ -622,6 +683,7 @@ func TestQueryUsageResetCreditDetails401NonFatal(t *testing.T) {
 		Status:   StatusActive,
 		Credentials: map[string]any{
 			"chatgpt_account_id": "org-parent123",
+			"access_token":       "fake-token",
 		},
 	}
 	repo := &stubQuotaAccountRepo{accounts: map[int64]*Account{100: account}}
@@ -752,7 +814,7 @@ func TestQueryUsageShadowResolve_EndToEnd(t *testing.T) {
 	}
 	parent := &Account{
 		ID: 100, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive,
-		Credentials: map[string]any{"chatgpt_account_id": "org-e2e-parent"},
+		Credentials: map[string]any{"chatgpt_account_id": "org-e2e-parent", "access_token": "fake-token-e2e"},
 	}
 	repo := &stubQuotaAccountRepo{accounts: map[int64]*Account{200: shadow, 100: parent}}
 
