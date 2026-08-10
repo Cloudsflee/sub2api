@@ -47,7 +47,7 @@ test('active Firefox profile owner prevents stale lock cleanup', async (t) => {
   fs.writeFileSync(path.join(profile, 'lock'), '')
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
 
-  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)', '-profile', profile], { stdio: 'ignore' })
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)', '--', '-profile', profile], { stdio: 'ignore' })
   t.after(() => child.kill())
   let observed = false
   for (let attempt = 0; attempt < 30; attempt += 1) {
