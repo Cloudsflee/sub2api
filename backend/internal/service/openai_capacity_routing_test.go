@@ -2,10 +2,16 @@ package service
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -13,6 +19,8 @@ func TestIsOpenAIModelCapacityError(t *testing.T) {
 	payload := []byte(`{"error":{"message":"Selected model is at capacity. Please try a different model.","type":"invalid_request_error"}}`)
 	require.True(t, isOpenAIModelCapacityError("", payload))
 	require.True(t, isOpenAIModelCapacityError("Selected model is at capacity. Please try a different model.", nil))
+	require.True(t, isOpenAIModelCapacityError("Our servers are currently overloaded. Please try again later.", nil))
+	require.True(t, isOpenAIModelCapacityError("", []byte(`{"response":{"error":{"message":"Our servers are currently overloaded. Please try again later."}}}`)))
 	require.False(t, isOpenAIModelCapacityError("server is overloaded", []byte(`{"error":{"code":"server_is_overloaded"}}`)))
 	require.False(t, isOpenAIModelCapacityError("You have exhausted your capacity on this model.", nil))
 }
@@ -49,6 +57,61 @@ func TestNewOpenAIStreamFailoverError_ModelCapacityDisablesSameAccountRetry(t *t
 	)
 	require.False(t, err.RetryableOnSameAccount)
 	require.True(t, err.IsOpenAIModelCapacityError())
+}
+
+func TestNewOpenAIUpstreamFailoverError_ServerOverloadDisablesSameAccountRetry(t *testing.T) {
+	err := newOpenAIUpstreamFailoverError(
+		http.StatusBadRequest,
+		http.Header{},
+		[]byte(`{"error":{"message":"Our servers are currently overloaded. Please try again later."}}`),
+		"Our servers are currently overloaded. Please try again later.",
+		true,
+	)
+	require.False(t, err.RetryableOnSameAccount)
+	require.True(t, err.IsOpenAIModelCapacityError())
+	require.Equal(t, NextAccountRetry, err.NextAccountAction)
+}
+
+func TestOpenAIStreamingPassthrough_ServerOverloadAfterOutputRecordsCooldown(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{
+		cfg:                 &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}},
+		openaiModelCapacity: newOpenAIModelCapacityState(16),
+	}
+	account := &Account{ID: 41, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	payload := `{"type":"response.failed","response":{"error":{"message":"Our servers are currently overloaded. Please try again later."}}}`
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{},
+			Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+				`data: {"type":"response.output_text.delta","delta":"partial"}`,
+				"",
+				"data: " + payload,
+				"",
+			}, "\n"))),
+		}
+
+		_, err := svc.handleStreamingResponsePassthrough(
+			c.Request.Context(), resp, c, account, time.Now(), "gpt-5.6-sol", "gpt-5.6-sol",
+		)
+		require.Error(t, err)
+		var failoverErr *UpstreamFailoverError
+		require.False(t, errors.As(err, &failoverErr), "a stream with visible output must not be replayed")
+		require.Contains(t, recorder.Body.String(), "partial")
+		require.Contains(t, recorder.Body.String(), "Our servers are currently overloaded")
+
+		blocked := svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.6-sol")
+		if attempt == 1 {
+			require.False(t, blocked)
+		} else {
+			require.True(t, blocked)
+		}
+	}
 }
 
 func TestOpenAIModelCapacityStateEscalatesAndPreservesLongCooldown(t *testing.T) {

@@ -21,11 +21,13 @@ const (
 const openAIModelCapacityFailureReason = GatewayFailureReason("openai_model_capacity")
 
 // isOpenAIModelCapacityError deliberately matches the explicit OpenAI capacity
-// response only. Other transient 400/503 responses keep their existing retry
-// and cooldown behavior.
+// and server-overload responses only. Other transient 400/503 responses keep
+// their existing retry and cooldown behavior.
 func isOpenAIModelCapacityError(message string, payload []byte) bool {
 	match := func(value string) bool {
-		return strings.Contains(strings.ToLower(strings.TrimSpace(value)), "selected model is at capacity")
+		value = strings.ToLower(strings.TrimSpace(value))
+		return strings.Contains(value, "selected model is at capacity") ||
+			strings.Contains(value, "our servers are currently overloaded. please try again later.")
 	}
 	if match(message) {
 		return true
@@ -87,6 +89,23 @@ func (s *OpenAIGatewayService) recordOpenAIModelCapacityFailure(accountID int64,
 		"cooldown_ms", decision.Cooldown.Milliseconds(),
 		"block_scope", "account_model",
 	)
+}
+
+// A stream cannot be replayed after semantic output has reached the client.
+// Still count a terminal capacity failure so later requests avoid the same
+// account/model pair according to the normal cooldown policy.
+func (s *OpenAIGatewayService) recordOpenAIModelCapacityFailureAfterOutput(
+	account *Account,
+	requestedModel string,
+	payload []byte,
+	message string,
+	outputStarted bool,
+) {
+	if !outputStarted || account == nil || !isOpenAIModelCapacityError(message, payload) {
+		return
+	}
+	model := canonicalOpenAIAccountSchedulingModel(account, requestedModel)
+	s.recordOpenAIModelCapacityFailure(account.ID, model, time.Now())
 }
 
 func (s *OpenAIGatewayService) clearOpenAIModelCapacityState(accountID int64, model string) {

@@ -607,6 +607,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				}
 				return true
 			}
+			s.recordOpenAIModelCapacityFailureAfterOutput(account, originalModel, payloadBytes, message, clientOutputStarted)
 			if openAIStreamFailedEventShouldFailover(payloadBytes, message) {
 				streamFailoverErr = s.newOpenAIStreamFailoverError(c, account, false, requestID, payloadBytes, message, resp.Header)
 				return true
