@@ -1519,11 +1519,11 @@ class ChallengeManager {
           await this.operation(this.inspect(page, response), signal),
           responseContext
         )
-        // An x-tengine-error response is authoritative even when ESA has not
-        // painted its slider yet. Only a response without that denial may be
-        // accepted through the post-drag content-only compatibility check.
-        if (challengeCleared(snapshot)
-          || (!isHTTPCustomDenial(snapshot?.responseError) && challengeContentCleared(snapshot))) {
+        // ESA can retain the challenge response header on a successful
+        // callback. The caller replays the protected API request before it
+        // trusts this result, so content clearing remains valid only here,
+        // after an actual drag.
+        if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
           await this.persistSolvedSession(context, provider.id, proxy)
           const solvedAt = new Date(this.now()).toISOString()
           report({ state: 'solved', provider: provider.id, attempt, solvedAt })
@@ -1611,10 +1611,10 @@ async function retryFailedChallengeOperation(task, recover, options = {}) {
   }
 }
 
-// Try a protected operation twice per exit, recovering the active context
-// after the first verification response. Persistent verification advances to
-// each remaining exit once, so a failed fallback never cycles back to a proxy
-// already rejected by the same operation.
+// Give each exit two recovery attempts and replay the protected operation
+// after each one. Persistent verification then advances to each remaining
+// exit once, so a failed fallback never cycles back to a proxy already
+// rejected by the same operation.
 async function retryChallengeOperationAcrossProxyPool(options = {}) {
   const poolSize = Number(options.poolSize) || 0
   const currentIndex = Number(options.currentIndex) || 0
@@ -1638,7 +1638,8 @@ async function retryChallengeOperationAcrossProxyPool(options = {}) {
       }
     }
 
-    for (let failure = 1; failure <= 2; failure += 1) {
+    let recoveries = 0
+    while (recoveries <= MAX_DRAG_ATTEMPTS) {
       throwIfAborted(signal)
       try {
         return await options.task()
@@ -1646,9 +1647,10 @@ async function retryChallengeOperationAcrossProxyPool(options = {}) {
         if (!isChallengeError(error)) throw error
         throwIfAborted(signal)
         lastError = error
-        if (failure === 2) break
+        if (recoveries >= MAX_DRAG_ATTEMPTS) break
+        recoveries += 1
         try {
-          await options.recoverCurrent({ error, failure, proxyIndex })
+          await options.recoverCurrent({ error, recovery: recoveries, proxyIndex })
         } catch (recoveryError) {
           throwIfAborted(signal)
           lastError = recoveryError
