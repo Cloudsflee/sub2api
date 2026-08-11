@@ -1435,7 +1435,10 @@ class ChallengeManager {
           if (stagedResponse?.responseError && !snapshot.responseError) {
             snapshot = { ...snapshot, responseError: stagedResponse.responseError }
           }
-          if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
+          // A staged API response is the challenge document itself. Its ESA
+          // shell can be script-only for several seconds, so content-only
+          // clearing must not end a pre-drag retry for that response.
+          if (challengeCleared(snapshot) || (!stagedResponse && challengeContentCleared(snapshot))) {
             await this.persistSolvedSession(context, provider.id, proxy)
             const solvedAt = new Date(this.now()).toISOString()
             report({ state: 'solved', provider: provider.id, attempt, solvedAt })
@@ -1464,7 +1467,7 @@ class ChallengeManager {
           if (stagedResponse?.responseError && !snapshot.responseError) {
             snapshot = { ...snapshot, responseError: stagedResponse.responseError }
           }
-          if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
+          if (challengeCleared(snapshot) || (!stagedResponse && challengeContentCleared(snapshot))) {
             await this.persistSolvedSession(context, provider.id, proxy)
             const solvedAt = new Date(this.now()).toISOString()
             report({ state: 'solved', provider: provider.id, attempt, solvedAt })
@@ -1516,7 +1519,11 @@ class ChallengeManager {
           await this.operation(this.inspect(page, response), signal),
           responseContext
         )
-        if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
+        // An x-tengine-error response is authoritative even when ESA has not
+        // painted its slider yet. Only a response without that denial may be
+        // accepted through the post-drag content-only compatibility check.
+        if (challengeCleared(snapshot)
+          || (!isHTTPCustomDenial(snapshot?.responseError) && challengeContentCleared(snapshot))) {
           await this.persistSolvedSession(context, provider.id, proxy)
           const solvedAt = new Date(this.now()).toISOString()
           report({ state: 'solved', provider: provider.id, attempt, solvedAt })
@@ -1604,6 +1611,64 @@ async function retryFailedChallengeOperation(task, recover, options = {}) {
   }
 }
 
+// Try a protected operation twice per exit, recovering the active context
+// after the first verification response. Persistent verification advances to
+// each remaining exit once, so a failed fallback never cycles back to a proxy
+// already rejected by the same operation.
+async function retryChallengeOperationAcrossProxyPool(options = {}) {
+  const poolSize = Number(options.poolSize) || 0
+  const currentIndex = Number(options.currentIndex) || 0
+  const signal = options.signal
+  if (poolSize < 1 || typeof options.task !== 'function'
+    || typeof options.recoverCurrent !== 'function' || typeof options.switchTo !== 'function') {
+    throw new Error('challenge operation proxy retry requires a pool, task, recovery, and switch callback')
+  }
+  throwIfAborted(signal)
+  let lastError
+  for (let offset = 0; offset < poolSize; offset += 1) {
+    throwIfAborted(signal)
+    const proxyIndex = (currentIndex + offset) % poolSize
+    if (offset > 0) {
+      try {
+        await options.switchTo(proxyIndex)
+      } catch (error) {
+        throwIfAborted(signal)
+        lastError = error
+        continue
+      }
+    }
+
+    for (let failure = 1; failure <= 2; failure += 1) {
+      throwIfAborted(signal)
+      try {
+        return await options.task()
+      } catch (error) {
+        if (!isChallengeError(error)) throw error
+        throwIfAborted(signal)
+        lastError = error
+        if (failure === 2) break
+        try {
+          await options.recoverCurrent({ error, failure, proxyIndex })
+        } catch (recoveryError) {
+          throwIfAborted(signal)
+          lastError = recoveryError
+          break
+        }
+      }
+    }
+  }
+
+  const challengeState = lastError instanceof ChallengeError
+    && lastError.challengeState === 'unsupported'
+    ? 'unsupported'
+    : 'failed'
+  throw new ChallengeError(
+    challengeState,
+    String(options.exhaustedMessage || 'operation remained behind verification on every lane proxy'),
+    { restartLane: true, cause: lastError }
+  )
+}
+
 function shouldBlockResource(resourceType, challengeResourcesAllowed) {
   return !challengeResourcesAllowed && BLOCKED_RESOURCE_TYPES.has(resourceType)
 }
@@ -1633,6 +1698,7 @@ module.exports = {
   readStoredSession,
   recoverChallengeAcrossProxyPool,
   resizeNativeBrowserWindow,
+  retryChallengeOperationAcrossProxyPool,
   retryFailedChallengeOperation,
   selectChallengeProvider,
   sessionDigest,

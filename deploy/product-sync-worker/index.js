@@ -11,9 +11,8 @@ const {
   collectChallengeSnapshot,
   isChallengeError,
   isExpectedNavigationAbort,
-  recoverChallengeAcrossProxyPool,
   resizeNativeBrowserWindow,
-  retryFailedChallengeOperation,
+  retryChallengeOperationAcrossProxyPool,
   shouldBlockResource,
 } = require('./challenge-manager')
 const {
@@ -457,44 +456,49 @@ async function solveChallengeForContext(lane, context, page, proxy, signal, chal
 
 async function recoverLaneChallenge(lane, signal, challengeResponse) {
   try {
-    const previousProxyIndex = lane.proxyIndex
-    const recoveredProxyIndex = await recoverChallengeAcrossProxyPool({
-      poolSize: lane.proxyPool.length,
-      currentIndex: previousProxyIndex,
+    return await solveChallengeForContext(
+      lane,
+      lane.context,
+      lane.page,
+      lane.proxy,
       signal,
-      solveCurrent: () => solveChallengeForContext(
-        lane,
-        lane.context,
-        lane.page,
-        lane.proxy,
-        signal,
-        challengeResponse
-      ),
-      switchTo: (proxyIndex) => replaceLaneContext(lane, proxyIndex, true, signal),
-    })
-    if (recoveredProxyIndex !== previousProxyIndex) {
-      console.log(`${new Date().toISOString()} lane ${lane.index + 1} switched to its fallback after verification recovery failed on the current exit`)
-      publishLaneStatus(lane, {
-        proxy_server: lane.proxy?.server || '',
-        proxy_pool_position: recoveredProxyIndex + 1,
-        proxy_rotated_at: new Date().toISOString(),
-      })
-    }
+      challengeResponse
+    )
   } catch (error) {
     throw laneRecoveryCancellationFailure(lane, error, signal)
   }
 }
 
 async function postShopAPIWithChallengeRecovery(lane, shopToken, path, body, deadlineAt, signal) {
-  return retryFailedChallengeOperation(
-    () => postShopAPI(lane, shopToken, path, body, deadlineAt, signal),
-    async ({ error }) => {
+  const result = await retryChallengeOperationAcrossProxyPool({
+    poolSize: lane.proxyPool.length,
+    currentIndex: lane.proxyIndex,
+    signal,
+    task: () => postShopAPI(lane, shopToken, path, body, deadlineAt, signal),
+    recoverCurrent: async ({ error }) => {
       ensureJobDeadline(deadlineAt, signal)
       await recoverLaneChallenge(lane, signal, error.challengeResponse)
       ensureJobDeadline(deadlineAt, signal)
     },
-    { exhaustedMessage: `shop API ${path} repeatedly returned HTML after verification recovery` }
-  )
+    switchTo: async (proxyIndex) => {
+      try {
+        ensureJobDeadline(deadlineAt, signal)
+        await replaceLaneContext(lane, proxyIndex, true, signal)
+        ensureJobDeadline(deadlineAt, signal)
+        console.log(`${new Date().toISOString()} lane ${lane.index + 1} switched to its alternate exit after shop API verification persisted twice`)
+        publishLaneStatus(lane, {
+          proxy_server: lane.proxy?.server || '',
+          proxy_pool_position: proxyIndex + 1,
+          proxy_rotated_at: new Date().toISOString(),
+        })
+      } catch (error) {
+        throw laneRecoveryCancellationFailure(lane, error, signal)
+      }
+    },
+    exhaustedMessage: `shop API ${path} remained behind verification on every lane proxy`,
+  })
+  lane.challengeState.failureCount = 0
+  return result
 }
 
 async function postShopAPIWithPressureRecovery(lane, shopToken, path, body, deadlineAt, signal) {

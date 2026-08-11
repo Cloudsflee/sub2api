@@ -22,6 +22,7 @@ const {
   readStoredSession,
   recoverChallengeAcrossProxyPool,
   resizeNativeBrowserWindow,
+  retryChallengeOperationAcrossProxyPool,
   retryFailedChallengeOperation,
   selectChallengeProvider,
   sessionFilePath,
@@ -584,6 +585,41 @@ test('challenge manager succeeds on the second drag, reloads first, and saves st
   assert.equal(fs.readdirSync(directory).filter((name) => name.endsWith('.json')).length, 1)
 })
 
+test('post-drag http_custom shell is not accepted before ESA paints its challenge', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const loading = clearSnapshot('denied by http_custom')
+  loading.responseContext = 'post-drag-submission'
+  loading.frames[0].url = 'https://pay.ldxp.cn/'
+  loading.frames[0].hasAliyunScript = true
+  assert.equal(challengeContentCleared(loading), true)
+
+  const snapshots = [aliyunSnapshot(), loading, aliyunSnapshot(), clearSnapshot()]
+  let drags = 0
+  const manager = new ChallengeManager({
+    enabled: true,
+    providers: [{
+      id: 'aliyun-esa',
+      detect: () => true,
+      locate: async () => sliderGeometry(),
+    }],
+    sessionDirectory: directory,
+    navigate: async () => ({}),
+    reload: async () => ({}),
+    inspect: async () => snapshots.shift(),
+    drag: async () => { drags += 1 },
+  })
+
+  const result = await manager.solve({
+    context: { storageState: async () => ({ cookies: [], origins: [] }) },
+    page: {},
+  })
+
+  assert.equal(result.state, 'solved')
+  assert.equal(result.attempt, 2)
+  assert.equal(drags, 2)
+})
+
 test('runtime API challenge is staged at its original URL and solved without an initial home navigation', async (t) => {
   const directory = temporaryDirectory()
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
@@ -655,6 +691,52 @@ test('runtime API challenge is staged at its original URL and solved without an 
   assert.equal(homeNavigations, 0)
 })
 
+test('a repeated staged API challenge reaches the second drag after its delayed ESA shell', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const apiURL = 'https://pay.ldxp.cn/shopApi/Shop/info'
+  const challenged = aliyunSnapshot({ responseError: 'denied by http_custom' })
+  challenged.frames[0].url = apiURL
+  const loading = clearSnapshot('denied by http_custom')
+  loading.frames[0].url = apiURL
+  loading.frames[0].hasAliyunScript = true
+  const cleared = clearSnapshot()
+  cleared.frames[0].url = apiURL
+  const snapshots = [challenged, cleared, loading, loading, cleared]
+  let drags = 0
+  const context = { storageState: async () => ({ cookies: [], origins: [] }) }
+  const manager = new ChallengeManager({
+    enabled: true,
+    sessionDirectory: directory,
+    providers: [{
+      id: 'aliyun-esa',
+      detect: () => true,
+      locate: async () => sliderGeometry(),
+    }],
+    stage: async () => ({}),
+    inspect: async () => snapshots.shift(),
+    drag: async () => { drags += 1 },
+  })
+  const options = {
+    context,
+    page: { waitForNavigation: async () => ({}) },
+    challengeResponse: {
+      status: 200,
+      url: apiURL,
+      contentType: 'text/html; charset=utf-8',
+      responseError: 'denied by http_custom',
+      text: '<html><script src="/aliyuncaptcha.js"></script></html>',
+    },
+  }
+
+  const first = await manager.solve(options)
+  const second = await manager.solve(options)
+
+  assert.equal(first.attempt, 1)
+  assert.equal(second.attempt, 2)
+  assert.equal(drags, 2)
+})
+
 test('runtime API challenge staging rejects a URL outside the configured origin', async () => {
   await assert.rejects(() => stageChallengeResponse(
     {},
@@ -694,10 +776,10 @@ test('challenge manager does not report solved when session persistence fails', 
   assert.equal(events.at(-1).state, 'failed')
 })
 
-test('challenge manager waits for the ESA success navigation before issuing a home request', async (t) => {
+test('challenge manager accepts an ESA callback only after its denial header is gone', async (t) => {
   const directory = temporaryDirectory()
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
-  const postDragNormalPage = clearSnapshot('denied by http_custom')
+  const postDragNormalPage = clearSnapshot()
   postDragNormalPage.frames[0].url = 'https://pay.ldxp.cn/'
   postDragNormalPage.frames[0].hasGenericSlider = true
   const snapshots = [aliyunSnapshot(), postDragNormalPage]
@@ -1073,6 +1155,54 @@ test('challenge recovery switches to a fallback only after the current context f
     solveCurrent: async () => { throw new ChallengeError('failed', 'primary') },
     switchTo: async () => { throw new ChallengeError('failed', 'fallback') },
   }), (error) => error.restartLane === true)
+})
+
+test('protected operation tries each proxy twice and never cycles after fallback failure', async () => {
+  let currentProxy = 0
+  const attempts = [0, 0]
+  const recoveries = [0, 0]
+  const switches = []
+
+  const result = await retryChallengeOperationAcrossProxyPool({
+    poolSize: 2,
+    currentIndex: 0,
+    task: async () => {
+      attempts[currentProxy] += 1
+      if (currentProxy === 1 && attempts[currentProxy] === 2) return 'fallback completed'
+      throw new ChallengeError('failed', `proxy ${currentProxy} still challenged`)
+    },
+    recoverCurrent: async () => { recoveries[currentProxy] += 1 },
+    switchTo: async (proxyIndex) => {
+      switches.push(proxyIndex)
+      currentProxy = proxyIndex
+    },
+  })
+
+  assert.equal(result, 'fallback completed')
+  assert.deepEqual(attempts, [2, 2])
+  assert.deepEqual(recoveries, [1, 1])
+  assert.deepEqual(switches, [1])
+
+  currentProxy = 0
+  attempts.fill(0)
+  switches.length = 0
+  await assert.rejects(() => retryChallengeOperationAcrossProxyPool({
+    poolSize: 2,
+    currentIndex: 0,
+    task: async () => {
+      attempts[currentProxy] += 1
+      throw new ChallengeError('failed', 'still challenged')
+    },
+    recoverCurrent: async () => {},
+    switchTo: async (proxyIndex) => {
+      switches.push(proxyIndex)
+      currentProxy = proxyIndex
+    },
+  }), (error) => error instanceof ChallengeError
+    && error.challengeState === 'failed'
+    && error.restartLane === true)
+  assert.deepEqual(attempts, [2, 2])
+  assert.deepEqual(switches, [1])
 })
 
 test('challenge proxy recovery propagates cancellation without touching fallbacks', async () => {
