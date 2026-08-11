@@ -26,6 +26,7 @@ const {
   selectChallengeProvider,
   sessionFilePath,
   shouldBlockResource,
+  stageChallengeResponse,
   writeStoredSession,
 } = require('./challenge-manager')
 
@@ -583,6 +584,84 @@ test('challenge manager succeeds on the second drag, reloads first, and saves st
   assert.equal(fs.readdirSync(directory).filter((name) => name.endsWith('.json')).length, 1)
 })
 
+test('runtime API challenge is staged at its original URL and solved without an initial home navigation', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const apiURL = 'https://pay.ldxp.cn/shopApi/Shop/info'
+  const challengeHTML = '<html><script src="/aliyuncaptcha.js"></script><div id="captcha-element">Please slide to verify</div></html>'
+  let routeHandler
+  let stagedResponse
+  let inspected = 0
+  let homeNavigations = 0
+  let drags = 0
+  const page = {
+    route: async (url, handler, options) => {
+      assert.equal(url, apiURL)
+      assert.deepEqual(options, { times: 1 })
+      routeHandler = handler
+    },
+    goto: async (url) => {
+      assert.equal(url, apiURL)
+      await routeHandler({ fulfill: async (response) => { stagedResponse = response } })
+      return { headers: async () => stagedResponse.headers }
+    },
+    unroute: async (url, handler) => {
+      assert.equal(url, apiURL)
+      assert.equal(handler, routeHandler)
+    },
+    waitForNavigation: async () => ({}),
+  }
+  const manager = new ChallengeManager({
+    enabled: true,
+    sessionDirectory: directory,
+    providers: [{
+      id: 'aliyun-esa',
+      detect: (snapshot) => snapshot.frames[0].hasAliyunDOM,
+      locate: async () => sliderGeometry(),
+    }],
+    navigate: async () => { homeNavigations += 1; return {} },
+    inspect: async () => {
+      inspected += 1
+      if (inspected === 1) {
+        assert.equal(stagedResponse.status, 403)
+        assert.equal(stagedResponse.body, challengeHTML)
+        assert.equal(stagedResponse.headers['x-tengine-error'], 'denied by http_custom')
+        return aliyunSnapshot()
+      }
+      return clearSnapshot()
+    },
+    drag: async () => { drags += 1 },
+  })
+
+  const result = await manager.solve({
+    context: { storageState: async () => ({ cookies: [], origins: [] }) },
+    page,
+    challengeResponse: {
+      status: 403,
+      url: apiURL,
+      contentType: 'text/html; charset=utf-8',
+      responseError: 'denied by http_custom',
+      text: challengeHTML,
+    },
+  })
+
+  assert.equal(result.state, 'solved')
+  assert.equal(result.provider, 'aliyun-esa')
+  assert.equal(drags, 1)
+  assert.equal(homeNavigations, 0)
+})
+
+test('runtime API challenge staging rejects a URL outside the configured origin', async () => {
+  await assert.rejects(() => stageChallengeResponse(
+    {},
+    'https://pay.ldxp.cn',
+    { url: 'https://example.com/challenge', text: '<html>verify</html>' },
+    1_000
+  ), (error) => error instanceof ChallengeError
+    && error.challengeState === 'failed'
+    && /escaped the configured origin/.test(error.message))
+})
+
 test('challenge manager does not report solved when session persistence fails', async (t) => {
   const directory = temporaryDirectory()
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
@@ -952,6 +1031,22 @@ test('failed API operation is retried in place only after challenge recovery', a
     async () => { throw new Error('bad catalog payload') },
     async () => {}
   ), /bad catalog payload/)
+
+  let failedAttempts = 0
+  let recoveries = 0
+  await assert.rejects(() => retryFailedChallengeOperation(
+    async () => {
+      failedAttempts += 1
+      throw new ChallengeError('failed', 'HTML challenge')
+    },
+    async () => { recoveries += 1 },
+    { maxRecoveries: 2 }
+  ), (error) => error instanceof ChallengeError
+    && error.challengeState === 'failed'
+    && error.restartLane === true
+    && challengeBackoffMilliseconds(1, error.challengeState) === 15 * 60_000)
+  assert.equal(failedAttempts, 3)
+  assert.equal(recoveries, 2)
 })
 
 test('challenge recovery switches to a fallback only after the current context fails', async () => {
@@ -1032,7 +1127,13 @@ test('session files are opaque, atomic, private, restorable, and isolated by pro
     password: 'private-password',
   }
   const storageState = {
-    cookies: [{ name: 'esa', value: 'passed', domain: '.ldxp.cn', path: '/' }],
+    cookies: [{
+      name: 'acw_sc__v3',
+      value: 'passed',
+      domain: '.ldxp.cn',
+      path: '/',
+      expires: 4_000_000_000,
+    }],
     origins: [{ origin: 'https://pay.ldxp.cn', localStorage: [{ name: 'token', value: 'ok' }] }],
   }
   const file = writeStoredSession(directory, providers[0].id, 'https://pay.ldxp.cn', proxy, storageState)
@@ -1053,6 +1154,28 @@ test('session files are opaque, atomic, private, restorable, and isolated by pro
     assert.equal(fs.statSync(directory).mode & 0o777, 0o700)
     assert.equal(fs.statSync(file).mode & 0o777, 0o600)
   }
+})
+
+test('expired Alibaba ESA session is ignored and removed before browser startup', (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const providers = [{ id: 'aliyun-esa' }]
+  const origin = 'https://pay.ldxp.cn'
+  const now = Date.UTC(2026, 7, 11)
+  const storageState = {
+    cookies: [{
+      name: 'acw_sc__v3',
+      value: 'expired',
+      domain: '.ldxp.cn',
+      path: '/',
+      expires: (now / 1_000) - 1,
+    }],
+    origins: [],
+  }
+  const file = writeStoredSession(directory, providers[0].id, origin, null, storageState)
+
+  assert.equal(readStoredSession(directory, providers, origin, null, now), null)
+  assert.equal(fs.existsSync(file), false)
 })
 
 test('corrupt session state is ignored and removed for automatic rebuilding', (t) => {

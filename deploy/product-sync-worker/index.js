@@ -358,7 +358,8 @@ async function evaluateShopRequestInBrowser({ requestPath, requestBody, requestT
       status: response.status,
       contentType,
       payload,
-      text: text.slice(0, 2_000),
+      text: text.slice(0, contentType.toLowerCase().includes('application/json') ? 2_000 : 512_000),
+      responseURL: response.url || requestPath,
       responseError: response.headers.get('x-tengine-error') || '',
       retryAfter: response.headers.get('retry-after') || '',
     }
@@ -439,11 +440,12 @@ function publishChallengeState(lane, event) {
   publishLaneStatus(lane, challengeStatusValues(event))
 }
 
-async function solveChallengeForContext(lane, context, page, proxy, signal) {
+async function solveChallengeForContext(lane, context, page, proxy, signal, challengeResponse) {
   const result = await challengeManager.solve({
     context,
     page,
     proxy,
+    challengeResponse,
     nativeWindowPID: lane.browserProcessID,
     signal,
     onState: (event) => publishChallengeState(lane, event),
@@ -453,14 +455,21 @@ async function solveChallengeForContext(lane, context, page, proxy, signal) {
   return result
 }
 
-async function recoverLaneChallenge(lane, signal) {
+async function recoverLaneChallenge(lane, signal, challengeResponse) {
   try {
     const previousProxyIndex = lane.proxyIndex
     const recoveredProxyIndex = await recoverChallengeAcrossProxyPool({
       poolSize: lane.proxyPool.length,
       currentIndex: previousProxyIndex,
       signal,
-      solveCurrent: () => solveChallengeForContext(lane, lane.context, lane.page, lane.proxy, signal),
+      solveCurrent: () => solveChallengeForContext(
+        lane,
+        lane.context,
+        lane.page,
+        lane.proxy,
+        signal,
+        challengeResponse
+      ),
       switchTo: (proxyIndex) => replaceLaneContext(lane, proxyIndex, true, signal),
     })
     if (recoveredProxyIndex !== previousProxyIndex) {
@@ -479,9 +488,9 @@ async function recoverLaneChallenge(lane, signal) {
 async function postShopAPIWithChallengeRecovery(lane, shopToken, path, body, deadlineAt, signal) {
   return retryFailedChallengeOperation(
     () => postShopAPI(lane, shopToken, path, body, deadlineAt, signal),
-    async () => {
+    async ({ error }) => {
       ensureJobDeadline(deadlineAt, signal)
-      await recoverLaneChallenge(lane, signal)
+      await recoverLaneChallenge(lane, signal, error.challengeResponse)
       ensureJobDeadline(deadlineAt, signal)
     },
     { exhaustedMessage: `shop API ${path} repeatedly returned HTML after verification recovery` }

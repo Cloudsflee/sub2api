@@ -53,6 +53,49 @@ git -C "$REPO" update-ref -d refs/tags/upstream/v9.0.0-rc1
 git -C "$REPO" tag -d v0.1.153 >/dev/null
 [[ "$(resolve_official_version)" == 0.1.152 ]]
 
+REPO_DIR=$REPO
+worker_baseline=$(git -C "$REPO" rev-parse HEAD)
+mkdir -p "$REPO/deploy/product-sync-worker"
+printf 'console.log("worker")\n' >"$REPO/deploy/product-sync-worker/index.js"
+git -C "$REPO" add deploy/product-sync-worker/index.js
+git -C "$REPO" commit -m 'add worker source' >/dev/null
+worker_added=$(git -C "$REPO" rev-parse HEAD)
+worker_build_inputs_changed "$worker_baseline" "$worker_added"
+
+printf 'worker docs\n' >"$REPO/deploy/product-sync-worker/README.md"
+git -C "$REPO" add deploy/product-sync-worker/README.md
+git -C "$REPO" commit -m 'worker docs only' >/dev/null
+worker_docs=$(git -C "$REPO" rev-parse HEAD)
+if worker_build_inputs_changed "$worker_added" "$worker_docs"; then
+  echo 'worker documentation unexpectedly requires an image rebuild' >&2
+  exit 1
+fi
+
+printf 'test only\n' >"$REPO/deploy/product-sync-worker/index.test.js"
+git -C "$REPO" add deploy/product-sync-worker/index.test.js
+git -C "$REPO" commit -m 'worker test only' >/dev/null
+worker_tests=$(git -C "$REPO" rev-parse HEAD)
+if worker_build_inputs_changed "$worker_docs" "$worker_tests"; then
+  echo 'worker tests unexpectedly require a production image rebuild' >&2
+  exit 1
+fi
+
+printf 'application only\n' >>"$REPO/app.txt"
+git -C "$REPO" add app.txt
+git -C "$REPO" commit -m 'application only' >/dev/null
+application_only=$(git -C "$REPO" rev-parse HEAD)
+if worker_build_inputs_changed "$worker_tests" "$application_only"; then
+  echo 'application changes unexpectedly require a worker image rebuild' >&2
+  exit 1
+fi
+
+printf 'console.log("worker changed")\n' >"$REPO/deploy/product-sync-worker/index.js"
+git -C "$REPO" add deploy/product-sync-worker/index.js
+git -C "$REPO" commit -m 'change worker source' >/dev/null
+worker_changed=$(git -C "$REPO" rev-parse HEAD)
+worker_build_inputs_changed "$application_only" "$worker_changed"
+worker_build_inputs_changed missing-commit "$worker_changed"
+
 FAKE_BIN=$TEST_ROOT/bin
 DOCKER_ARGS_FILE=$TEST_ROOT/docker-args
 mkdir -p "$FAKE_BIN"

@@ -462,12 +462,13 @@ function parseShopHTTPResponse(result) {
   const contentType = String(result.contentType || '').toLowerCase()
   if (!contentType.includes('application/json')) {
     const responseError = String(result.responseError || '')
-    const responseText = String(result.text || '').slice(0, 2_000)
+    const responseText = String(result.text || '').slice(0, 512_000)
+    const detectionText = responseText.slice(0, 2_000)
     // Do not route every HTML error page through challenge recovery. ESA marks
     // its challenge responses with http_custom, while other deployments expose
     // the slider/captcha copy or DOM identifiers in the response body.
-    const challengeResponse = /denied\s+by\s+http_custom|(?:aliyun|alicloud|alibabacloud|aliyuncaptcha|acw_sc__v2|captcha-element|captcha.{0,80}(?:slide|slider|drag)|(?:slide|slider|drag).{0,80}(?:verify|verification)|(?:verification|verify).{0,80}(?:slide|slider|drag)|(?:滑块|拖动|拖拽|滑动).{0,30}(?:验证|最右|尽头))/i
-      .test(`${responseError}\n${responseText}`)
+    const challengeResponse = /denied\s+by\s+http_custom|(?:aliyun|alicloud|alibabacloud|aliyuncaptcha|acw_sc__v[23]|captcha-element|captcha.{0,80}(?:slide|slider|drag)|(?:slide|slider|drag).{0,80}(?:verify|verification)|(?:verification|verify).{0,80}(?:slide|slider|drag)|(?:滑块|拖动|拖拽|滑动).{0,30}(?:验证|最右|尽头))/i
+      .test(`${responseError}\n${detectionText}`)
     if (!challengeResponse) {
       const kind = status === 429
         ? 'rate_limit'
@@ -476,6 +477,8 @@ function parseShopHTTPResponse(result) {
     }
     const error = new ShopSyncError('verification', `shop API verification required: HTTP ${status}`)
     error.challengeResponse = {
+      status,
+      url: String(result.responseURL || result.requestURL || result.requestPath || ''),
       contentType,
       responseError,
       text: responseText,

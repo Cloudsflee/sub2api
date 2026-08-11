@@ -49,6 +49,18 @@ BUILD_CACHE_MIN_FREE_SPACE=${BUILD_CACHE_MIN_FREE_SPACE:-8gb}
 TARGET_COMMIT=
 APP_CANDIDATE=
 WORKER_CANDIDATE=
+WORKER_BUILD_PATHS=(
+  deploy/product-sync-worker/.dockerignore
+  deploy/product-sync-worker/Dockerfile
+  deploy/product-sync-worker/catalog-sync.js
+  deploy/product-sync-worker/challenge-manager.js
+  deploy/product-sync-worker/healthcheck.js
+  deploy/product-sync-worker/index.js
+  deploy/product-sync-worker/package-lock.json
+  deploy/product-sync-worker/package.json
+  deploy/product-sync-worker/start-worker.sh
+  deploy/product-sync-worker/worker-utils.js
+)
 
 log() {
   printf '%s [%s] %s\n' "$(date --iso-8601=seconds)" "$PROGRAM" "$*"
@@ -401,6 +413,14 @@ check_migration_compatibility() {
   (( failed == 0 ))
 }
 
+worker_build_inputs_changed() {
+  local baseline=${1:-} target=${2:-}
+  [[ -n "$baseline" && -n "$target" ]] || return 0
+  git -C "$REPO_DIR" cat-file -e "$baseline^{commit}" 2>/dev/null || return 0
+  git -C "$REPO_DIR" cat-file -e "$target^{commit}" 2>/dev/null || return 0
+  ! git -C "$REPO_DIR" diff --quiet "$baseline" "$target" -- "${WORKER_BUILD_PATHS[@]}"
+}
+
 prune_build_cache() {
   local output rc summary
   is_true "$PRUNE_BUILD_CACHE" || return 0
@@ -481,12 +501,13 @@ resolve_official_version() {
 build_images() {
   local short=${TARGET_COMMIT:0:12}
   local date_value official_version version_value app_revision worker_revision
+  local baseline current_worker
+  baseline=${1:-$(state_get DEPLOYED_COMMIT)}
   date_value=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   official_version=$(resolve_official_version)
   version_value="$official_version-custom.$short"
 
   APP_CANDIDATE="$APP_IMAGE_REPOSITORY:git-$TARGET_COMMIT"
-  WORKER_CANDIDATE="$WORKER_IMAGE_REPOSITORY:git-$TARGET_COMMIT"
   mkdir -p "$LOG_DIR"
   chmod 750 "$LOG_DIR"
 
@@ -508,7 +529,16 @@ build_images() {
   if is_true "$MANAGE_WORKER"; then
     [[ -f "$BUILD_DIR/deploy/product-sync-worker/Dockerfile" ]] \
       || die "worker Dockerfile not found"
-    if docker image inspect "$WORKER_CANDIDATE" >/dev/null 2>&1; then
+    current_worker=$(container_image "$WORKER_CONTAINER")
+    if [[ -n "$current_worker" ]] && ! worker_build_inputs_changed "$baseline" "$TARGET_COMMIT"; then
+      WORKER_CANDIDATE=$current_worker
+      log "worker build inputs are unchanged; reusing $WORKER_CANDIDATE"
+    else
+      WORKER_CANDIDATE="$WORKER_IMAGE_REPOSITORY:git-$TARGET_COMMIT"
+    fi
+    if [[ "$WORKER_CANDIDATE" == "$current_worker" ]]; then
+      :
+    elif docker image inspect "$WORKER_CANDIDATE" >/dev/null 2>&1; then
       worker_revision=$(image_revision "$WORKER_CANDIDATE")
       [[ "$worker_revision" == "$TARGET_COMMIT" ]] \
         || die "existing worker image has unexpected revision: $WORKER_CANDIDATE"
@@ -548,7 +578,7 @@ compose_up_worker() {
   (
     cd "$DEPLOY_DIR"
     SUB2API_IMAGE="$app_image" PRODUCT_SYNC_WORKER_IMAGE="$worker_image" \
-      docker compose -f "$COMPOSE_FILE" up -d --no-deps --force-recreate "$WORKER_SERVICE"
+      docker compose -f "$COMPOSE_FILE" up -d --no-deps "$WORKER_SERVICE"
   )
 }
 

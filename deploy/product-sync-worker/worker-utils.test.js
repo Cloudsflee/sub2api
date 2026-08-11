@@ -119,16 +119,20 @@ test('parseShopHTTPResponse separates verification pages from HTTP 429/502/520 p
     payload: fixture.quote,
   }), fixture.quote)
 
+  const challengeHTML = `<div id="captcha-element">Please slide to verify</div>${'x'.repeat(3_000)}`
   assert.throws(() => parseShopHTTPResponse({
-    status: 200,
+    status: 403,
     contentType: 'text/html',
     payload: null,
+    responseURL: 'https://pay.ldxp.cn/shopApi/Shop/info?challenge=1',
     responseError: 'denied by http_custom',
-    text: '<div id="captcha-element">Please slide to verify</div>',
+    text: challengeHTML,
   }), (error) => (
     error.kind === 'verification'
+    && error.challengeResponse.status === 403
+    && error.challengeResponse.url === 'https://pay.ldxp.cn/shopApi/Shop/info?challenge=1'
     && error.challengeResponse.responseError === 'denied by http_custom'
-    && error.challengeResponse.text.includes('captcha-element')
+    && error.challengeResponse.text === challengeHTML
   ))
 
   for (const status of [429, 502, 520]) {

@@ -198,6 +198,40 @@ test('browser shop evaluator reports a response body timeout without discarding 
   }
 })
 
+test('browser shop evaluator preserves a bounded HTML challenge and its final response URL', async () => {
+  const originalFetch = global.fetch
+  const requestURL = 'https://pay.ldxp.cn/shopApi/Shop/info'
+  const responseURL = `${requestURL}?challenge=1`
+  const body = `<div id="captcha-element">Please slide to verify</div>${'x'.repeat(520_000)}`
+  global.fetch = async () => ({
+    status: 403,
+    url: responseURL,
+    headers: {
+      get(name) {
+        const header = String(name).toLowerCase()
+        if (header === 'content-type') return 'text/html; charset=utf-8'
+        if (header === 'x-tengine-error') return 'denied by http_custom'
+        return ''
+      },
+    },
+    text: async () => body,
+  })
+  try {
+    const result = await evaluateShopRequestInBrowser({
+      requestPath: requestURL,
+      requestBody: {},
+      requestTimeoutMilliseconds: 1_000,
+      visitorID: 'test',
+    })
+    assert.equal(result.status, 403)
+    assert.equal(result.responseURL, responseURL)
+    assert.equal(result.text, body.slice(0, 512_000))
+    assert.equal(result.responseError, 'denied by http_custom')
+  } finally {
+    global.fetch = originalFetch
+  }
+})
+
 test('node protocol timeout remains a lane restart and observes a late rejection', async () => {
   let rejectEvaluation
   const page = {

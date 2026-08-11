@@ -7,7 +7,9 @@ const { promisify } = require('node:util')
 
 const DEFAULT_ORIGIN = 'https://pay.ldxp.cn'
 const MAX_DRAG_ATTEMPTS = 2
+const MAX_STAGED_CHALLENGE_BYTES = 512_000
 const BLOCKED_RESOURCE_TYPES = new Set(['image', 'media', 'font'])
+const ALIYUN_CLEARANCE_COOKIE = /^acw_sc__v(?:2|3)$/i
 const execFileAsync = promisify(execFile)
 
 class ChallengeError extends Error {
@@ -1060,6 +1062,24 @@ function validStorageState(value) {
   return value.cookies.every(validCookie) && value.origins.every(validOrigin)
 }
 
+function storedSessionIsUsable(providerID, storageState, origin, now = Date.now()) {
+  if (providerID !== 'aliyun-esa') return true
+  let hostname = ''
+  try {
+    hostname = new URL(origin).hostname.toLowerCase()
+  } catch {
+    return false
+  }
+  const nowSeconds = Number(now) / 1_000
+  return storageState.cookies.some((cookie) => {
+    if (!ALIYUN_CLEARANCE_COOKIE.test(String(cookie?.name || ''))) return false
+    const domain = String(cookie?.domain || '').replace(/^\./, '').toLowerCase()
+    if (domain && hostname !== domain && !hostname.endsWith(`.${domain}`)) return false
+    const expires = Number(cookie?.expires)
+    return !Number.isFinite(expires) || expires <= 0 || expires > nowSeconds + 30
+  })
+}
+
 function proxySessionSummary(proxy) {
   const identity = proxyIdentity(proxy)
   let server = ''
@@ -1091,7 +1111,7 @@ function ensurePrivateDirectory(directory) {
   fs.chmodSync(directory, 0o700)
 }
 
-function readStoredSession(sessionDirectory, providers, origin, proxy) {
+function readStoredSession(sessionDirectory, providers, origin, proxy, now = Date.now()) {
   ensurePrivateDirectory(sessionDirectory)
   for (const provider of providers) {
     const file = sessionFilePath(sessionDirectory, provider.id, origin, proxy)
@@ -1109,6 +1129,9 @@ function readStoredSession(sessionDirectory, providers, origin, proxy) {
         }
       }
       const { _sub2api: ignoredMetadata, ...storageState } = parsed
+      if (!storedSessionIsUsable(provider.id, storageState, origin, now)) {
+        throw new Error('stored verification session has expired')
+      }
       fs.chmodSync(file, 0o600)
       return { provider: provider.id, storageState }
     } catch {
@@ -1164,6 +1187,65 @@ async function navigateHome(page, origin, timeoutMilliseconds) {
       }).catch(() => {})
     }
     return null
+  }
+}
+
+function normalizeStagedChallengeResponse(value, origin) {
+  if (!value || typeof value !== 'object') return null
+  const text = String(value.text || '')
+  if (text.trim() === '') return null
+  if (Buffer.byteLength(text, 'utf8') > MAX_STAGED_CHALLENGE_BYTES) {
+    throw new ChallengeError('failed', 'shop API verification response is too large to render safely')
+  }
+  let url
+  try {
+    url = new URL(String(value.url || value.requestURL || '/'), origin)
+  } catch {
+    throw new ChallengeError('failed', 'shop API verification response has an invalid URL')
+  }
+  if (url.origin !== origin) {
+    throw new ChallengeError('failed', 'shop API verification response escaped the configured origin')
+  }
+  const status = Number(value.status)
+  return {
+    url: url.href,
+    status: Number.isInteger(status) && status >= 200 && status <= 599 ? status : 200,
+    contentType: String(value.contentType || 'text/html; charset=utf-8').replace(/[\r\n]/g, ''),
+    responseError: String(value.responseError || '').replace(/[\r\n]/g, ''),
+    text,
+  }
+}
+
+async function stageChallengeResponse(page, origin, value, timeoutMilliseconds) {
+  const challenge = normalizeStagedChallengeResponse(value, origin)
+  if (!challenge) return null
+  if (typeof page?.route !== 'function' || typeof page?.goto !== 'function' || typeof page?.unroute !== 'function') {
+    throw new ChallengeError('failed', 'browser page cannot render the shop API verification response')
+  }
+  const handler = async (route) => route.fulfill({
+    status: challenge.status,
+    headers: {
+      'content-type': challenge.contentType,
+      ...(challenge.responseError ? { 'x-tengine-error': challenge.responseError } : {}),
+    },
+    body: challenge.text,
+  })
+  await page.route(challenge.url, handler, { times: 1 })
+  try {
+    return await page.goto(challenge.url, {
+      waitUntil: 'domcontentloaded',
+      timeout: timeoutMilliseconds,
+    })
+  } catch (error) {
+    if (error?.name !== 'TimeoutError' && !isExpectedNavigationAbort(error)) throw error
+    if (error?.name !== 'TimeoutError' && typeof page.waitForLoadState === 'function') {
+      await page.waitForLoadState('domcontentloaded', {
+        timeout: Math.min(5_000, timeoutMilliseconds),
+      }).catch(() => {})
+    }
+    return null
+  } finally {
+    await page.unroute(challenge.url, handler).catch(() => {})
   }
 }
 
@@ -1238,6 +1320,7 @@ class ChallengeManager {
     this.now = options.now || Date.now
     this.inspect = options.inspect || collectChallengeSnapshot
     this.navigate = options.navigate || ((page, timeout) => navigateHome(page, this.origin, timeout))
+    this.stage = options.stage || ((page, response, timeout) => stageChallengeResponse(page, this.origin, response, timeout))
     this.reload = options.reload || reloadChallenge
     this.drag = options.drag || dragSlider
     this.nativeDrag = Boolean(options.nativeDrag)
@@ -1312,11 +1395,17 @@ class ChallengeManager {
     options.setResourcesAllowed?.(true)
 
     try {
-      let response = await this.operation(this.navigate(page, this.navigationTimeoutMilliseconds, signal), signal)
+      const stagedResponse = normalizeStagedChallengeResponse(options.challengeResponse, this.origin)
+      let response = stagedResponse
+        ? await this.operation(this.stage(page, stagedResponse, this.navigationTimeoutMilliseconds, signal), signal)
+        : await this.operation(this.navigate(page, this.navigationTimeoutMilliseconds, signal), signal)
       let snapshot = withChallengeResponseContext(
         await this.operation(this.inspect(page, response), signal),
-        'initial-navigation'
+        stagedResponse ? 'runtime-api-challenge' : 'initial-navigation'
       )
+      if (stagedResponse?.responseError && !snapshot.responseError) {
+        snapshot = { ...snapshot, responseError: stagedResponse.responseError }
+      }
       // ESA's loader script can remain on an otherwise normal page after a
       // successful verification. Treat the page as clear when the challenge
       // DOM/copy is gone; a stale http_custom header on the navigation is
@@ -1336,11 +1425,16 @@ class ChallengeManager {
       while (attempt < MAX_DRAG_ATTEMPTS) {
         throwIfAborted(signal)
         if (attempt > 0) {
-          response = await this.operation(this.reload(page, this.navigationTimeoutMilliseconds, signal), signal)
+          response = stagedResponse
+            ? await this.operation(this.stage(page, stagedResponse, this.navigationTimeoutMilliseconds, signal), signal)
+            : await this.operation(this.reload(page, this.navigationTimeoutMilliseconds, signal), signal)
           snapshot = withChallengeResponseContext(
             await this.operation(this.inspect(page, response), signal),
-            'reload-navigation'
+            stagedResponse ? 'runtime-api-challenge' : 'reload-navigation'
           )
+          if (stagedResponse?.responseError && !snapshot.responseError) {
+            snapshot = { ...snapshot, responseError: stagedResponse.responseError }
+          }
           if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
             await this.persistSolvedSession(context, provider.id, proxy)
             const solvedAt = new Date(this.now()).toISOString()
@@ -1360,11 +1454,16 @@ class ChallengeManager {
         // the first miss so that this transient state is not misclassified as
         // an unsupported challenge and parked for the six-hour backoff.
         if (!geometry && attempt === 0) {
-          response = await this.operation(this.reload(page, this.navigationTimeoutMilliseconds, signal), signal)
+          response = stagedResponse
+            ? await this.operation(this.stage(page, stagedResponse, this.navigationTimeoutMilliseconds, signal), signal)
+            : await this.operation(this.reload(page, this.navigationTimeoutMilliseconds, signal), signal)
           snapshot = withChallengeResponseContext(
             await this.operation(this.inspect(page, response), signal),
-            'reload-navigation'
+            stagedResponse ? 'runtime-api-challenge' : 'reload-navigation'
           )
+          if (stagedResponse?.responseError && !snapshot.responseError) {
+            snapshot = { ...snapshot, responseError: stagedResponse.responseError }
+          }
           if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
             await this.persistSolvedSession(context, provider.id, proxy)
             const solvedAt = new Date(this.now()).toISOString()
@@ -1494,7 +1593,7 @@ async function retryFailedChallengeOperation(task, recover, options = {}) {
       if (!isChallengeError(error)) throw error
       if (recoveries >= maxRecoveries) {
         throw new ChallengeError(
-          'unsupported',
+          String(options.exhaustedState || 'failed'),
           String(options.exhaustedMessage || 'operation repeatedly returned a verification response'),
           { restartLane: true, cause: error }
         )
@@ -1539,6 +1638,8 @@ module.exports = {
   sessionDigest,
   sessionFilePath,
   shouldBlockResource,
+  stageChallengeResponse,
+  storedSessionIsUsable,
   validStorageState,
   writeStoredSession,
 }

@@ -11,6 +11,7 @@ cat >"$BIN/docker" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 root=${FAKE_DOCKER_ROOT:?}
+printf '%s\n' "$*" >>"${FAKE_DOCKER_COMMANDS:?}"
 state_file() { printf '%s/%s.state\n' "$root" "$1"; }
 read_state() { cat "$(state_file "$1")"; }
 write_state() { printf '%s\n' "$2" >"$(state_file "$1")"; }
@@ -122,10 +123,12 @@ WORKER_STABLE_SECONDS=0
 DRAIN_POLL_SECONDS=0
 DRAIN_TIMEOUT_SECONDS=10
 FAKE_DOCKER_ROOT="$TEST_ROOT/state"
+FAKE_DOCKER_COMMANDS="$TEST_ROOT/docker-commands"
 FAKE_HAPROXY_SLOT="$TEST_ROOT/haproxy-slot"
-export FAKE_DOCKER_ROOT FAKE_HAPROXY_SLOT
+export FAKE_DOCKER_ROOT FAKE_DOCKER_COMMANDS FAKE_HAPROXY_SLOT
 PATH="$BIN:$PATH"
 touch "$COMPOSE_FILE"
+touch "$FAKE_DOCKER_COMMANDS"
 
 perform_hot_switch new-commit new worker-new
 
@@ -136,4 +139,9 @@ grep -Fxq 'SUB2API_IMAGE=new' "$DEPLOY_DIR/.env"
 grep -q '^old|false|' "$TEST_ROOT/state/sub2api-blue.state"
 grep -q '^new|true|' "$TEST_ROOT/state/sub2api-green.state"
 grep -Fxq green "$TEST_ROOT/haproxy-slot"
+grep -Fq "compose -f $COMPOSE_FILE up -d --no-deps product-sync-worker" "$FAKE_DOCKER_COMMANDS"
+if grep -Fq -- '--force-recreate product-sync-worker' "$FAKE_DOCKER_COMMANDS"; then
+  echo 'worker deployment still forces container recreation' >&2
+  exit 1
+fi
 echo 'hot switch tests passed'
