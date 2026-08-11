@@ -558,7 +558,14 @@ async function initializeShopPage(lane, context, page, proxy, recovery = false, 
       throw new ShopSyncError('network', `shop session navigation did not reach ${shopOrigin}`)
     }
     throwIfAborted(signal)
-    if (snapshot.isChallenge && !challengeCleared(snapshot) && !challengeContentCleared(snapshot)) {
+    const challengeShellVisibleOrLoading = snapshot.frames.some((frame) => (
+      frame?.hasAliyunScript
+        || frame?.hasAliyunDOM
+        || frame?.hasCaptchaDOM
+        || frame?.hasGenericSlider
+    ))
+    if (snapshot.isChallenge && !challengeCleared(snapshot)
+      && (!challengeContentCleared(snapshot) || challengeShellVisibleOrLoading)) {
       await solveChallengeForContext(lane, context, page, proxy, signal)
       if (recovery) console.log(`${new Date().toISOString()} lane ${lane.index + 1} shop session recovered after verification`)
     } else {

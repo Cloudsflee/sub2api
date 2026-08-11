@@ -616,7 +616,8 @@ test('runtime API challenge is staged at its original URL and solved without an 
     sessionDirectory: directory,
     providers: [{
       id: 'aliyun-esa',
-      detect: (snapshot) => snapshot.frames[0].hasAliyunDOM,
+      detect: (snapshot) => snapshot.responseError === 'denied by http_custom'
+        || snapshot.frames[0].hasAliyunDOM,
       locate: async () => sliderGeometry(),
     }],
     navigate: async () => { homeNavigations += 1; return {} },
@@ -626,7 +627,10 @@ test('runtime API challenge is staged at its original URL and solved without an 
         assert.equal(stagedResponse.status, 403)
         assert.equal(stagedResponse.body, challengeHTML)
         assert.equal(stagedResponse.headers['x-tengine-error'], 'denied by http_custom')
-        return aliyunSnapshot()
+        const loadingSnapshot = clearSnapshot('denied by http_custom')
+        loadingSnapshot.frames[0].hasAliyunScript = true
+        loadingSnapshot.frames[0].url = apiURL
+        return loadingSnapshot
       }
       return clearSnapshot()
     },

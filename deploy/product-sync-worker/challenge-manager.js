@@ -1412,7 +1412,7 @@ class ChallengeManager {
       // accepted only when the resulting document is a real normal page.
       if (!challengeSnapshotDetected(snapshot)
         || challengeCleared(snapshot)
-        || challengeContentCleared(snapshot)) {
+        || (!stagedResponse && challengeContentCleared(snapshot))) {
         report({ state: 'clear' })
         return { state: 'clear', provider: '' }
       }
