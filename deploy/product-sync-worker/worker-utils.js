@@ -4,6 +4,11 @@ const path = require('node:path')
 
 const supportedProxyProtocols = new Set(['http:', 'https:', 'socks5:'])
 const inventorylessGoodsTypes = new Set(['article', 'resource', 'equity'])
+// ESA puts its identifying markers after a large inline mobile/desktop
+// bootstrap script. Keep detection bounded, but inspect more than the first
+// couple of kilobytes so API challenge responses are not misclassified as
+// ordinary HTML errors.
+const challengeDetectionBytes = 16 * 1024
 
 class ShopSyncError extends Error {
   constructor(kind, message) {
@@ -463,7 +468,7 @@ function parseShopHTTPResponse(result) {
   if (!contentType.includes('application/json')) {
     const responseError = String(result.responseError || '')
     const responseText = String(result.text || '').slice(0, 512_000)
-    const detectionText = responseText.slice(0, 2_000)
+    const detectionText = responseText.slice(0, challengeDetectionBytes)
     // Do not route every HTML error page through challenge recovery. ESA marks
     // its challenge responses with http_custom, while other deployments expose
     // the slider/captcha copy or DOM identifiers in the response body.

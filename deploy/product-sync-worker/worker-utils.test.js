@@ -135,6 +135,19 @@ test('parseShopHTTPResponse separates verification pages from HTTP 429/502/520 p
     && error.challengeResponse.text === challengeHTML
   ))
 
+  const lateMarkerHTML = `${'x'.repeat(2_500)}<script>window.aliyunCaptcha = true</script><div class="slider">slide to verify</div>`
+  assert.throws(() => parseShopHTTPResponse({
+    status: 403,
+    contentType: 'text/html; charset=utf-8',
+    responseURL: 'https://pay.ldxp.cn/shopApi/Shop/info',
+    responseError: '',
+    text: lateMarkerHTML,
+  }), (error) => (
+    error instanceof ShopSyncError
+      && error.kind === 'verification'
+      && error.challengeResponse.text === lateMarkerHTML
+  ))
+
   for (const status of [429, 502, 520]) {
     assert.throws(() => parseShopHTTPResponse({
       status,
