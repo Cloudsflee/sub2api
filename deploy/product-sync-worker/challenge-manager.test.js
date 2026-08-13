@@ -977,6 +977,31 @@ test('unsupported verification pages do not touch a slider', async (t) => {
   assert.equal(drags, 0)
 })
 
+test('a recognized provider with a missing control is a retryable failure', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  let locateCalls = 0
+  const manager = new ChallengeManager({
+    enabled: true,
+    providers: [{
+      id: 'aliyun-esa',
+      detect: () => true,
+      locate: async () => { locateCalls += 1; return null },
+    }],
+    sessionDirectory: directory,
+    navigate: async () => ({}),
+    reload: async () => ({}),
+    inspect: async () => aliyunSnapshot(),
+  })
+
+  await assert.rejects(() => manager.solve({ context: {}, page: {} }), (error) => (
+    error instanceof ChallengeError
+      && error.challengeState === 'failed'
+      && challengeBackoffMilliseconds(1, error.challengeState) === 15 * 60_000
+  ))
+  assert.equal(locateCalls, 2)
+})
+
 test('challenge timeout cancels a pending recovery', async (t) => {
   const directory = temporaryDirectory()
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))

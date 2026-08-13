@@ -1481,7 +1481,7 @@ class ChallengeManager {
           }), signal)
         }
         if (!geometry) {
-          throw new ChallengeError('unsupported', `${provider.id} challenge has no supported visible slide-to-end control`)
+          throw new ChallengeError('failed', `${provider.id} challenge did not expose a visible slide-to-end control`)
         }
         const distance = computeDragDistance(geometry.trackBox, geometry.handleBox)
         const trajectory = generateDragTrajectory(distance, { random: this.random })
