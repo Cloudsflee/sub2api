@@ -147,3 +147,6 @@ output/
 # Python bytecode
 __pycache__/
 *.py[cod]
+
+# Vitest / Vite cache at repo root
+.vite/
