@@ -8,7 +8,7 @@ ConditionPathExists=/opt/sub2api/docker-compose.yml
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/sub2api-autodeploy
-ExecStart=/usr/local/sbin/sub2api-autodeploy --deploy
+ExecStart=/usr/local/sbin/sub2api-autodeploy-launcher --deploy
 TimeoutStartSec=45min
 Nice=10
 IOSchedulingClass=best-effort

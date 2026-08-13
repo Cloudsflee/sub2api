@@ -50,6 +50,7 @@ else
 fi
 
 for script in \
+  sub2api-autodeploy-launcher.sh \
   sub2api-autodeploy.sh \
   sub2api-health-restart.sh \
   sub2api-haproxy-config.sh \
@@ -70,6 +71,7 @@ if [[ -f /etc/haproxy/haproxy.cfg ]]; then
   cp -a /etc/haproxy/haproxy.cfg "$BACKUP_ROOT/haproxy.cfg.before"
 fi
 for installed in \
+  /usr/local/sbin/sub2api-autodeploy-launcher \
   /usr/local/sbin/sub2api-autodeploy \
   /usr/local/sbin/sub2api-health-restart.sh \
   /usr/local/sbin/sub2api-haproxy-config \
@@ -85,6 +87,7 @@ if ! command -v haproxy >/dev/null 2>&1; then
   apt-get install -y haproxy
 fi
 
+install -m 0755 "$SCRIPT_DIR/sub2api-autodeploy-launcher.sh" /usr/local/sbin/sub2api-autodeploy-launcher
 install -m 0755 "$SCRIPT_DIR/sub2api-autodeploy.sh" /usr/local/sbin/sub2api-autodeploy
 install -m 0755 "$SCRIPT_DIR/sub2api-health-restart.sh" /usr/local/sbin/sub2api-health-restart.sh
 install -m 0755 "$SCRIPT_DIR/sub2api-haproxy-config.sh" /usr/local/sbin/sub2api-haproxy-config

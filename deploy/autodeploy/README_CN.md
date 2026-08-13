@@ -25,8 +25,8 @@ sudo deploy/autodeploy/install.sh --migrate-blue-green
 查看当前槽位和切换状态：
 
 ```bash
-sudo /usr/local/sbin/sub2api-autodeploy --status
-sudo /usr/local/sbin/sub2api-autodeploy --rollback
+sudo /usr/local/sbin/sub2api-autodeploy-launcher --status
+sudo /usr/local/sbin/sub2api-autodeploy-launcher --rollback
 ```
 
 自动发布会比较上一次成功部署提交的 `backend/migrations`：修改或删除既有迁移，以及新增
@@ -79,29 +79,29 @@ sudo journalctl -u sub2api-autodeploy.service -n 200 --no-pager
 
 安装器会先确认 `/opt/sub2api-integration` 是位于 `custom` 分支的 Git 仓库；
 条件不满足时不会启用更新定时器，避免管理页接受更新后才发现宿主机没有集成仓库。
-更新服务通过固定 launcher 从该仓库读取当前版本的同步脚本，因此脚本修复不需要再次
-手工复制到 `/usr/local/sbin`。旧安装升级到此机制时需要重新执行一次安装命令。
+更新和部署服务通过固定 launcher 从仓库读取当前 CI 已批准的脚本，因此脚本修复不需要
+再次手工复制到 `/usr/local/sbin`。旧安装升级到此机制时需要重新执行一次安装命令。
 
 ## 常用命令
 
 ```bash
 # 查看本地缓存的源提交、CI 批准提交和运行镜像
-sudo sub2api-autodeploy --status
+sudo sub2api-autodeploy-launcher --status
 
 # 刷新远端并查看是否有待部署提交
-sudo sub2api-autodeploy --check
+sudo sub2api-autodeploy-launcher --check
 
 # 部署 CI 批准的提交
-sudo sub2api-autodeploy --deploy
+sudo sub2api-autodeploy-launcher --deploy
 
 # 只构建 CI 批准的提交，不修改运行容器
-sudo sub2api-autodeploy --build-only
+sudo sub2api-autodeploy-launcher --build-only
 
 # 强制重新构建/部署当前批准提交
-sudo sub2api-autodeploy --force
+sudo sub2api-autodeploy-launcher --force
 
 # 回退到上一组应用和 Worker 镜像
-sudo sub2api-autodeploy --rollback
+sudo sub2api-autodeploy-launcher --rollback
 
 # 查看定时器和日志
 systemctl status sub2api-autodeploy.timer
