@@ -374,7 +374,7 @@ prepare_release_worktree() {
 }
 
 check_migration_compatibility() {
-  local baseline=$1 target=$2 status path previous_path normalized failed=0
+  local baseline=$1 target=$2 status path previous_path normalized remaining failed=0
 
   if [[ -z "$baseline" ]]; then
     log "migration gate cannot determine the deployed commit"
@@ -397,11 +397,24 @@ check_migration_compatibility() {
       continue
     fi
 
+    # Remove comments and quoted literals before looking for destructive
+    # statements.  A migration may legitimately mention DROP/RENAME in a
+    # COMMENT or rollback hint; those words are not executable SQL.
     normalized=$(git -C "$REPO_DIR" show "$target:$path" \
-      | sed -E 's/--.*$//' | tr '\n' ' ')
+      | sed -E "s/'([^']|'')*'//g; s/\"([^\"]|\"\")*\"//g; s/--.*$//" \
+      | tr '[:upper:]' '[:lower:]' \
+      | tr '\n' ' ')
+
+    # Adding a NOT NULL column to an existing table is only safe when the
+    # column has a DEFAULT in the same ADD COLUMN clause.  Remove those safe
+    # clauses first so a second unsafe ADD COLUMN in a multi-column ALTER is
+    # still rejected.  This permits official additive migrations such as
+    # `ADD COLUMN ... NOT NULL DEFAULT ...` while retaining the old guard.
+    remaining=$(printf '%s' "$normalized" | sed -E \
+      's/add[[:space:]]+column[^,;]*not[[:space:]]+null[^,;]*default[^,;]*(,|;|$)/ /g')
     if grep -Eiq \
-      '(^|[^[:alnum:]_])(DROP|RENAME)([^[:alnum:]_]|$)|ALTER[[:space:]]+COLUMN[^;]*(TYPE|SET[[:space:]]+DATA[[:space:]]+TYPE)|ALTER[[:space:]]+TABLE[^;]*NOT[[:space:]]+NULL' \
-      <<<"$normalized"; then
+      '(^|[^[:alnum:]_])(DROP|RENAME)([^[:alnum:]_]|$)|ALTER[[:space:]]+COLUMN[^;]*(TYPE|SET[[:space:]]+DATA[[:space:]]+TYPE)|ALTER[[:space:]]+TABLE[^;]*(SET[[:space:]]+NOT[[:space:]]+NULL|ADD[[:space:]]+COLUMN[^,;]*NOT[[:space:]]+NULL)' \
+      <<<"$remaining"; then
       log "migration gate rejected destructive SQL in new migration: $path"
       failed=1
     else

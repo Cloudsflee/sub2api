@@ -44,17 +44,44 @@ git -C "$REPO" commit -m additive >/dev/null
 ADDITIVE=$(git -C "$REPO" rev-parse HEAD)
 check_migration_compatibility "$CREATE_TABLE" "$ADDITIVE"
 
-printf 'DROP TABLE users;\n' >"$REPO/backend/migrations/004_drop_users.sql"
+printf "ALTER TABLE users ADD COLUMN safe_name text NOT NULL DEFAULT '';\n" \
+  >"$REPO/backend/migrations/004_add_defaulted_not_null.sql"
+git -C "$REPO" add .
+git -C "$REPO" commit -m additive-defaulted-not-null >/dev/null
+ADDITIVE_DEFAULT=$(git -C "$REPO" rev-parse HEAD)
+check_migration_compatibility "$ADDITIVE" "$ADDITIVE_DEFAULT"
+
+cat >"$REPO/backend/migrations/005_mixed_add_columns.sql" <<'SQL'
+ALTER TABLE users
+  ADD COLUMN safe_again text NOT NULL DEFAULT '',
+  ADD COLUMN unsafe_name text NOT NULL;
+SQL
+git -C "$REPO" add .
+git -C "$REPO" commit -m mixed-add-columns >/dev/null
+MIXED_ADD=$(git -C "$REPO" rev-parse HEAD)
+if check_migration_compatibility "$ADDITIVE_DEFAULT" "$MIXED_ADD"; then
+  echo 'unsafe ADD COLUMN in a mixed ALTER was not rejected' >&2
+  exit 1
+fi
+
+printf "COMMENT ON TABLE users IS 'DROP and RENAME are only documentation';\n" \
+  >"$REPO/backend/migrations/006_comment_keywords.sql"
+git -C "$REPO" add .
+git -C "$REPO" commit -m comment-keywords >/dev/null
+COMMENT_KEYWORDS=$(git -C "$REPO" rev-parse HEAD)
+check_migration_compatibility "$MIXED_ADD" "$COMMENT_KEYWORDS"
+
+printf 'DROP TABLE users;\n' >"$REPO/backend/migrations/007_drop_users.sql"
 git -C "$REPO" add .
 git -C "$REPO" commit -m destructive-drop >/dev/null
 DROP_COMMIT=$(git -C "$REPO" rev-parse HEAD)
-if check_migration_compatibility "$ADDITIVE" "$DROP_COMMIT"; then
+if check_migration_compatibility "$COMMENT_KEYWORDS" "$DROP_COMMIT"; then
   echo 'DROP migration was not rejected' >&2
   exit 1
 fi
 
 printf 'ALTER TABLE users ALTER COLUMN display_name TYPE varchar(32);\n' \
-  >"$REPO/backend/migrations/005_change_type.sql"
+  >"$REPO/backend/migrations/008_change_type.sql"
 git -C "$REPO" add .
 git -C "$REPO" commit -m destructive-type >/dev/null
 TYPE_COMMIT=$(git -C "$REPO" rev-parse HEAD)
@@ -64,7 +91,7 @@ if check_migration_compatibility "$DROP_COMMIT" "$TYPE_COMMIT"; then
 fi
 
 printf 'ALTER TABLE users ALTER COLUMN display_name SET NOT NULL;\n' \
-  >"$REPO/backend/migrations/006_set_not_null.sql"
+  >"$REPO/backend/migrations/009_set_not_null.sql"
 git -C "$REPO" add .
 git -C "$REPO" commit -m destructive-null >/dev/null
 NULL_COMMIT=$(git -C "$REPO" rev-parse HEAD)
@@ -74,7 +101,7 @@ if check_migration_compatibility "$TYPE_COMMIT" "$NULL_COMMIT"; then
 fi
 
 printf 'ALTER TABLE users ADD COLUMN required_name text NOT NULL;\n' \
-  >"$REPO/backend/migrations/007_add_not_null.sql"
+  >"$REPO/backend/migrations/010_add_not_null.sql"
 git -C "$REPO" add .
 git -C "$REPO" commit -m destructive-add-not-null >/dev/null
 ADD_NULL_COMMIT=$(git -C "$REPO" rev-parse HEAD)
