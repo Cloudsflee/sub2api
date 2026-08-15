@@ -18,7 +18,7 @@ func TestNormalizeOpenAICodexDefaultsPreservesExplicitOptOuts(t *testing.T) {
 	extra := map[string]any{
 		"codex_cli_only":                  false,
 		"codex_cli_only_allow_app_server": false,
-		codexFingerprintModeExtraKey:       string(codexFingerprintOff),
+		codexFingerprintModeExtraKey:      string(codexFingerprintOff),
 		"custom_setting":                  "keep",
 	}
 
