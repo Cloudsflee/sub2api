@@ -660,6 +660,7 @@ func (s *CRSSyncService) SyncFromCRS(ctx context.Context, input SyncFromCRSInput
 			credentials = mergeMap(existing.Credentials, credentials)
 		}
 		reconcileCRSUpstreamBillingProbeExtra(existing, PlatformOpenAI, AccountTypeOAuth, credentials, extra)
+		extra = normalizeOpenAICodexDefaults(PlatformOpenAI, AccountTypeOAuth, extra)
 
 		if existing == nil {
 			if !shouldCreateAccount(src.ID, selectedSet) {
