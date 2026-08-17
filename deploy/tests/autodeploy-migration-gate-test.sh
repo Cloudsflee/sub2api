@@ -51,6 +51,15 @@ git -C "$REPO" commit -m additive-defaulted-not-null >/dev/null
 ADDITIVE_DEFAULT=$(git -C "$REPO" rev-parse HEAD)
 check_migration_compatibility "$ADDITIVE" "$ADDITIVE_DEFAULT"
 
+cat >"$REPO/backend/migrations/005_replace_trigger.sql" <<'SQL'
+DROP TRIGGER IF EXISTS users_rollup ON users;
+CREATE TRIGGER users_rollup AFTER INSERT ON users FOR EACH ROW EXECUTE FUNCTION notify_users();
+SQL
+git -C "$REPO" add .
+git -C "$REPO" commit -m replace-trigger >/dev/null
+REPLACE_TRIGGER=$(git -C "$REPO" rev-parse HEAD)
+check_migration_compatibility "$ADDITIVE_DEFAULT" "$REPLACE_TRIGGER"
+
 cat >"$REPO/backend/migrations/005_mixed_add_columns.sql" <<'SQL'
 ALTER TABLE users
   ADD COLUMN safe_again text NOT NULL DEFAULT '',

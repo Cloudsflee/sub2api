@@ -412,6 +412,11 @@ check_migration_compatibility() {
     # `ADD COLUMN ... NOT NULL DEFAULT ...` while retaining the old guard.
     remaining=$(printf '%s' "$normalized" | sed -E \
       's/add[[:space:]]+column[^,;]*not[[:space:]]+null[^,;]*default[^,;]*(,|;|$)/ /g')
+    # Replacing row-level triggers is an additive, idempotent migration
+    # pattern. Allow only the guarded form; an unguarded DROP remains
+    # rejected below with other destructive statements.
+    remaining=$(printf '%s' "$remaining" | sed -E \
+      's/drop[[:space:]]+trigger[[:space:]]+if[[:space:]]+exists[^;]*;/ /g')
     if grep -Eiq \
       '(^|[^[:alnum:]_])(DROP|RENAME)([^[:alnum:]_]|$)|ALTER[[:space:]]+COLUMN[^;]*(TYPE|SET[[:space:]]+DATA[[:space:]]+TYPE)|ALTER[[:space:]]+TABLE[^;]*(SET[[:space:]]+NOT[[:space:]]+NULL|ADD[[:space:]]+COLUMN[^,;]*NOT[[:space:]]+NULL)' \
       <<<"$remaining"; then
