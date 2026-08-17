@@ -269,6 +269,25 @@ describe('PublicAccountImportView per-shop product refresh', () => {
     wrapper.unmount()
   })
 
+  it('shows the next retry time for an unavailable blocked lane', async () => {
+    const statusValue = workerStatus([2], 'shop API returned non-JSON HTTP 403')
+    statusValue.lanes[1].state = 'blocked'
+    statusValue.lanes[1].retry_at = '2026-08-17T12:05:00Z'
+    statusValue.lanes[1].challenge_state = 'clear'
+    getProducts.mockResolvedValue({
+      ...catalog([status('one')]),
+      worker_status: statusValue,
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await openShopsTab(wrapper)
+
+    const lane = wrapper.find('[data-product-sync-lane="2"]')
+    expect(lane.find('[data-product-sync-lane-retry-at]').exists()).toBe(true)
+    expect(lane.find('[data-product-sync-lane-retry-at]').text()).toContain('publicAccountImport.productSyncLaneRetryAt')
+    wrapper.unmount()
+  })
+
   it('sorts trusted shops first and untrusted shops last while preserving group order', async () => {
     getShops.mockResolvedValue([
       { ...shops[2], id: 'untrusted-first', name: 'Untrusted first' },

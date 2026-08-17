@@ -318,6 +318,13 @@
               >
                 {{ lane.reason || t('publicAccountImport.productSyncLaneUnavailable') }}
               </p>
+              <p
+                v-if="lane.availability === 'unavailable' && lane.retry_at"
+                class="mt-1 text-[11px] leading-4 text-red-700 dark:text-red-300"
+                data-product-sync-lane-retry-at
+              >
+                {{ t('publicAccountImport.productSyncLaneRetryAt', { time: formatProductSyncLaneRetryAt(lane.retry_at) }) }}
+              </p>
             </div>
           </div>
           </template>
@@ -1111,6 +1118,10 @@ function formatProductUpdatedAt(value: string): string {
     minute: '2-digit',
     hour12: false,
   })
+}
+
+function formatProductSyncLaneRetryAt(value: string): string {
+  return formatProductUpdatedAt(value)
 }
 
 function mergeShopProductSyncStatuses(statuses: PublicAccountImportProductSyncStatus[], replace: boolean) {

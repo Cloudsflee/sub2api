@@ -115,6 +115,7 @@ export default {
     productSyncAvailable: 'Available',
     productSyncUnavailable: 'Unavailable',
     productSyncLaneUnavailable: 'No specific reason was reported',
+    productSyncLaneRetryAt: 'Next retry: {time}',
     productSyncStatusLoading: 'Loading product update lane status…',
     productSyncStatusUnavailable: 'Unable to read product update lane status',
   },

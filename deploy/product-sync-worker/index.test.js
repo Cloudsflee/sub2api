@@ -15,6 +15,7 @@ const {
   evaluateShopRequestInBrowser,
   laneRecoveryCancellationFailure,
   pressureRecoveryFailure,
+  retryAccessDeniedAfterHomeReview,
   syncJobFinalError,
 } = require('./index')
 
@@ -134,6 +135,52 @@ test('challenge recovery cancellation rebuilds only when fallback rotation consu
   assert.equal(interrupted.kind, 'lease_lost')
   assert.equal(interrupted.restartLane, true)
   assert.equal(interrupted.cause, reason)
+})
+
+test('access denial home review retries only the failed API after a solved challenge', async () => {
+  let attempts = 0
+  let reviews = 0
+  const state = { reviewed: false }
+  const result = await retryAccessDeniedAfterHomeReview(async () => {
+    attempts += 1
+    if (attempts === 1) throw Object.assign(new Error('HTTP 403'), { kind: 'access_denied' })
+    return 'api result'
+  }, async () => {
+    reviews += 1
+    return { challengeDetected: true, challengeSolved: true }
+  }, { state })
+
+  assert.equal(result, 'api result')
+  assert.equal(attempts, 2)
+  assert.equal(reviews, 1)
+  assert.equal(state.reviewed, true)
+})
+
+test('access denial with a clear home page flows into pressure recovery without an API retry', async () => {
+  let attempts = 0
+  const denial = Object.assign(new Error('HTTP 403'), { kind: 'access_denied' })
+  await assert.rejects(() => retryAccessDeniedAfterHomeReview(async () => {
+    attempts += 1
+    throw denial
+  }, async () => ({ challengeDetected: false, challengeSolved: false })), (error) => error === denial)
+  assert.equal(attempts, 1)
+})
+
+test('an API operation performs at most one immediate access denial home review', async () => {
+  let reviews = 0
+  const state = { reviewed: false }
+  const denial = Object.assign(new Error('HTTP 403'), { kind: 'access_denied' })
+  const task = async () => { throw denial }
+
+  await assert.rejects(() => retryAccessDeniedAfterHomeReview(task, async () => {
+    reviews += 1
+    return { challengeDetected: false }
+  }, { state }), (error) => error === denial)
+  await assert.rejects(() => retryAccessDeniedAfterHomeReview(task, async () => {
+    reviews += 1
+    return { challengeDetected: false }
+  }, { state }), (error) => error === denial)
+  assert.equal(reviews, 1)
 })
 
 test('job finalization does not discard a required lane restart when the lease signal also aborted', () => {

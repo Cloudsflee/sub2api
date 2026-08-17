@@ -179,6 +179,24 @@ test('parseShopHTTPResponse separates verification pages from HTTP 429/502/520 p
       && error.kind === 'unknown'
       && !isPressureError(error)
   ))
+  assert.throws(() => parseShopHTTPResponse({
+    status: 403,
+    contentType: 'text/html',
+    text: '<html><title>Forbidden</title><body>request denied</body></html>',
+  }), (error) => (
+    error instanceof ShopSyncError
+      && error.kind === 'access_denied'
+      && isPressureError(error)
+  ))
+  assert.throws(() => parseShopHTTPResponse({
+    status: 403,
+    contentType: 'application/json',
+    payload: { code: 403, message: 'forbidden' },
+  }), (error) => (
+    error instanceof ShopSyncError
+      && error.kind === 'unknown'
+      && !isPressureError(error)
+  ))
 })
 
 test('parseShopHTTPResponse turns a browser body timeout into pressure without restarting the lane', () => {
@@ -433,7 +451,10 @@ test('pressure recovery counts only consecutive failures across shop API calls',
     let attempts = 0
     await withPressureRecovery(async () => {
       attempts += 1
-      if (attempts === 1) throw new ShopSyncError('network', `transient-${request}`)
+      if (attempts === 1) {
+        const kind = request === 0 ? 'access_denied' : 'network'
+        throw new ShopSyncError(kind, `transient-${request}`)
+      }
       return 'ok'
     }, {
       state,

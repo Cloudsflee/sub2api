@@ -298,7 +298,31 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
   }
   throwIfAborted(signal)
   if (result && typeof result === 'object') result.requestPath = path
-  return parseShopHTTPResponse(result)
+  try {
+    return parseShopHTTPResponse(result)
+  } catch (error) {
+    if (error?.kind === 'verification') {
+      console.warn(`${new Date().toISOString()} lane ${lane.index + 1} shop API ${path} classified as known_verification (HTTP ${error.challengeResponse?.status || 'unknown'})`)
+    } else if (error?.kind === 'access_denied') {
+      console.warn(`${new Date().toISOString()} lane ${lane.index + 1} shop API ${path} classified as access_denied (non-JSON HTTP 403)`)
+    }
+    throw error
+  }
+}
+
+async function retryAccessDeniedAfterHomeReview(task, review, options = {}) {
+  const state = options.state || { reviewed: false }
+  try {
+    return await task()
+  } catch (error) {
+    if (error?.kind !== 'access_denied' || state.reviewed) throw error
+    state.reviewed = true
+    await options.onReviewStart?.(error)
+    const result = await review(error)
+    await options.onReviewResult?.(result, error)
+    if (!result?.challengeDetected) throw error
+    return task()
+  }
 }
 
 /**
@@ -470,11 +494,31 @@ async function recoverLaneChallenge(lane, signal, challengeResponse) {
 }
 
 async function postShopAPIWithChallengeRecovery(lane, shopToken, path, body, deadlineAt, signal) {
+  const accessDeniedReviewState = { reviewed: false }
+  const task = () => retryAccessDeniedAfterHomeReview(
+    () => postShopAPI(lane, shopToken, path, body, deadlineAt, signal),
+    async () => {
+      ensureJobDeadline(deadlineAt, signal)
+      const result = await initializeShopPage(lane, lane.context, lane.page, lane.proxy, true, signal)
+      ensureJobDeadline(deadlineAt, signal)
+      return result
+    },
+    {
+      state: accessDeniedReviewState,
+      onReviewStart: async () => {
+        console.log(`${new Date().toISOString()} lane ${lane.index + 1} immediately reloading the shop home page to review access_denied for ${path}`)
+      },
+      onReviewResult: async (review) => {
+        const result = review?.challengeDetected ? 'challenge_detected' : 'home_clear'
+        console.log(`${new Date().toISOString()} lane ${lane.index + 1} access_denied home review result=${result} for ${path}`)
+      },
+    }
+  )
   const result = await retryChallengeOperationAcrossProxyPool({
     poolSize: lane.proxyPool.length,
     currentIndex: lane.proxyIndex,
     signal,
-    task: () => postShopAPI(lane, shopToken, path, body, deadlineAt, signal),
+    task,
     recoverCurrent: async ({ error }) => {
       ensureJobDeadline(deadlineAt, signal)
       await recoverLaneChallenge(lane, signal, error.challengeResponse)
@@ -511,12 +555,13 @@ async function postShopAPIWithPressureRecovery(lane, shopToken, path, body, dead
       onBackoff: async ({ error, failureCount, waitMilliseconds }) => {
         publishLaneStatus(lane, {
           state: 'blocked',
+          challenge_state: 'clear',
           pressure_failure_count: failureCount,
           retry_at: new Date(Date.now() + waitMilliseconds).toISOString(),
           last_error_at: new Date().toISOString(),
           last_error: errorMessage(error),
         })
-        console.log(`${new Date().toISOString()} lane ${lane.index + 1} preserving the active shop and applying product sync pressure backoff for ${Math.round(waitMilliseconds / 1000)} seconds`)
+        console.log(`${new Date().toISOString()} lane ${lane.index + 1} pressure backoff level=${Math.min(failureCount, 3)} kind=${error?.kind || 'network'} wait_seconds=${Math.round(waitMilliseconds / 1000)}`)
       },
       recover: async ({ failureCount }) => {
         if (stopping) throw new Error('product sync worker is stopping')
@@ -572,8 +617,10 @@ async function initializeShopPage(lane, context, page, proxy, recovery = false, 
       && (!challengeContentCleared(snapshot) || challengeShellVisibleOrLoading)) {
       await solveChallengeForContext(lane, context, page, proxy, signal)
       if (recovery) console.log(`${new Date().toISOString()} lane ${lane.index + 1} shop session recovered after verification`)
+      return { challengeDetected: true, challengeSolved: true }
     } else {
       publishChallengeState(lane, { state: 'clear' })
+      return { challengeDetected: false, challengeSolved: false }
     }
   } catch (error) {
     if (isChallengeError(error) || error?.kind) throw error
@@ -1430,5 +1477,6 @@ module.exports = {
   publishJobSnapshot,
   pressureRecoveryFailure,
   recoverLaneAfterPressure,
+  retryAccessDeniedAfterHomeReview,
   syncJobFinalError,
 }

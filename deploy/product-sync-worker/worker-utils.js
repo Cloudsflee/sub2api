@@ -475,7 +475,9 @@ function parseShopHTTPResponse(result) {
     const challengeResponse = /denied\s+by\s+http_custom|(?:aliyun|alicloud|alibabacloud|aliyuncaptcha|acw_sc__v[23]|captcha-element|captcha.{0,80}(?:slide|slider|drag)|(?:slide|slider|drag).{0,80}(?:verify|verification)|(?:verification|verify).{0,80}(?:slide|slider|drag)|(?:滑块|拖动|拖拽|滑动).{0,30}(?:验证|最右|尽头))/i
       .test(`${responseError}\n${detectionText}`)
     if (!challengeResponse) {
-      const kind = status === 429
+      const kind = status === 403
+        ? 'access_denied'
+        : status === 429
         ? 'rate_limit'
         : status >= 500 && status < 600 ? 'network' : 'unknown'
       throw new ShopSyncError(kind, `shop API returned non-JSON HTTP ${status}`)
@@ -524,7 +526,7 @@ function shopRequestError(path, error) {
 
 function isPressureError(error) {
   if (error?.restartLane || error?.kind === 'lease_lost') return false
-  return error?.kind === 'rate_limit' || error?.kind === 'network'
+  return error?.kind === 'access_denied' || error?.kind === 'rate_limit' || error?.kind === 'network'
 }
 
 function redactURLCredentials(value) {
