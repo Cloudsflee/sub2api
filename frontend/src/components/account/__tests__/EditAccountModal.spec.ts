@@ -467,6 +467,23 @@ describe('EditAccountModal', () => {
     )
   })
 
+  it('persists an explicit Codex fingerprint opt-out for OpenAI OAuth accounts', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { codex_fingerprint_mode: 'session' }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="edit-codex-fingerprint-mode-select"]').setValue('off')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.codex_fingerprint_mode).toBe('off')
+  })
+
   it('defaults legacy OpenAI accounts to long-context billing disabled', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()
