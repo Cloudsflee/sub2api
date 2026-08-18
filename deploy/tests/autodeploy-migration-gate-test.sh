@@ -60,6 +60,25 @@ git -C "$REPO" commit -m replace-trigger >/dev/null
 REPLACE_TRIGGER=$(git -C "$REPO" rev-parse HEAD)
 check_migration_compatibility "$ADDITIVE_DEFAULT" "$REPLACE_TRIGGER"
 
+cat >"$REPO/backend/migrations/006_replace_platform_check.sql" <<'SQL'
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_platform_check;
+ALTER TABLE users ADD CONSTRAINT users_platform_check CHECK (display_name IS NULL OR display_name IN ('APP', 'SAMPLE'));
+SQL
+git -C "$REPO" add .
+git -C "$REPO" commit -m replace-check-constraint >/dev/null
+REPLACE_CHECK=$(git -C "$REPO" rev-parse HEAD)
+check_migration_compatibility "$REPLACE_TRIGGER" "$REPLACE_CHECK"
+
+printf 'ALTER TABLE users DROP CONSTRAINT IF EXISTS users_platform_check;\n' \
+  >"$REPO/backend/migrations/007_drop_constraint.sql"
+git -C "$REPO" add .
+git -C "$REPO" commit -m destructive-drop-constraint >/dev/null
+DROP_CONSTRAINT=$(git -C "$REPO" rev-parse HEAD)
+if check_migration_compatibility "$REPLACE_CHECK" "$DROP_CONSTRAINT"; then
+  echo 'unpaired DROP CONSTRAINT migration was not rejected' >&2
+  exit 1
+fi
+
 cat >"$REPO/backend/migrations/005_mixed_add_columns.sql" <<'SQL'
 ALTER TABLE users
   ADD COLUMN safe_again text NOT NULL DEFAULT '',

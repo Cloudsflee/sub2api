@@ -417,6 +417,14 @@ check_migration_compatibility() {
     # rejected below with other destructive statements.
     remaining=$(printf '%s' "$remaining" | sed -E \
       's/drop[[:space:]]+trigger[[:space:]]+if[[:space:]]+exists[^;]*;/ /g')
+    # Replacing an existing CHECK constraint with an additive superset is safe
+    # when the same migration also declares the replacement constraint. Keep
+    # unpaired constraint drops subject to the destructive-operation gate.
+    if grep -Eiq 'drop[[:space:]]+constraint[[:space:]]+if[[:space:]]+exists' <<<"$remaining" \
+      && grep -Eiq 'add[[:space:]]+constraint' <<<"$remaining"; then
+      remaining=$(printf '%s' "$remaining" | sed -E \
+        's/drop[[:space:]]+constraint[[:space:]]+if[[:space:]]+exists[^;]*;/ /g')
+    fi
     if grep -Eiq \
       '(^|[^[:alnum:]_])(DROP|RENAME)([^[:alnum:]_]|$)|ALTER[[:space:]]+COLUMN[^;]*(TYPE|SET[[:space:]]+DATA[[:space:]]+TYPE)|ALTER[[:space:]]+TABLE[^;]*(SET[[:space:]]+NOT[[:space:]]+NULL|ADD[[:space:]]+COLUMN[^,;]*NOT[[:space:]]+NULL)' \
       <<<"$remaining"; then
