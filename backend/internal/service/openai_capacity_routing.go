@@ -161,7 +161,7 @@ func newOpenAIAccountDistributionKey(
 ) openAIAccountDistributionKey {
 	key := openAIAccountDistributionKey{
 		ungrouped:               groupID == nil,
-		platform:                normalizeOpenAICompatiblePlatform(platform),
+		platform:                NormalizeOpenAICompatiblePlatform(platform),
 		model:                   normalizeOpenAIAccountModelTransientModel(model),
 		requiredCapability:      requiredCapability,
 		requiredImageCapability: requiredImageCapability,
