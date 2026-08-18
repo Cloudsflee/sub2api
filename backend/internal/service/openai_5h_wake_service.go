@@ -1263,7 +1263,7 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 			"account_id=%d candidate=%d/%d phase=usage_check", account.ID, candidateNumber, len(candidates),
 		))
 		attemptCtx, attemptCancel := context.WithTimeout(ctx, openAI5hWakeAccountAttemptTimeout)
-		_, resetAt, queryErr := s.queryAndPersistGlobalUsage(attemptCtx, account)
+		usageUpdates, resetAt, queryErr := s.queryAndPersistGlobalUsage(attemptCtx, account)
 		if errors.Is(queryErr, errOpenAI5hWakeIdentityChanged) {
 			lastErrorCode = "identity_changed"
 			recordAttemptFailure("usage_check", 0, lastErrorCode, wakeEventErrorMessage(queryErr))
@@ -1296,7 +1296,8 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 				wakeEventErrorMessage(queryErr),
 			)
 		}
-		if queryErr == nil && resetAt != nil && resetAt.After(time.Now()) {
+		usedPercent, hasUsedPercent := openAIWakeUsedPercent(usageUpdates)
+		if queryErr == nil && resetAt != nil && resetAt.After(time.Now()) && hasUsedPercent && usedPercent > 0 {
 			attemptCancel()
 			result.Status = OpenAI5hWakeItemStatusSkippedActive
 			successID := account.ID
@@ -2135,6 +2136,10 @@ func activeWakeSnapshot(accounts []*Account, now time.Time) (*Account, time.Time
 		if !hasTrustedOpenAI5hWakeSnapshot(account) {
 			continue
 		}
+		usedPercent, observed := openAIWakeUsedPercent(account.Extra)
+		if !observed || usedPercent <= 0 {
+			continue
+		}
 		candidate, ok := openAIWakeResetAt(account.Extra)
 		if !ok || !candidate.After(now) {
 			continue
@@ -2145,6 +2150,36 @@ func activeWakeSnapshot(accounts []*Account, now time.Time) (*Account, time.Time
 		}
 	}
 	return source, resetAt, source != nil
+}
+
+func openAIWakeUsedPercent(extra map[string]any) (float64, bool) {
+	if extra == nil {
+		return 0, false
+	}
+	value, ok := extra["codex_5h_used_percent"]
+	if !ok || value == nil {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int32:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func openAI5hWakeIdentityHash(account *Account) string {

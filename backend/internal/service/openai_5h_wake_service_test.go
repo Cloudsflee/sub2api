@@ -579,6 +579,7 @@ func TestOpenAI5hWakeBuildPlanFiltersAndKeepsTypedIdentitiesSeparate(t *testing.
 	sharedB.Credentials["organization_id"] = "shared-pool"
 	active := *newOpenAI5hWakeAccount(3, "active-pool")
 	active.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
+	active.Extra["codex_5h_used_percent"] = float64(1)
 	active.Extra[openAI5hWakeSnapshotIdentityKey] = openAI5hWakeIdentityHash(&active)
 	apiKey := *newOpenAI5hWakeAccount(4, "api-key")
 	apiKey.Type = AccountTypeAPIKey
@@ -1219,6 +1220,7 @@ func TestOpenAI5hWake429UsesNewerAuthoritativeActiveSnapshot(t *testing.T) {
 	repo.onSupersededUpdate = func() {
 		account.Extra[OpenAICodexSnapshotObservedAtExtraKey] = "99999999999999999999"
 		account.Extra["codex_5h_window_minutes"] = 300
+		account.Extra["codex_5h_used_percent"] = float64(1)
 		account.Extra["codex_5h_reset_at"] = future.Format(time.RFC3339)
 		account.Extra[openAI5hWakeSnapshotIdentityKey] = openAI5hWakeIdentityHash(account)
 	}
@@ -1617,6 +1619,7 @@ func TestOpenAI5hWakeProcessItemSkipsPersistedActiveWindow(t *testing.T) {
 	second := newOpenAI5hWakeAccount(2, "shared-pool")
 	resetAt := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
 	first.Extra["codex_5h_reset_at"] = resetAt.Format(time.RFC3339)
+	first.Extra["codex_5h_used_percent"] = float64(1)
 	first.Extra[openAI5hWakeSnapshotIdentityKey] = openAI5hWakeIdentityHash(first)
 	repo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{1: first, 2: second}}
 	upstream := &openAI5hWakeHTTPStub{}
@@ -1632,6 +1635,42 @@ func TestOpenAI5hWakeProcessItemSkipsPersistedActiveWindow(t *testing.T) {
 	require.Empty(t, upstream.requests)
 	require.Empty(t, repo.updates)
 	require.NotContains(t, second.Extra, "codex_5h_reset_at")
+}
+
+func TestOpenAI5hWakeProcessItemWakesZeroPercentWindow(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	resetAt := time.Now().Add(5 * time.Hour).UTC().Truncate(time.Second)
+	account.Extra["codex_5h_reset_at"] = resetAt.Format(time.RFC3339)
+	account.Extra["codex_5h_used_percent"] = float64(0)
+	account.Extra[openAI5hWakeSnapshotIdentityKey] = openAI5hWakeIdentityHash(account)
+	repo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{account.ID: account}}
+	var usageCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		usedPercent := 0
+		if usageCalls.Add(1) > 1 {
+			usedPercent = 1
+		}
+		_, _ = fmt.Fprintf(w, `{"rate_limit":{"primary_window":{"used_percent":%d,"limit_window_seconds":18000,"reset_after_seconds":18000}}}`, usedPercent)
+	}))
+	defer server.Close()
+
+	tokenProvider := NewOpenAITokenProvider(repo, nil, nil)
+	quota := NewOpenAIQuotaService(repo, nil, tokenProvider, newQuotaRedirectingFactory(server))
+	upstream := &openAI5hWakeHTTPStub{responses: []openAI5hWakeStubResponse{{status: http.StatusOK}}}
+	wake := &OpenAI5hWakeService{
+		accountRepo: repo, quotaService: quota, tokenProvider: tokenProvider, httpUpstream: upstream,
+	}
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{account})[0]
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, TaskID: 12, IdentityHash: group.identityHash, MemberAccountIDs: []int64{account.ID},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusWoken, result.Status)
+	require.Equal(t, []int64{account.ID}, result.AttemptedAccountIDs)
+	require.Len(t, upstream.requests, 1)
+	require.GreaterOrEqual(t, usageCalls.Load(), int32(2))
 }
 
 func TestOpenAI5hWakeDoesNotTrustLegacyActiveSnapshot(t *testing.T) {
