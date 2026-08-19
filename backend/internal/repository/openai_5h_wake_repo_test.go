@@ -262,7 +262,8 @@ func TestOpenAI5hWakeClaimItemWithLeaseWaitsWhenPoolIsOccupied(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
-	repo := NewOpenAI5hWakeTaskRepository(db).(*openAI5hWakeRepository)
+	repo, ok := NewOpenAI5hWakeTaskRepository(db).(*openAI5hWakeRepository)
+	require.True(t, ok)
 	now := time.Now().UTC().Truncate(time.Second)
 	leaseUntil := now.Add(time.Minute)
 
@@ -289,7 +290,8 @@ func TestOpenAI5hWakeClaimItemWithLeaseAcquiresPoolBeforeRunningItem(t *testing.
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
-	repo := NewOpenAI5hWakeTaskRepository(db).(*openAI5hWakeRepository)
+	repo, ok := NewOpenAI5hWakeTaskRepository(db).(*openAI5hWakeRepository)
+	require.True(t, ok)
 	now := time.Now().UTC().Truncate(time.Second)
 	leaseUntil := now.Add(time.Minute)
 	const identityHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -704,7 +706,8 @@ func TestOpenAI5hWakeUpdateAutoWakeGroupCheckPreservesLastTaskWithoutNewTask(t *
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
-	repo := NewOpenAI5hWakeTaskRepository(db).(*openAI5hWakeRepository)
+	repo, ok := NewOpenAI5hWakeTaskRepository(db).(*openAI5hWakeRepository)
+	require.True(t, ok)
 	checkedAt := time.Now().UTC().Truncate(time.Second)
 
 	mock.ExpectExec(`(?s)UPDATE groups.*last_task_id = COALESCE\(\$5, openai_5h_auto_wake_last_task_id\).*WHEN \$5::bigint IS NULL THEN openai_5h_auto_wake_last_task_status.*status = 'active'.*openai_5h_auto_wake_enabled = TRUE`).
