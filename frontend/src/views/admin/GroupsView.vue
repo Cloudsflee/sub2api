@@ -520,6 +520,51 @@
           />
           <p class="input-hint">{{ t("admin.groups.platformHint") }}</p>
         </div>
+        <div
+          v-if="createForm.platform === 'openai'"
+          class="border-t border-gray-200 pt-4 dark:border-dark-600"
+          data-testid="create-openai-5h-auto-wake-section"
+        >
+          <div class="flex items-center justify-between gap-4">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ t("admin.groups.openAI5hAutoWake.title") }}
+            </label>
+            <div class="flex items-center gap-3">
+              <span class="text-sm text-gray-500 dark:text-gray-400">
+                {{
+                  createForm.openai_5h_auto_wake_enabled
+                    ? t("admin.groups.openAI5hAutoWake.enabled")
+                    : t("admin.groups.openAI5hAutoWake.disabled")
+                }}
+              </span>
+              <button
+                type="button"
+                class="relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors"
+                :class="
+                  createForm.openai_5h_auto_wake_enabled
+                    ? 'bg-primary-500'
+                    : 'bg-gray-300 dark:bg-dark-600'
+                "
+                :aria-label="t('admin.groups.openAI5hAutoWake.title')"
+                :aria-pressed="createForm.openai_5h_auto_wake_enabled"
+                data-testid="create-openai-5h-auto-wake-toggle"
+                @click="
+                  createForm.openai_5h_auto_wake_enabled =
+                    !createForm.openai_5h_auto_wake_enabled
+                "
+              >
+                <span
+                  class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform"
+                  :class="
+                    createForm.openai_5h_auto_wake_enabled
+                      ? 'translate-x-6'
+                      : 'translate-x-1'
+                  "
+                />
+              </button>
+            </div>
+          </div>
+        </div>
         <!-- 从分组复制账号 -->
         <div v-if="copyAccountsGroupOptions.length > 0">
           <div class="mb-1.5 flex items-center gap-1">
@@ -2453,6 +2498,101 @@
         <div>
           <label class="input-label">{{ t("admin.groups.form.status") }}</label>
           <Select v-model="editForm.status" :options="editStatusOptions" />
+        </div>
+
+        <div
+          v-if="editForm.platform === 'openai'"
+          class="border-t border-gray-200 pt-4 dark:border-dark-600"
+          data-testid="edit-openai-5h-auto-wake-section"
+        >
+          <div class="flex items-center justify-between gap-4">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ t("admin.groups.openAI5hAutoWake.title") }}
+            </label>
+            <div class="flex items-center gap-3">
+              <span class="text-sm text-gray-500 dark:text-gray-400">
+                {{ openAI5hAutoWakeStateLabel(editForm) }}
+              </span>
+              <button
+                type="button"
+                class="relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors"
+                :class="
+                  editForm.openai_5h_auto_wake_enabled
+                    ? 'bg-primary-500'
+                    : 'bg-gray-300 dark:bg-dark-600'
+                "
+                :aria-label="t('admin.groups.openAI5hAutoWake.title')"
+                :aria-pressed="editForm.openai_5h_auto_wake_enabled"
+                data-testid="edit-openai-5h-auto-wake-toggle"
+                @click="
+                  editForm.openai_5h_auto_wake_enabled =
+                    !editForm.openai_5h_auto_wake_enabled
+                "
+              >
+                <span
+                  class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform"
+                  :class="
+                    editForm.openai_5h_auto_wake_enabled
+                      ? 'translate-x-6'
+                      : 'translate-x-1'
+                  "
+                />
+              </button>
+            </div>
+          </div>
+
+          <dl
+            class="mt-4 grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2"
+            data-testid="openai-5h-auto-wake-status"
+          >
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.openAI5hAutoWake.lastChecked") }}
+              </dt>
+              <dd
+                class="mt-0.5 break-words text-gray-800 dark:text-gray-200"
+                data-testid="openai-5h-auto-wake-last-checked"
+              >
+                {{ formatOpenAI5hAutoWakeCheckedAt(editingGroup) }}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.openAI5hAutoWake.candidatePools") }}
+              </dt>
+              <dd
+                class="mt-0.5 text-gray-800 dark:text-gray-200"
+                data-testid="openai-5h-auto-wake-candidate-pools"
+              >
+                {{
+                  editingGroup.openai_5h_auto_wake_last_candidate_pool_count ??
+                  t("admin.groups.openAI5hAutoWake.notAvailable")
+                }}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.openAI5hAutoWake.lastTask") }}
+              </dt>
+              <dd
+                class="mt-0.5 break-words text-gray-800 dark:text-gray-200"
+                data-testid="openai-5h-auto-wake-last-task"
+              >
+                {{ formatOpenAI5hAutoWakeTask(editingGroup) }}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.openAI5hAutoWake.reason") }}
+              </dt>
+              <dd
+                class="mt-0.5 break-words font-mono text-xs text-gray-800 dark:text-gray-200"
+                data-testid="openai-5h-auto-wake-reason"
+              >
+                {{ formatOpenAI5hAutoWakeReason(editingGroup) }}
+              </dd>
+            </div>
+          </dl>
         </div>
 
         <!-- Subscription Configuration -->
@@ -4476,6 +4616,7 @@ import { createStableObjectKeyResolver } from "@/utils/stableObjectKey";
 import { extractApiErrorMessage } from "@/utils/apiError";
 import { useKeyedDebouncedSearch } from "@/composables/useKeyedDebouncedSearch";
 import { getPersistedPageSize } from "@/composables/usePersistedPageSize";
+import { formatDateTimeToMinute } from "@/utils/format";
 import {
   createDefaultMessagesDispatchFormState,
   messagesDispatchConfigToFormState,
@@ -5115,6 +5256,7 @@ const createForm = reactive({
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   allow_messages_dispatch: false,
   allow_live: false,
+  openai_5h_auto_wake_enabled: false,
   opus_mapped_model: createMessagesDispatchDefaults.opus_mapped_model,
   sonnet_mapped_model: createMessagesDispatchDefaults.sonnet_mapped_model,
   haiku_mapped_model: createMessagesDispatchDefaults.haiku_mapped_model,
@@ -5477,6 +5619,7 @@ const editForm = reactive({
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   allow_messages_dispatch: false,
   allow_live: false,
+  openai_5h_auto_wake_enabled: false,
   default_mapped_model: '',
   opus_mapped_model: editMessagesDispatchDefaults.opus_mapped_model,
   sonnet_mapped_model: editMessagesDispatchDefaults.sonnet_mapped_model,
@@ -5498,6 +5641,74 @@ const editForm = reactive({
   max_reasoning_effort: "",
   reasoning_effort_mappings: [] as ReasoningEffortMappingRow[],
 });
+
+const openAI5hAutoWakeReasons = new Set([
+  "no_candidate",
+  "task_created",
+  "skipped_manual_active",
+  "skipped_auto_active",
+  "check_error",
+]);
+
+const openAI5hAutoWakeTaskStatuses = new Set([
+  "pending",
+  "running",
+  "succeeded",
+  "partial_succeeded",
+  "failed",
+  "cancelled",
+]);
+
+const openAI5hAutoWakeStateLabel = (form: {
+  openai_5h_auto_wake_enabled: boolean;
+  status: "active" | "inactive";
+}) => {
+  if (!form.openai_5h_auto_wake_enabled) {
+    return t("admin.groups.openAI5hAutoWake.disabled");
+  }
+  return form.status === "active"
+    ? t("admin.groups.openAI5hAutoWake.enabled")
+    : t("admin.groups.openAI5hAutoWake.paused");
+};
+
+const formatOpenAI5hAutoWakeCheckedAt = (group: AdminGroup | null) => {
+  const formatted = formatDateTimeToMinute(
+    group?.openai_5h_auto_wake_last_checked_at,
+  );
+  return formatted || t("admin.groups.openAI5hAutoWake.neverChecked");
+};
+
+const formatOpenAI5hAutoWakeTaskStatus = (status?: string) => {
+  if (!status) {
+    return "";
+  }
+  if (openAI5hAutoWakeTaskStatuses.has(status)) {
+    return t(`admin.groups.openAI5hAutoWake.statuses.${status}`);
+  }
+  return status;
+};
+
+const formatOpenAI5hAutoWakeTask = (group: AdminGroup | null) => {
+  const taskID = group?.openai_5h_auto_wake_last_task_id;
+  if (!taskID) {
+    return t("admin.groups.openAI5hAutoWake.notAvailable");
+  }
+  const status = formatOpenAI5hAutoWakeTaskStatus(
+    group?.openai_5h_auto_wake_last_task_status,
+  );
+  return status ? `#${taskID} · ${status}` : `#${taskID}`;
+};
+
+const formatOpenAI5hAutoWakeReason = (group: AdminGroup | null) => {
+  const reason = group?.openai_5h_auto_wake_last_reason?.trim();
+  if (!reason) {
+    return t("admin.groups.openAI5hAutoWake.notAvailable");
+  }
+  if (openAI5hAutoWakeReasons.has(reason)) {
+    return t(`admin.groups.openAI5hAutoWake.reasons.${reason}`);
+  }
+  return reason;
+};
 
 type ImagePricingFormState = {
   platform: GroupPlatform;
@@ -5930,6 +6141,7 @@ const closeCreateModal = () => {
   createForm.fallback_group_id_on_invalid_request = null;
   resetMessagesDispatchFormState(createForm);
   createForm.allow_live = false;
+  createForm.openai_5h_auto_wake_enabled = false;
   createForm.require_oauth_only = false;
   createForm.require_privacy_set = false;
   createForm.supported_model_scopes = ["claude", "gemini_text", "gemini_image"];
@@ -6046,6 +6258,9 @@ const handleCreateGroup = async () => {
               exact_model_mappings: createForm.exact_model_mappings,
             })
           : undefined,
+      openai_5h_auto_wake_enabled:
+        createForm.platform === "openai" &&
+        createForm.openai_5h_auto_wake_enabled,
       reasoning_effort_mappings: reasoningEffortMappingsToAPI(
         createForm.reasoning_effort_mappings,
       ),
@@ -6188,6 +6403,8 @@ const handleEdit = async (group: AdminGroup) => {
     group.allow_messages_dispatch ||
     messagesDispatchFormState.allow_messages_dispatch;
   editForm.allow_live = group.allow_live ?? false;
+  editForm.openai_5h_auto_wake_enabled =
+    group.openai_5h_auto_wake_enabled ?? false;
   editForm.opus_mapped_model = messagesDispatchFormState.opus_mapped_model;
   editForm.sonnet_mapped_model = messagesDispatchFormState.sonnet_mapped_model;
   editForm.haiku_mapped_model = messagesDispatchFormState.haiku_mapped_model;
@@ -6255,6 +6472,7 @@ const closeEditModal = () => {
   editForm.audio_stt_price_per_hour = null;
   resetMessagesDispatchFormState(editForm);
   editForm.allow_live = false;
+  editForm.openai_5h_auto_wake_enabled = false;
   resetModelsListState(editModelsListState);
 };
 
@@ -6320,6 +6538,9 @@ const handleUpdateGroup = async () => {
               exact_model_mappings: editForm.exact_model_mappings,
             })
           : undefined,
+      openai_5h_auto_wake_enabled:
+        editForm.platform === "openai" &&
+        editForm.openai_5h_auto_wake_enabled,
       reasoning_effort_mappings: reasoningEffortMappingsToAPI(
         editForm.reasoning_effort_mappings,
       ),
@@ -6692,6 +6913,7 @@ watch(
     if (newVal !== "openai") {
       resetMessagesDispatchFormState(createForm);
       createForm.allow_live = false;
+      createForm.openai_5h_auto_wake_enabled = false;
     }
     if (!isProfitControlPlatform(newVal)) {
       createForm.profit_control_enabled = false;
@@ -6740,6 +6962,7 @@ watch(
     if (newVal !== "openai") {
       resetMessagesDispatchFormState(editForm);
       editForm.allow_live = false;
+      editForm.openai_5h_auto_wake_enabled = false;
     }
     if (!isProfitControlPlatform(newVal)) {
       editForm.profit_control_enabled = false;
@@ -6790,6 +7013,7 @@ watch(
     if (newVal !== 'openai') {
       editForm.allow_messages_dispatch = false
       editForm.allow_live = false
+      editForm.openai_5h_auto_wake_enabled = false
       editForm.default_mapped_model = ''
     }
   }

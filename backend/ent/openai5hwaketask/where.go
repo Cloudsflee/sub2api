@@ -54,6 +54,16 @@ func IDLTE(id int64) predicate.OpenAI5hWakeTask {
 	return predicate.OpenAI5hWakeTask(sql.FieldLTE(FieldID, id))
 }
 
+// TriggerType applies equality check predicate on the "trigger_type" field. It's identical to TriggerTypeEQ.
+func TriggerType(v string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldEQ(FieldTriggerType, v))
+}
+
+// GroupID applies equality check predicate on the "group_id" field. It's identical to GroupIDEQ.
+func GroupID(v int64) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldEQ(FieldGroupID, v))
+}
+
 // Status applies equality check predicate on the "status" field. It's identical to StatusEQ.
 func Status(v string) predicate.OpenAI5hWakeTask {
 	return predicate.OpenAI5hWakeTask(sql.FieldEQ(FieldStatus, v))
@@ -162,6 +172,121 @@ func CreatedAt(v time.Time) predicate.OpenAI5hWakeTask {
 // UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
 func UpdatedAt(v time.Time) predicate.OpenAI5hWakeTask {
 	return predicate.OpenAI5hWakeTask(sql.FieldEQ(FieldUpdatedAt, v))
+}
+
+// TriggerTypeEQ applies the EQ predicate on the "trigger_type" field.
+func TriggerTypeEQ(v string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldEQ(FieldTriggerType, v))
+}
+
+// TriggerTypeNEQ applies the NEQ predicate on the "trigger_type" field.
+func TriggerTypeNEQ(v string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldNEQ(FieldTriggerType, v))
+}
+
+// TriggerTypeIn applies the In predicate on the "trigger_type" field.
+func TriggerTypeIn(vs ...string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldIn(FieldTriggerType, vs...))
+}
+
+// TriggerTypeNotIn applies the NotIn predicate on the "trigger_type" field.
+func TriggerTypeNotIn(vs ...string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldNotIn(FieldTriggerType, vs...))
+}
+
+// TriggerTypeGT applies the GT predicate on the "trigger_type" field.
+func TriggerTypeGT(v string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldGT(FieldTriggerType, v))
+}
+
+// TriggerTypeGTE applies the GTE predicate on the "trigger_type" field.
+func TriggerTypeGTE(v string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldGTE(FieldTriggerType, v))
+}
+
+// TriggerTypeLT applies the LT predicate on the "trigger_type" field.
+func TriggerTypeLT(v string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldLT(FieldTriggerType, v))
+}
+
+// TriggerTypeLTE applies the LTE predicate on the "trigger_type" field.
+func TriggerTypeLTE(v string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldLTE(FieldTriggerType, v))
+}
+
+// TriggerTypeContains applies the Contains predicate on the "trigger_type" field.
+func TriggerTypeContains(v string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldContains(FieldTriggerType, v))
+}
+
+// TriggerTypeHasPrefix applies the HasPrefix predicate on the "trigger_type" field.
+func TriggerTypeHasPrefix(v string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldHasPrefix(FieldTriggerType, v))
+}
+
+// TriggerTypeHasSuffix applies the HasSuffix predicate on the "trigger_type" field.
+func TriggerTypeHasSuffix(v string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldHasSuffix(FieldTriggerType, v))
+}
+
+// TriggerTypeEqualFold applies the EqualFold predicate on the "trigger_type" field.
+func TriggerTypeEqualFold(v string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldEqualFold(FieldTriggerType, v))
+}
+
+// TriggerTypeContainsFold applies the ContainsFold predicate on the "trigger_type" field.
+func TriggerTypeContainsFold(v string) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldContainsFold(FieldTriggerType, v))
+}
+
+// GroupIDEQ applies the EQ predicate on the "group_id" field.
+func GroupIDEQ(v int64) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldEQ(FieldGroupID, v))
+}
+
+// GroupIDNEQ applies the NEQ predicate on the "group_id" field.
+func GroupIDNEQ(v int64) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldNEQ(FieldGroupID, v))
+}
+
+// GroupIDIn applies the In predicate on the "group_id" field.
+func GroupIDIn(vs ...int64) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldIn(FieldGroupID, vs...))
+}
+
+// GroupIDNotIn applies the NotIn predicate on the "group_id" field.
+func GroupIDNotIn(vs ...int64) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldNotIn(FieldGroupID, vs...))
+}
+
+// GroupIDGT applies the GT predicate on the "group_id" field.
+func GroupIDGT(v int64) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldGT(FieldGroupID, v))
+}
+
+// GroupIDGTE applies the GTE predicate on the "group_id" field.
+func GroupIDGTE(v int64) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldGTE(FieldGroupID, v))
+}
+
+// GroupIDLT applies the LT predicate on the "group_id" field.
+func GroupIDLT(v int64) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldLT(FieldGroupID, v))
+}
+
+// GroupIDLTE applies the LTE predicate on the "group_id" field.
+func GroupIDLTE(v int64) predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldLTE(FieldGroupID, v))
+}
+
+// GroupIDIsNil applies the IsNil predicate on the "group_id" field.
+func GroupIDIsNil() predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldIsNull(FieldGroupID))
+}
+
+// GroupIDNotNil applies the NotNil predicate on the "group_id" field.
+func GroupIDNotNil() predicate.OpenAI5hWakeTask {
+	return predicate.OpenAI5hWakeTask(sql.FieldNotNull(FieldGroupID))
 }
 
 // StatusEQ applies the EQ predicate on the "status" field.

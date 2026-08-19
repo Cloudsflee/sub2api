@@ -22,6 +22,8 @@ func (OpenAI5hWakeTask) Annotations() []schema.Annotation {
 
 func (OpenAI5hWakeTask) Fields() []ent.Field {
 	return []ent.Field{
+		field.String("trigger_type").MaxLen(32).Default("manual"),
+		field.Int64("group_id").Optional().Nillable(),
 		field.String("status").MaxLen(32).Default("pending"),
 		field.Int("eligible_account_count").Default(0),
 		field.Int("active_window_count").Default(0),
@@ -49,6 +51,7 @@ func (OpenAI5hWakeTask) Fields() []ent.Field {
 
 func (OpenAI5hWakeTask) Indexes() []ent.Index {
 	return []ent.Index{
+		index.Fields("trigger_type", "status"),
 		index.Fields("status"),
 		index.Fields("created_at"),
 		index.Fields("lease_expires_at"),

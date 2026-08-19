@@ -237,6 +237,18 @@ func (f IdentityAdoptionDecisionFunc) Mutate(ctx context.Context, m ent.Mutation
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.IdentityAdoptionDecisionMutation", m)
 }
 
+// The OpenAI5hWakePoolLeaseFunc type is an adapter to allow the use of ordinary
+// function as OpenAI5hWakePoolLease mutator.
+type OpenAI5hWakePoolLeaseFunc func(context.Context, *ent.OpenAI5hWakePoolLeaseMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f OpenAI5hWakePoolLeaseFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.OpenAI5hWakePoolLeaseMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.OpenAI5hWakePoolLeaseMutation", m)
+}
+
 // The OpenAI5hWakeTaskFunc type is an adapter to allow the use of ordinary
 // function as OpenAI5hWakeTask mutator.
 type OpenAI5hWakeTaskFunc func(context.Context, *ent.OpenAI5hWakeTaskMutation) (ent.Value, error)

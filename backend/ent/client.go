@@ -34,6 +34,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/idempotencyrecord"
 	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
+	"github.com/Wei-Shaw/sub2api/ent/openai5hwakepoollease"
 	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketask"
 	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketaskitem"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
@@ -103,6 +104,8 @@ type Client struct {
 	IdempotencyRecord *IdempotencyRecordClient
 	// IdentityAdoptionDecision is the client for interacting with the IdentityAdoptionDecision builders.
 	IdentityAdoptionDecision *IdentityAdoptionDecisionClient
+	// OpenAI5hWakePoolLease is the client for interacting with the OpenAI5hWakePoolLease builders.
+	OpenAI5hWakePoolLease *OpenAI5hWakePoolLeaseClient
 	// OpenAI5hWakeTask is the client for interacting with the OpenAI5hWakeTask builders.
 	OpenAI5hWakeTask *OpenAI5hWakeTaskClient
 	// OpenAI5hWakeTaskItem is the client for interacting with the OpenAI5hWakeTaskItem builders.
@@ -177,6 +180,7 @@ func (c *Client) init() {
 	c.Group = NewGroupClient(c.config)
 	c.IdempotencyRecord = NewIdempotencyRecordClient(c.config)
 	c.IdentityAdoptionDecision = NewIdentityAdoptionDecisionClient(c.config)
+	c.OpenAI5hWakePoolLease = NewOpenAI5hWakePoolLeaseClient(c.config)
 	c.OpenAI5hWakeTask = NewOpenAI5hWakeTaskClient(c.config)
 	c.OpenAI5hWakeTaskItem = NewOpenAI5hWakeTaskItemClient(c.config)
 	c.PaymentAuditLog = NewPaymentAuditLogClient(c.config)
@@ -310,6 +314,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		Group:                         NewGroupClient(cfg),
 		IdempotencyRecord:             NewIdempotencyRecordClient(cfg),
 		IdentityAdoptionDecision:      NewIdentityAdoptionDecisionClient(cfg),
+		OpenAI5hWakePoolLease:         NewOpenAI5hWakePoolLeaseClient(cfg),
 		OpenAI5hWakeTask:              NewOpenAI5hWakeTaskClient(cfg),
 		OpenAI5hWakeTaskItem:          NewOpenAI5hWakeTaskItemClient(cfg),
 		PaymentAuditLog:               NewPaymentAuditLogClient(cfg),
@@ -370,6 +375,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		Group:                         NewGroupClient(cfg),
 		IdempotencyRecord:             NewIdempotencyRecordClient(cfg),
 		IdentityAdoptionDecision:      NewIdentityAdoptionDecisionClient(cfg),
+		OpenAI5hWakePoolLease:         NewOpenAI5hWakePoolLeaseClient(cfg),
 		OpenAI5hWakeTask:              NewOpenAI5hWakeTaskClient(cfg),
 		OpenAI5hWakeTaskItem:          NewOpenAI5hWakeTaskItemClient(cfg),
 		PaymentAuditLog:               NewPaymentAuditLogClient(cfg),
@@ -426,13 +432,13 @@ func (c *Client) Use(hooks ...Hook) {
 		c.BatchImageJob, c.ChannelMonitor, c.ChannelMonitorDailyRollup,
 		c.ChannelMonitorHistory, c.ChannelMonitorRequestTemplate,
 		c.CompositeModelRoute, c.ErrorPassthroughRule, c.Group, c.IdempotencyRecord,
-		c.IdentityAdoptionDecision, c.OpenAI5hWakeTask, c.OpenAI5hWakeTaskItem,
-		c.PaymentAuditLog, c.PaymentOrder, c.PaymentProviderInstance,
-		c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage, c.Proxy, c.RedeemCode,
-		c.SecuritySecret, c.Setting, c.SubscriptionPlan, c.TLSFingerprintProfile,
-		c.UsageCleanupTask, c.UsageLog, c.User, c.UserAllowedGroup,
-		c.UserAttributeDefinition, c.UserAttributeValue, c.UserPlatformQuota,
-		c.UserSubscription,
+		c.IdentityAdoptionDecision, c.OpenAI5hWakePoolLease, c.OpenAI5hWakeTask,
+		c.OpenAI5hWakeTaskItem, c.PaymentAuditLog, c.PaymentOrder,
+		c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage,
+		c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting, c.SubscriptionPlan,
+		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.User,
+		c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
+		c.UserPlatformQuota, c.UserSubscription,
 	} {
 		n.Use(hooks...)
 	}
@@ -447,13 +453,13 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.BatchImageJob, c.ChannelMonitor, c.ChannelMonitorDailyRollup,
 		c.ChannelMonitorHistory, c.ChannelMonitorRequestTemplate,
 		c.CompositeModelRoute, c.ErrorPassthroughRule, c.Group, c.IdempotencyRecord,
-		c.IdentityAdoptionDecision, c.OpenAI5hWakeTask, c.OpenAI5hWakeTaskItem,
-		c.PaymentAuditLog, c.PaymentOrder, c.PaymentProviderInstance,
-		c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage, c.Proxy, c.RedeemCode,
-		c.SecuritySecret, c.Setting, c.SubscriptionPlan, c.TLSFingerprintProfile,
-		c.UsageCleanupTask, c.UsageLog, c.User, c.UserAllowedGroup,
-		c.UserAttributeDefinition, c.UserAttributeValue, c.UserPlatformQuota,
-		c.UserSubscription,
+		c.IdentityAdoptionDecision, c.OpenAI5hWakePoolLease, c.OpenAI5hWakeTask,
+		c.OpenAI5hWakeTaskItem, c.PaymentAuditLog, c.PaymentOrder,
+		c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode, c.PromoCodeUsage,
+		c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting, c.SubscriptionPlan,
+		c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog, c.User,
+		c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
+		c.UserPlatformQuota, c.UserSubscription,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -500,6 +506,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.IdempotencyRecord.mutate(ctx, m)
 	case *IdentityAdoptionDecisionMutation:
 		return c.IdentityAdoptionDecision.mutate(ctx, m)
+	case *OpenAI5hWakePoolLeaseMutation:
+		return c.OpenAI5hWakePoolLease.mutate(ctx, m)
 	case *OpenAI5hWakeTaskMutation:
 		return c.OpenAI5hWakeTask.mutate(ctx, m)
 	case *OpenAI5hWakeTaskItemMutation:
@@ -3592,6 +3600,139 @@ func (c *IdentityAdoptionDecisionClient) mutate(ctx context.Context, m *Identity
 		return (&IdentityAdoptionDecisionDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown IdentityAdoptionDecision mutation op: %q", m.Op())
+	}
+}
+
+// OpenAI5hWakePoolLeaseClient is a client for the OpenAI5hWakePoolLease schema.
+type OpenAI5hWakePoolLeaseClient struct {
+	config
+}
+
+// NewOpenAI5hWakePoolLeaseClient returns a client for the OpenAI5hWakePoolLease from the given config.
+func NewOpenAI5hWakePoolLeaseClient(c config) *OpenAI5hWakePoolLeaseClient {
+	return &OpenAI5hWakePoolLeaseClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `openai5hwakepoollease.Hooks(f(g(h())))`.
+func (c *OpenAI5hWakePoolLeaseClient) Use(hooks ...Hook) {
+	c.hooks.OpenAI5hWakePoolLease = append(c.hooks.OpenAI5hWakePoolLease, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `openai5hwakepoollease.Intercept(f(g(h())))`.
+func (c *OpenAI5hWakePoolLeaseClient) Intercept(interceptors ...Interceptor) {
+	c.inters.OpenAI5hWakePoolLease = append(c.inters.OpenAI5hWakePoolLease, interceptors...)
+}
+
+// Create returns a builder for creating a OpenAI5hWakePoolLease entity.
+func (c *OpenAI5hWakePoolLeaseClient) Create() *OpenAI5hWakePoolLeaseCreate {
+	mutation := newOpenAI5hWakePoolLeaseMutation(c.config, OpCreate)
+	return &OpenAI5hWakePoolLeaseCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of OpenAI5hWakePoolLease entities.
+func (c *OpenAI5hWakePoolLeaseClient) CreateBulk(builders ...*OpenAI5hWakePoolLeaseCreate) *OpenAI5hWakePoolLeaseCreateBulk {
+	return &OpenAI5hWakePoolLeaseCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *OpenAI5hWakePoolLeaseClient) MapCreateBulk(slice any, setFunc func(*OpenAI5hWakePoolLeaseCreate, int)) *OpenAI5hWakePoolLeaseCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &OpenAI5hWakePoolLeaseCreateBulk{err: fmt.Errorf("calling to OpenAI5hWakePoolLeaseClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*OpenAI5hWakePoolLeaseCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &OpenAI5hWakePoolLeaseCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for OpenAI5hWakePoolLease.
+func (c *OpenAI5hWakePoolLeaseClient) Update() *OpenAI5hWakePoolLeaseUpdate {
+	mutation := newOpenAI5hWakePoolLeaseMutation(c.config, OpUpdate)
+	return &OpenAI5hWakePoolLeaseUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *OpenAI5hWakePoolLeaseClient) UpdateOne(_m *OpenAI5hWakePoolLease) *OpenAI5hWakePoolLeaseUpdateOne {
+	mutation := newOpenAI5hWakePoolLeaseMutation(c.config, OpUpdateOne, withOpenAI5hWakePoolLease(_m))
+	return &OpenAI5hWakePoolLeaseUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *OpenAI5hWakePoolLeaseClient) UpdateOneID(id int64) *OpenAI5hWakePoolLeaseUpdateOne {
+	mutation := newOpenAI5hWakePoolLeaseMutation(c.config, OpUpdateOne, withOpenAI5hWakePoolLeaseID(id))
+	return &OpenAI5hWakePoolLeaseUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for OpenAI5hWakePoolLease.
+func (c *OpenAI5hWakePoolLeaseClient) Delete() *OpenAI5hWakePoolLeaseDelete {
+	mutation := newOpenAI5hWakePoolLeaseMutation(c.config, OpDelete)
+	return &OpenAI5hWakePoolLeaseDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *OpenAI5hWakePoolLeaseClient) DeleteOne(_m *OpenAI5hWakePoolLease) *OpenAI5hWakePoolLeaseDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *OpenAI5hWakePoolLeaseClient) DeleteOneID(id int64) *OpenAI5hWakePoolLeaseDeleteOne {
+	builder := c.Delete().Where(openai5hwakepoollease.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &OpenAI5hWakePoolLeaseDeleteOne{builder}
+}
+
+// Query returns a query builder for OpenAI5hWakePoolLease.
+func (c *OpenAI5hWakePoolLeaseClient) Query() *OpenAI5hWakePoolLeaseQuery {
+	return &OpenAI5hWakePoolLeaseQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeOpenAI5hWakePoolLease},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a OpenAI5hWakePoolLease entity by its id.
+func (c *OpenAI5hWakePoolLeaseClient) Get(ctx context.Context, id int64) (*OpenAI5hWakePoolLease, error) {
+	return c.Query().Where(openai5hwakepoollease.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *OpenAI5hWakePoolLeaseClient) GetX(ctx context.Context, id int64) *OpenAI5hWakePoolLease {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *OpenAI5hWakePoolLeaseClient) Hooks() []Hook {
+	return c.hooks.OpenAI5hWakePoolLease
+}
+
+// Interceptors returns the client interceptors.
+func (c *OpenAI5hWakePoolLeaseClient) Interceptors() []Interceptor {
+	return c.inters.OpenAI5hWakePoolLease
+}
+
+func (c *OpenAI5hWakePoolLeaseClient) mutate(ctx context.Context, m *OpenAI5hWakePoolLeaseMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&OpenAI5hWakePoolLeaseCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&OpenAI5hWakePoolLeaseUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&OpenAI5hWakePoolLeaseUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&OpenAI5hWakePoolLeaseDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown OpenAI5hWakePoolLease mutation op: %q", m.Op())
 	}
 }
 
@@ -7113,10 +7254,10 @@ type (
 		AuthIdentityChannel, BatchImageEvent, BatchImageItem, BatchImageJob,
 		ChannelMonitor, ChannelMonitorDailyRollup, ChannelMonitorHistory,
 		ChannelMonitorRequestTemplate, CompositeModelRoute, ErrorPassthroughRule,
-		Group, IdempotencyRecord, IdentityAdoptionDecision, OpenAI5hWakeTask,
-		OpenAI5hWakeTaskItem, PaymentAuditLog, PaymentOrder, PaymentProviderInstance,
-		PendingAuthSession, PromoCode, PromoCodeUsage, Proxy, RedeemCode,
-		SecuritySecret, Setting, SubscriptionPlan, TLSFingerprintProfile,
+		Group, IdempotencyRecord, IdentityAdoptionDecision, OpenAI5hWakePoolLease,
+		OpenAI5hWakeTask, OpenAI5hWakeTaskItem, PaymentAuditLog, PaymentOrder,
+		PaymentProviderInstance, PendingAuthSession, PromoCode, PromoCodeUsage, Proxy,
+		RedeemCode, SecuritySecret, Setting, SubscriptionPlan, TLSFingerprintProfile,
 		UsageCleanupTask, UsageLog, User, UserAllowedGroup, UserAttributeDefinition,
 		UserAttributeValue, UserPlatformQuota, UserSubscription []ent.Hook
 	}
@@ -7125,10 +7266,10 @@ type (
 		AuthIdentityChannel, BatchImageEvent, BatchImageItem, BatchImageJob,
 		ChannelMonitor, ChannelMonitorDailyRollup, ChannelMonitorHistory,
 		ChannelMonitorRequestTemplate, CompositeModelRoute, ErrorPassthroughRule,
-		Group, IdempotencyRecord, IdentityAdoptionDecision, OpenAI5hWakeTask,
-		OpenAI5hWakeTaskItem, PaymentAuditLog, PaymentOrder, PaymentProviderInstance,
-		PendingAuthSession, PromoCode, PromoCodeUsage, Proxy, RedeemCode,
-		SecuritySecret, Setting, SubscriptionPlan, TLSFingerprintProfile,
+		Group, IdempotencyRecord, IdentityAdoptionDecision, OpenAI5hWakePoolLease,
+		OpenAI5hWakeTask, OpenAI5hWakeTaskItem, PaymentAuditLog, PaymentOrder,
+		PaymentProviderInstance, PendingAuthSession, PromoCode, PromoCodeUsage, Proxy,
+		RedeemCode, SecuritySecret, Setting, SubscriptionPlan, TLSFingerprintProfile,
 		UsageCleanupTask, UsageLog, User, UserAllowedGroup, UserAttributeDefinition,
 		UserAttributeValue, UserPlatformQuota, UserSubscription []ent.Interceptor
 	}

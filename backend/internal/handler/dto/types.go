@@ -162,7 +162,13 @@ type Group struct {
 type AdminGroup struct {
 	Group
 
-	PublicStatusEnabled bool `json:"public_status_enabled"`
+	PublicStatusEnabled                    bool       `json:"public_status_enabled"`
+	OpenAI5hAutoWakeEnabled                bool       `json:"openai_5h_auto_wake_enabled"`
+	OpenAI5hAutoWakeLastCheckedAt          *time.Time `json:"openai_5h_auto_wake_last_checked_at"`
+	OpenAI5hAutoWakeLastCandidatePoolCount *int       `json:"openai_5h_auto_wake_last_candidate_pool_count"`
+	OpenAI5hAutoWakeLastReason             string     `json:"openai_5h_auto_wake_last_reason"`
+	OpenAI5hAutoWakeLastTaskID             *int64     `json:"openai_5h_auto_wake_last_task_id"`
+	OpenAI5hAutoWakeLastTaskStatus         string     `json:"openai_5h_auto_wake_last_task_status"`
 	// 分组利润控制（五个 token 平台分组可启用；margin/buffer 为小数存储）。
 	// 仅管理员可见：这三个字段与同响应中的 rate_multiplier 相乘即可反推出
 	// 运营方的上游成本上限，属于内部经营信息，不得下放到 dto.Group。

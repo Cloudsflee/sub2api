@@ -1003,6 +1003,134 @@ func (_u *GroupUpdate) SetNillableAllowLive(v *bool) *GroupUpdate {
 	return _u
 }
 
+// SetOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field.
+func (_u *GroupUpdate) SetOpenai5hAutoWakeEnabled(v bool) *GroupUpdate {
+	_u.mutation.SetOpenai5hAutoWakeEnabled(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableOpenai5hAutoWakeEnabled(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeEnabled(*v)
+	}
+	return _u
+}
+
+// SetOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field.
+func (_u *GroupUpdate) SetOpenai5hAutoWakeLastCheckedAt(v time.Time) *GroupUpdate {
+	_u.mutation.SetOpenai5hAutoWakeLastCheckedAt(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableOpenai5hAutoWakeLastCheckedAt(v *time.Time) *GroupUpdate {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeLastCheckedAt(*v)
+	}
+	return _u
+}
+
+// ClearOpenai5hAutoWakeLastCheckedAt clears the value of the "openai_5h_auto_wake_last_checked_at" field.
+func (_u *GroupUpdate) ClearOpenai5hAutoWakeLastCheckedAt() *GroupUpdate {
+	_u.mutation.ClearOpenai5hAutoWakeLastCheckedAt()
+	return _u
+}
+
+// SetOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (_u *GroupUpdate) SetOpenai5hAutoWakeLastCandidatePoolCount(v int) *GroupUpdate {
+	_u.mutation.ResetOpenai5hAutoWakeLastCandidatePoolCount()
+	_u.mutation.SetOpenai5hAutoWakeLastCandidatePoolCount(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableOpenai5hAutoWakeLastCandidatePoolCount(v *int) *GroupUpdate {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeLastCandidatePoolCount(*v)
+	}
+	return _u
+}
+
+// AddOpenai5hAutoWakeLastCandidatePoolCount adds value to the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (_u *GroupUpdate) AddOpenai5hAutoWakeLastCandidatePoolCount(v int) *GroupUpdate {
+	_u.mutation.AddOpenai5hAutoWakeLastCandidatePoolCount(v)
+	return _u
+}
+
+// ClearOpenai5hAutoWakeLastCandidatePoolCount clears the value of the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (_u *GroupUpdate) ClearOpenai5hAutoWakeLastCandidatePoolCount() *GroupUpdate {
+	_u.mutation.ClearOpenai5hAutoWakeLastCandidatePoolCount()
+	return _u
+}
+
+// SetOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field.
+func (_u *GroupUpdate) SetOpenai5hAutoWakeLastReason(v string) *GroupUpdate {
+	_u.mutation.SetOpenai5hAutoWakeLastReason(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableOpenai5hAutoWakeLastReason(v *string) *GroupUpdate {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeLastReason(*v)
+	}
+	return _u
+}
+
+// ClearOpenai5hAutoWakeLastReason clears the value of the "openai_5h_auto_wake_last_reason" field.
+func (_u *GroupUpdate) ClearOpenai5hAutoWakeLastReason() *GroupUpdate {
+	_u.mutation.ClearOpenai5hAutoWakeLastReason()
+	return _u
+}
+
+// SetOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field.
+func (_u *GroupUpdate) SetOpenai5hAutoWakeLastTaskID(v int64) *GroupUpdate {
+	_u.mutation.ResetOpenai5hAutoWakeLastTaskID()
+	_u.mutation.SetOpenai5hAutoWakeLastTaskID(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableOpenai5hAutoWakeLastTaskID(v *int64) *GroupUpdate {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeLastTaskID(*v)
+	}
+	return _u
+}
+
+// AddOpenai5hAutoWakeLastTaskID adds value to the "openai_5h_auto_wake_last_task_id" field.
+func (_u *GroupUpdate) AddOpenai5hAutoWakeLastTaskID(v int64) *GroupUpdate {
+	_u.mutation.AddOpenai5hAutoWakeLastTaskID(v)
+	return _u
+}
+
+// ClearOpenai5hAutoWakeLastTaskID clears the value of the "openai_5h_auto_wake_last_task_id" field.
+func (_u *GroupUpdate) ClearOpenai5hAutoWakeLastTaskID() *GroupUpdate {
+	_u.mutation.ClearOpenai5hAutoWakeLastTaskID()
+	return _u
+}
+
+// SetOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field.
+func (_u *GroupUpdate) SetOpenai5hAutoWakeLastTaskStatus(v string) *GroupUpdate {
+	_u.mutation.SetOpenai5hAutoWakeLastTaskStatus(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableOpenai5hAutoWakeLastTaskStatus(v *string) *GroupUpdate {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeLastTaskStatus(*v)
+	}
+	return _u
+}
+
+// ClearOpenai5hAutoWakeLastTaskStatus clears the value of the "openai_5h_auto_wake_last_task_status" field.
+func (_u *GroupUpdate) ClearOpenai5hAutoWakeLastTaskStatus() *GroupUpdate {
+	_u.mutation.ClearOpenai5hAutoWakeLastTaskStatus()
+	return _u
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_u *GroupUpdate) SetRequireOauthOnly(v bool) *GroupUpdate {
 	_u.mutation.SetRequireOauthOnly(v)
@@ -1491,6 +1619,16 @@ func (_u *GroupUpdate) check() error {
 			return &ValidationError{Name: "audio_stt_price_per_hour", err: fmt.Errorf(`ent: validator failed for field "Group.audio_stt_price_per_hour": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.Openai5hAutoWakeLastReason(); ok {
+		if err := group.Openai5hAutoWakeLastReasonValidator(v); err != nil {
+			return &ValidationError{Name: "openai_5h_auto_wake_last_reason", err: fmt.Errorf(`ent: validator failed for field "Group.openai_5h_auto_wake_last_reason": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.Openai5hAutoWakeLastTaskStatus(); ok {
+		if err := group.Openai5hAutoWakeLastTaskStatusValidator(v); err != nil {
+			return &ValidationError{Name: "openai_5h_auto_wake_last_task_status", err: fmt.Errorf(`ent: validator failed for field "Group.openai_5h_auto_wake_last_task_status": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.DefaultMappedModel(); ok {
 		if err := group.DefaultMappedModelValidator(v); err != nil {
 			return &ValidationError{Name: "default_mapped_model", err: fmt.Errorf(`ent: validator failed for field "Group.default_mapped_model": %w`, err)}
@@ -1813,6 +1951,45 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeEnabled(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeLastCheckedAt(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastCheckedAt, field.TypeTime, value)
+	}
+	if _u.mutation.Openai5hAutoWakeLastCheckedAtCleared() {
+		_spec.ClearField(group.FieldOpenai5hAutoWakeLastCheckedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeLastCandidatePoolCount(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastCandidatePoolCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedOpenai5hAutoWakeLastCandidatePoolCount(); ok {
+		_spec.AddField(group.FieldOpenai5hAutoWakeLastCandidatePoolCount, field.TypeInt, value)
+	}
+	if _u.mutation.Openai5hAutoWakeLastCandidatePoolCountCleared() {
+		_spec.ClearField(group.FieldOpenai5hAutoWakeLastCandidatePoolCount, field.TypeInt)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeLastReason(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastReason, field.TypeString, value)
+	}
+	if _u.mutation.Openai5hAutoWakeLastReasonCleared() {
+		_spec.ClearField(group.FieldOpenai5hAutoWakeLastReason, field.TypeString)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeLastTaskID(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastTaskID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedOpenai5hAutoWakeLastTaskID(); ok {
+		_spec.AddField(group.FieldOpenai5hAutoWakeLastTaskID, field.TypeInt64, value)
+	}
+	if _u.mutation.Openai5hAutoWakeLastTaskIDCleared() {
+		_spec.ClearField(group.FieldOpenai5hAutoWakeLastTaskID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeLastTaskStatus(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastTaskStatus, field.TypeString, value)
+	}
+	if _u.mutation.Openai5hAutoWakeLastTaskStatusCleared() {
+		_spec.ClearField(group.FieldOpenai5hAutoWakeLastTaskStatus, field.TypeString)
 	}
 	if value, ok := _u.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
@@ -3141,6 +3318,134 @@ func (_u *GroupUpdateOne) SetNillableAllowLive(v *bool) *GroupUpdateOne {
 	return _u
 }
 
+// SetOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field.
+func (_u *GroupUpdateOne) SetOpenai5hAutoWakeEnabled(v bool) *GroupUpdateOne {
+	_u.mutation.SetOpenai5hAutoWakeEnabled(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableOpenai5hAutoWakeEnabled(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeEnabled(*v)
+	}
+	return _u
+}
+
+// SetOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field.
+func (_u *GroupUpdateOne) SetOpenai5hAutoWakeLastCheckedAt(v time.Time) *GroupUpdateOne {
+	_u.mutation.SetOpenai5hAutoWakeLastCheckedAt(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableOpenai5hAutoWakeLastCheckedAt(v *time.Time) *GroupUpdateOne {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeLastCheckedAt(*v)
+	}
+	return _u
+}
+
+// ClearOpenai5hAutoWakeLastCheckedAt clears the value of the "openai_5h_auto_wake_last_checked_at" field.
+func (_u *GroupUpdateOne) ClearOpenai5hAutoWakeLastCheckedAt() *GroupUpdateOne {
+	_u.mutation.ClearOpenai5hAutoWakeLastCheckedAt()
+	return _u
+}
+
+// SetOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (_u *GroupUpdateOne) SetOpenai5hAutoWakeLastCandidatePoolCount(v int) *GroupUpdateOne {
+	_u.mutation.ResetOpenai5hAutoWakeLastCandidatePoolCount()
+	_u.mutation.SetOpenai5hAutoWakeLastCandidatePoolCount(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableOpenai5hAutoWakeLastCandidatePoolCount(v *int) *GroupUpdateOne {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeLastCandidatePoolCount(*v)
+	}
+	return _u
+}
+
+// AddOpenai5hAutoWakeLastCandidatePoolCount adds value to the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (_u *GroupUpdateOne) AddOpenai5hAutoWakeLastCandidatePoolCount(v int) *GroupUpdateOne {
+	_u.mutation.AddOpenai5hAutoWakeLastCandidatePoolCount(v)
+	return _u
+}
+
+// ClearOpenai5hAutoWakeLastCandidatePoolCount clears the value of the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (_u *GroupUpdateOne) ClearOpenai5hAutoWakeLastCandidatePoolCount() *GroupUpdateOne {
+	_u.mutation.ClearOpenai5hAutoWakeLastCandidatePoolCount()
+	return _u
+}
+
+// SetOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field.
+func (_u *GroupUpdateOne) SetOpenai5hAutoWakeLastReason(v string) *GroupUpdateOne {
+	_u.mutation.SetOpenai5hAutoWakeLastReason(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableOpenai5hAutoWakeLastReason(v *string) *GroupUpdateOne {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeLastReason(*v)
+	}
+	return _u
+}
+
+// ClearOpenai5hAutoWakeLastReason clears the value of the "openai_5h_auto_wake_last_reason" field.
+func (_u *GroupUpdateOne) ClearOpenai5hAutoWakeLastReason() *GroupUpdateOne {
+	_u.mutation.ClearOpenai5hAutoWakeLastReason()
+	return _u
+}
+
+// SetOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field.
+func (_u *GroupUpdateOne) SetOpenai5hAutoWakeLastTaskID(v int64) *GroupUpdateOne {
+	_u.mutation.ResetOpenai5hAutoWakeLastTaskID()
+	_u.mutation.SetOpenai5hAutoWakeLastTaskID(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableOpenai5hAutoWakeLastTaskID(v *int64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeLastTaskID(*v)
+	}
+	return _u
+}
+
+// AddOpenai5hAutoWakeLastTaskID adds value to the "openai_5h_auto_wake_last_task_id" field.
+func (_u *GroupUpdateOne) AddOpenai5hAutoWakeLastTaskID(v int64) *GroupUpdateOne {
+	_u.mutation.AddOpenai5hAutoWakeLastTaskID(v)
+	return _u
+}
+
+// ClearOpenai5hAutoWakeLastTaskID clears the value of the "openai_5h_auto_wake_last_task_id" field.
+func (_u *GroupUpdateOne) ClearOpenai5hAutoWakeLastTaskID() *GroupUpdateOne {
+	_u.mutation.ClearOpenai5hAutoWakeLastTaskID()
+	return _u
+}
+
+// SetOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field.
+func (_u *GroupUpdateOne) SetOpenai5hAutoWakeLastTaskStatus(v string) *GroupUpdateOne {
+	_u.mutation.SetOpenai5hAutoWakeLastTaskStatus(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableOpenai5hAutoWakeLastTaskStatus(v *string) *GroupUpdateOne {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeLastTaskStatus(*v)
+	}
+	return _u
+}
+
+// ClearOpenai5hAutoWakeLastTaskStatus clears the value of the "openai_5h_auto_wake_last_task_status" field.
+func (_u *GroupUpdateOne) ClearOpenai5hAutoWakeLastTaskStatus() *GroupUpdateOne {
+	_u.mutation.ClearOpenai5hAutoWakeLastTaskStatus()
+	return _u
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_u *GroupUpdateOne) SetRequireOauthOnly(v bool) *GroupUpdateOne {
 	_u.mutation.SetRequireOauthOnly(v)
@@ -3642,6 +3947,16 @@ func (_u *GroupUpdateOne) check() error {
 			return &ValidationError{Name: "audio_stt_price_per_hour", err: fmt.Errorf(`ent: validator failed for field "Group.audio_stt_price_per_hour": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.Openai5hAutoWakeLastReason(); ok {
+		if err := group.Openai5hAutoWakeLastReasonValidator(v); err != nil {
+			return &ValidationError{Name: "openai_5h_auto_wake_last_reason", err: fmt.Errorf(`ent: validator failed for field "Group.openai_5h_auto_wake_last_reason": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.Openai5hAutoWakeLastTaskStatus(); ok {
+		if err := group.Openai5hAutoWakeLastTaskStatusValidator(v); err != nil {
+			return &ValidationError{Name: "openai_5h_auto_wake_last_task_status", err: fmt.Errorf(`ent: validator failed for field "Group.openai_5h_auto_wake_last_task_status": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.DefaultMappedModel(); ok {
 		if err := group.DefaultMappedModelValidator(v); err != nil {
 			return &ValidationError{Name: "default_mapped_model", err: fmt.Errorf(`ent: validator failed for field "Group.default_mapped_model": %w`, err)}
@@ -3981,6 +4296,45 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeEnabled(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeLastCheckedAt(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastCheckedAt, field.TypeTime, value)
+	}
+	if _u.mutation.Openai5hAutoWakeLastCheckedAtCleared() {
+		_spec.ClearField(group.FieldOpenai5hAutoWakeLastCheckedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeLastCandidatePoolCount(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastCandidatePoolCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedOpenai5hAutoWakeLastCandidatePoolCount(); ok {
+		_spec.AddField(group.FieldOpenai5hAutoWakeLastCandidatePoolCount, field.TypeInt, value)
+	}
+	if _u.mutation.Openai5hAutoWakeLastCandidatePoolCountCleared() {
+		_spec.ClearField(group.FieldOpenai5hAutoWakeLastCandidatePoolCount, field.TypeInt)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeLastReason(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastReason, field.TypeString, value)
+	}
+	if _u.mutation.Openai5hAutoWakeLastReasonCleared() {
+		_spec.ClearField(group.FieldOpenai5hAutoWakeLastReason, field.TypeString)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeLastTaskID(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastTaskID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedOpenai5hAutoWakeLastTaskID(); ok {
+		_spec.AddField(group.FieldOpenai5hAutoWakeLastTaskID, field.TypeInt64, value)
+	}
+	if _u.mutation.Openai5hAutoWakeLastTaskIDCleared() {
+		_spec.ClearField(group.FieldOpenai5hAutoWakeLastTaskID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeLastTaskStatus(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastTaskStatus, field.TypeString, value)
+	}
+	if _u.mutation.Openai5hAutoWakeLastTaskStatusCleared() {
+		_spec.ClearField(group.FieldOpenai5hAutoWakeLastTaskStatus, field.TypeString)
 	}
 	if value, ok := _u.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)

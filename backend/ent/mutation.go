@@ -31,6 +31,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/idempotencyrecord"
 	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
+	"github.com/Wei-Shaw/sub2api/ent/openai5hwakepoollease"
 	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketask"
 	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketaskitem"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
@@ -85,6 +86,7 @@ const (
 	TypeGroup                         = "Group"
 	TypeIdempotencyRecord             = "IdempotencyRecord"
 	TypeIdentityAdoptionDecision      = "IdentityAdoptionDecision"
+	TypeOpenAI5hWakePoolLease         = "OpenAI5hWakePoolLease"
 	TypeOpenAI5hWakeTask              = "OpenAI5hWakeTask"
 	TypeOpenAI5hWakeTaskItem          = "OpenAI5hWakeTaskItem"
 	TypePaymentAuditLog               = "PaymentAuditLog"
@@ -22082,124 +22084,132 @@ func (m *ErrorPassthroughRuleMutation) ResetEdge(name string) error {
 // GroupMutation represents an operation that mutates the Group nodes in the graph.
 type GroupMutation struct {
 	config
-	op                                      Op
-	typ                                     string
-	id                                      *int64
-	created_at                              *time.Time
-	updated_at                              *time.Time
-	deleted_at                              *time.Time
-	name                                    *string
-	description                             *string
-	rate_multiplier                         *float64
-	addrate_multiplier                      *float64
-	peak_rate_enabled                       *bool
-	peak_start                              *string
-	peak_end                                *string
-	peak_rate_multiplier                    *float64
-	addpeak_rate_multiplier                 *float64
-	is_exclusive                            *bool
-	public_status_enabled                   *bool
-	status                                  *string
-	duplicate_operation_id                  *string
-	platform                                *string
-	subscription_type                       *string
-	daily_limit_usd                         *float64
-	adddaily_limit_usd                      *float64
-	weekly_limit_usd                        *float64
-	addweekly_limit_usd                     *float64
-	monthly_limit_usd                       *float64
-	addmonthly_limit_usd                    *float64
-	default_validity_days                   *int
-	adddefault_validity_days                *int
-	allow_image_generation                  *bool
-	allow_batch_image_generation            *bool
-	image_rate_independent                  *bool
-	image_rate_multiplier                   *float64
-	addimage_rate_multiplier                *float64
-	image_price_1k                          *float64
-	addimage_price_1k                       *float64
-	image_price_2k                          *float64
-	addimage_price_2k                       *float64
-	image_price_4k                          *float64
-	addimage_price_4k                       *float64
-	batch_image_discount_multiplier         *float64
-	addbatch_image_discount_multiplier      *float64
-	batch_image_hold_multiplier             *float64
-	addbatch_image_hold_multiplier          *float64
-	video_rate_independent                  *bool
-	video_rate_multiplier                   *float64
-	addvideo_rate_multiplier                *float64
-	video_price_480p                        *float64
-	addvideo_price_480p                     *float64
-	video_price_720p                        *float64
-	addvideo_price_720p                     *float64
-	video_price_1080p                       *float64
-	addvideo_price_1080p                    *float64
-	video_model_prices                      *map[string]map[string]float64
-	web_search_price_per_call               *float64
-	addweb_search_price_per_call            *float64
-	search_price_per_1k                     *float64
-	addsearch_price_per_1k                  *float64
-	audio_realtime_price_per_min            *float64
-	addaudio_realtime_price_per_min         *float64
-	audio_tts_price_per_million_chars       *float64
-	addaudio_tts_price_per_million_chars    *float64
-	audio_stt_price_per_hour                *float64
-	addaudio_stt_price_per_hour             *float64
-	long_context_pricing_enabled            *bool
-	model_pricing                           *json.RawMessage
-	appendmodel_pricing                     json.RawMessage
-	claude_code_only                        *bool
-	fallback_group_id                       *int64
-	addfallback_group_id                    *int64
-	fallback_group_id_on_invalid_request    *int64
-	addfallback_group_id_on_invalid_request *int64
-	model_routing                           *map[string][]int64
-	model_routing_enabled                   *bool
-	mcp_xml_inject                          *bool
-	supported_model_scopes                  *[]string
-	appendsupported_model_scopes            []string
-	sort_order                              *int
-	addsort_order                           *int
-	allow_messages_dispatch                 *bool
-	allow_live                              *bool
-	require_oauth_only                      *bool
-	require_privacy_set                     *bool
-	default_mapped_model                    *string
-	messages_dispatch_model_config          *domain.OpenAIMessagesDispatchModelConfig
-	models_list_config                      *domain.GroupModelsListConfig
-	rpm_limit                               *int
-	addrpm_limit                            *int
-	max_reasoning_effort                    *string
-	reasoning_effort_mappings               *[]domain.ReasoningEffortMapping
-	appendreasoning_effort_mappings         []domain.ReasoningEffortMapping
-	profit_control_enabled                  *bool
-	profit_min_margin                       *float64
-	addprofit_min_margin                    *float64
-	profit_safety_buffer                    *float64
-	addprofit_safety_buffer                 *float64
-	clearedFields                           map[string]struct{}
-	api_keys                                map[int64]struct{}
-	removedapi_keys                         map[int64]struct{}
-	clearedapi_keys                         bool
-	redeem_codes                            map[int64]struct{}
-	removedredeem_codes                     map[int64]struct{}
-	clearedredeem_codes                     bool
-	subscriptions                           map[int64]struct{}
-	removedsubscriptions                    map[int64]struct{}
-	clearedsubscriptions                    bool
-	usage_logs                              map[int64]struct{}
-	removedusage_logs                       map[int64]struct{}
-	clearedusage_logs                       bool
-	accounts                                map[int64]struct{}
-	removedaccounts                         map[int64]struct{}
-	clearedaccounts                         bool
-	allowed_users                           map[int64]struct{}
-	removedallowed_users                    map[int64]struct{}
-	clearedallowed_users                    bool
-	done                                    bool
-	oldValue                                func(context.Context) (*Group, error)
-	predicates                              []predicate.Group
+	op                                               Op
+	typ                                              string
+	id                                               *int64
+	created_at                                       *time.Time
+	updated_at                                       *time.Time
+	deleted_at                                       *time.Time
+	name                                             *string
+	description                                      *string
+	rate_multiplier                                  *float64
+	addrate_multiplier                               *float64
+	peak_rate_enabled                                *bool
+	peak_start                                       *string
+	peak_end                                         *string
+	peak_rate_multiplier                             *float64
+	addpeak_rate_multiplier                          *float64
+	is_exclusive                                     *bool
+	public_status_enabled                            *bool
+	status                                           *string
+	duplicate_operation_id                           *string
+	platform                                         *string
+	subscription_type                                *string
+	daily_limit_usd                                  *float64
+	adddaily_limit_usd                               *float64
+	weekly_limit_usd                                 *float64
+	addweekly_limit_usd                              *float64
+	monthly_limit_usd                                *float64
+	addmonthly_limit_usd                             *float64
+	default_validity_days                            *int
+	adddefault_validity_days                         *int
+	allow_image_generation                           *bool
+	allow_batch_image_generation                     *bool
+	image_rate_independent                           *bool
+	image_rate_multiplier                            *float64
+	addimage_rate_multiplier                         *float64
+	image_price_1k                                   *float64
+	addimage_price_1k                                *float64
+	image_price_2k                                   *float64
+	addimage_price_2k                                *float64
+	image_price_4k                                   *float64
+	addimage_price_4k                                *float64
+	batch_image_discount_multiplier                  *float64
+	addbatch_image_discount_multiplier               *float64
+	batch_image_hold_multiplier                      *float64
+	addbatch_image_hold_multiplier                   *float64
+	video_rate_independent                           *bool
+	video_rate_multiplier                            *float64
+	addvideo_rate_multiplier                         *float64
+	video_price_480p                                 *float64
+	addvideo_price_480p                              *float64
+	video_price_720p                                 *float64
+	addvideo_price_720p                              *float64
+	video_price_1080p                                *float64
+	addvideo_price_1080p                             *float64
+	video_model_prices                               *map[string]map[string]float64
+	web_search_price_per_call                        *float64
+	addweb_search_price_per_call                     *float64
+	search_price_per_1k                              *float64
+	addsearch_price_per_1k                           *float64
+	audio_realtime_price_per_min                     *float64
+	addaudio_realtime_price_per_min                  *float64
+	audio_tts_price_per_million_chars                *float64
+	addaudio_tts_price_per_million_chars             *float64
+	audio_stt_price_per_hour                         *float64
+	addaudio_stt_price_per_hour                      *float64
+	long_context_pricing_enabled                     *bool
+	model_pricing                                    *json.RawMessage
+	appendmodel_pricing                              json.RawMessage
+	claude_code_only                                 *bool
+	fallback_group_id                                *int64
+	addfallback_group_id                             *int64
+	fallback_group_id_on_invalid_request             *int64
+	addfallback_group_id_on_invalid_request          *int64
+	model_routing                                    *map[string][]int64
+	model_routing_enabled                            *bool
+	mcp_xml_inject                                   *bool
+	supported_model_scopes                           *[]string
+	appendsupported_model_scopes                     []string
+	sort_order                                       *int
+	addsort_order                                    *int
+	allow_messages_dispatch                          *bool
+	allow_live                                       *bool
+	openai_5h_auto_wake_enabled                      *bool
+	openai_5h_auto_wake_last_checked_at              *time.Time
+	openai_5h_auto_wake_last_candidate_pool_count    *int
+	addopenai_5h_auto_wake_last_candidate_pool_count *int
+	openai_5h_auto_wake_last_reason                  *string
+	openai_5h_auto_wake_last_task_id                 *int64
+	addopenai_5h_auto_wake_last_task_id              *int64
+	openai_5h_auto_wake_last_task_status             *string
+	require_oauth_only                               *bool
+	require_privacy_set                              *bool
+	default_mapped_model                             *string
+	messages_dispatch_model_config                   *domain.OpenAIMessagesDispatchModelConfig
+	models_list_config                               *domain.GroupModelsListConfig
+	rpm_limit                                        *int
+	addrpm_limit                                     *int
+	max_reasoning_effort                             *string
+	reasoning_effort_mappings                        *[]domain.ReasoningEffortMapping
+	appendreasoning_effort_mappings                  []domain.ReasoningEffortMapping
+	profit_control_enabled                           *bool
+	profit_min_margin                                *float64
+	addprofit_min_margin                             *float64
+	profit_safety_buffer                             *float64
+	addprofit_safety_buffer                          *float64
+	clearedFields                                    map[string]struct{}
+	api_keys                                         map[int64]struct{}
+	removedapi_keys                                  map[int64]struct{}
+	clearedapi_keys                                  bool
+	redeem_codes                                     map[int64]struct{}
+	removedredeem_codes                              map[int64]struct{}
+	clearedredeem_codes                              bool
+	subscriptions                                    map[int64]struct{}
+	removedsubscriptions                             map[int64]struct{}
+	clearedsubscriptions                             bool
+	usage_logs                                       map[int64]struct{}
+	removedusage_logs                                map[int64]struct{}
+	clearedusage_logs                                bool
+	accounts                                         map[int64]struct{}
+	removedaccounts                                  map[int64]struct{}
+	clearedaccounts                                  bool
+	allowed_users                                    map[int64]struct{}
+	removedallowed_users                             map[int64]struct{}
+	clearedallowed_users                             bool
+	done                                             bool
+	oldValue                                         func(context.Context) (*Group, error)
+	predicates                                       []predicate.Group
 }
 
 var _ ent.Mutation = (*GroupMutation)(nil)
@@ -24985,6 +24995,329 @@ func (m *GroupMutation) ResetAllowLive() {
 	m.allow_live = nil
 }
 
+// SetOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field.
+func (m *GroupMutation) SetOpenai5hAutoWakeEnabled(b bool) {
+	m.openai_5h_auto_wake_enabled = &b
+}
+
+// Openai5hAutoWakeEnabled returns the value of the "openai_5h_auto_wake_enabled" field in the mutation.
+func (m *GroupMutation) Openai5hAutoWakeEnabled() (r bool, exists bool) {
+	v := m.openai_5h_auto_wake_enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOpenai5hAutoWakeEnabled returns the old "openai_5h_auto_wake_enabled" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldOpenai5hAutoWakeEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOpenai5hAutoWakeEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOpenai5hAutoWakeEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOpenai5hAutoWakeEnabled: %w", err)
+	}
+	return oldValue.Openai5hAutoWakeEnabled, nil
+}
+
+// ResetOpenai5hAutoWakeEnabled resets all changes to the "openai_5h_auto_wake_enabled" field.
+func (m *GroupMutation) ResetOpenai5hAutoWakeEnabled() {
+	m.openai_5h_auto_wake_enabled = nil
+}
+
+// SetOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field.
+func (m *GroupMutation) SetOpenai5hAutoWakeLastCheckedAt(t time.Time) {
+	m.openai_5h_auto_wake_last_checked_at = &t
+}
+
+// Openai5hAutoWakeLastCheckedAt returns the value of the "openai_5h_auto_wake_last_checked_at" field in the mutation.
+func (m *GroupMutation) Openai5hAutoWakeLastCheckedAt() (r time.Time, exists bool) {
+	v := m.openai_5h_auto_wake_last_checked_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOpenai5hAutoWakeLastCheckedAt returns the old "openai_5h_auto_wake_last_checked_at" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldOpenai5hAutoWakeLastCheckedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOpenai5hAutoWakeLastCheckedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOpenai5hAutoWakeLastCheckedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOpenai5hAutoWakeLastCheckedAt: %w", err)
+	}
+	return oldValue.Openai5hAutoWakeLastCheckedAt, nil
+}
+
+// ClearOpenai5hAutoWakeLastCheckedAt clears the value of the "openai_5h_auto_wake_last_checked_at" field.
+func (m *GroupMutation) ClearOpenai5hAutoWakeLastCheckedAt() {
+	m.openai_5h_auto_wake_last_checked_at = nil
+	m.clearedFields[group.FieldOpenai5hAutoWakeLastCheckedAt] = struct{}{}
+}
+
+// Openai5hAutoWakeLastCheckedAtCleared returns if the "openai_5h_auto_wake_last_checked_at" field was cleared in this mutation.
+func (m *GroupMutation) Openai5hAutoWakeLastCheckedAtCleared() bool {
+	_, ok := m.clearedFields[group.FieldOpenai5hAutoWakeLastCheckedAt]
+	return ok
+}
+
+// ResetOpenai5hAutoWakeLastCheckedAt resets all changes to the "openai_5h_auto_wake_last_checked_at" field.
+func (m *GroupMutation) ResetOpenai5hAutoWakeLastCheckedAt() {
+	m.openai_5h_auto_wake_last_checked_at = nil
+	delete(m.clearedFields, group.FieldOpenai5hAutoWakeLastCheckedAt)
+}
+
+// SetOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (m *GroupMutation) SetOpenai5hAutoWakeLastCandidatePoolCount(i int) {
+	m.openai_5h_auto_wake_last_candidate_pool_count = &i
+	m.addopenai_5h_auto_wake_last_candidate_pool_count = nil
+}
+
+// Openai5hAutoWakeLastCandidatePoolCount returns the value of the "openai_5h_auto_wake_last_candidate_pool_count" field in the mutation.
+func (m *GroupMutation) Openai5hAutoWakeLastCandidatePoolCount() (r int, exists bool) {
+	v := m.openai_5h_auto_wake_last_candidate_pool_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOpenai5hAutoWakeLastCandidatePoolCount returns the old "openai_5h_auto_wake_last_candidate_pool_count" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldOpenai5hAutoWakeLastCandidatePoolCount(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOpenai5hAutoWakeLastCandidatePoolCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOpenai5hAutoWakeLastCandidatePoolCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOpenai5hAutoWakeLastCandidatePoolCount: %w", err)
+	}
+	return oldValue.Openai5hAutoWakeLastCandidatePoolCount, nil
+}
+
+// AddOpenai5hAutoWakeLastCandidatePoolCount adds i to the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (m *GroupMutation) AddOpenai5hAutoWakeLastCandidatePoolCount(i int) {
+	if m.addopenai_5h_auto_wake_last_candidate_pool_count != nil {
+		*m.addopenai_5h_auto_wake_last_candidate_pool_count += i
+	} else {
+		m.addopenai_5h_auto_wake_last_candidate_pool_count = &i
+	}
+}
+
+// AddedOpenai5hAutoWakeLastCandidatePoolCount returns the value that was added to the "openai_5h_auto_wake_last_candidate_pool_count" field in this mutation.
+func (m *GroupMutation) AddedOpenai5hAutoWakeLastCandidatePoolCount() (r int, exists bool) {
+	v := m.addopenai_5h_auto_wake_last_candidate_pool_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearOpenai5hAutoWakeLastCandidatePoolCount clears the value of the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (m *GroupMutation) ClearOpenai5hAutoWakeLastCandidatePoolCount() {
+	m.openai_5h_auto_wake_last_candidate_pool_count = nil
+	m.addopenai_5h_auto_wake_last_candidate_pool_count = nil
+	m.clearedFields[group.FieldOpenai5hAutoWakeLastCandidatePoolCount] = struct{}{}
+}
+
+// Openai5hAutoWakeLastCandidatePoolCountCleared returns if the "openai_5h_auto_wake_last_candidate_pool_count" field was cleared in this mutation.
+func (m *GroupMutation) Openai5hAutoWakeLastCandidatePoolCountCleared() bool {
+	_, ok := m.clearedFields[group.FieldOpenai5hAutoWakeLastCandidatePoolCount]
+	return ok
+}
+
+// ResetOpenai5hAutoWakeLastCandidatePoolCount resets all changes to the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (m *GroupMutation) ResetOpenai5hAutoWakeLastCandidatePoolCount() {
+	m.openai_5h_auto_wake_last_candidate_pool_count = nil
+	m.addopenai_5h_auto_wake_last_candidate_pool_count = nil
+	delete(m.clearedFields, group.FieldOpenai5hAutoWakeLastCandidatePoolCount)
+}
+
+// SetOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field.
+func (m *GroupMutation) SetOpenai5hAutoWakeLastReason(s string) {
+	m.openai_5h_auto_wake_last_reason = &s
+}
+
+// Openai5hAutoWakeLastReason returns the value of the "openai_5h_auto_wake_last_reason" field in the mutation.
+func (m *GroupMutation) Openai5hAutoWakeLastReason() (r string, exists bool) {
+	v := m.openai_5h_auto_wake_last_reason
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOpenai5hAutoWakeLastReason returns the old "openai_5h_auto_wake_last_reason" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldOpenai5hAutoWakeLastReason(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOpenai5hAutoWakeLastReason is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOpenai5hAutoWakeLastReason requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOpenai5hAutoWakeLastReason: %w", err)
+	}
+	return oldValue.Openai5hAutoWakeLastReason, nil
+}
+
+// ClearOpenai5hAutoWakeLastReason clears the value of the "openai_5h_auto_wake_last_reason" field.
+func (m *GroupMutation) ClearOpenai5hAutoWakeLastReason() {
+	m.openai_5h_auto_wake_last_reason = nil
+	m.clearedFields[group.FieldOpenai5hAutoWakeLastReason] = struct{}{}
+}
+
+// Openai5hAutoWakeLastReasonCleared returns if the "openai_5h_auto_wake_last_reason" field was cleared in this mutation.
+func (m *GroupMutation) Openai5hAutoWakeLastReasonCleared() bool {
+	_, ok := m.clearedFields[group.FieldOpenai5hAutoWakeLastReason]
+	return ok
+}
+
+// ResetOpenai5hAutoWakeLastReason resets all changes to the "openai_5h_auto_wake_last_reason" field.
+func (m *GroupMutation) ResetOpenai5hAutoWakeLastReason() {
+	m.openai_5h_auto_wake_last_reason = nil
+	delete(m.clearedFields, group.FieldOpenai5hAutoWakeLastReason)
+}
+
+// SetOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field.
+func (m *GroupMutation) SetOpenai5hAutoWakeLastTaskID(i int64) {
+	m.openai_5h_auto_wake_last_task_id = &i
+	m.addopenai_5h_auto_wake_last_task_id = nil
+}
+
+// Openai5hAutoWakeLastTaskID returns the value of the "openai_5h_auto_wake_last_task_id" field in the mutation.
+func (m *GroupMutation) Openai5hAutoWakeLastTaskID() (r int64, exists bool) {
+	v := m.openai_5h_auto_wake_last_task_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOpenai5hAutoWakeLastTaskID returns the old "openai_5h_auto_wake_last_task_id" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldOpenai5hAutoWakeLastTaskID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOpenai5hAutoWakeLastTaskID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOpenai5hAutoWakeLastTaskID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOpenai5hAutoWakeLastTaskID: %w", err)
+	}
+	return oldValue.Openai5hAutoWakeLastTaskID, nil
+}
+
+// AddOpenai5hAutoWakeLastTaskID adds i to the "openai_5h_auto_wake_last_task_id" field.
+func (m *GroupMutation) AddOpenai5hAutoWakeLastTaskID(i int64) {
+	if m.addopenai_5h_auto_wake_last_task_id != nil {
+		*m.addopenai_5h_auto_wake_last_task_id += i
+	} else {
+		m.addopenai_5h_auto_wake_last_task_id = &i
+	}
+}
+
+// AddedOpenai5hAutoWakeLastTaskID returns the value that was added to the "openai_5h_auto_wake_last_task_id" field in this mutation.
+func (m *GroupMutation) AddedOpenai5hAutoWakeLastTaskID() (r int64, exists bool) {
+	v := m.addopenai_5h_auto_wake_last_task_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearOpenai5hAutoWakeLastTaskID clears the value of the "openai_5h_auto_wake_last_task_id" field.
+func (m *GroupMutation) ClearOpenai5hAutoWakeLastTaskID() {
+	m.openai_5h_auto_wake_last_task_id = nil
+	m.addopenai_5h_auto_wake_last_task_id = nil
+	m.clearedFields[group.FieldOpenai5hAutoWakeLastTaskID] = struct{}{}
+}
+
+// Openai5hAutoWakeLastTaskIDCleared returns if the "openai_5h_auto_wake_last_task_id" field was cleared in this mutation.
+func (m *GroupMutation) Openai5hAutoWakeLastTaskIDCleared() bool {
+	_, ok := m.clearedFields[group.FieldOpenai5hAutoWakeLastTaskID]
+	return ok
+}
+
+// ResetOpenai5hAutoWakeLastTaskID resets all changes to the "openai_5h_auto_wake_last_task_id" field.
+func (m *GroupMutation) ResetOpenai5hAutoWakeLastTaskID() {
+	m.openai_5h_auto_wake_last_task_id = nil
+	m.addopenai_5h_auto_wake_last_task_id = nil
+	delete(m.clearedFields, group.FieldOpenai5hAutoWakeLastTaskID)
+}
+
+// SetOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field.
+func (m *GroupMutation) SetOpenai5hAutoWakeLastTaskStatus(s string) {
+	m.openai_5h_auto_wake_last_task_status = &s
+}
+
+// Openai5hAutoWakeLastTaskStatus returns the value of the "openai_5h_auto_wake_last_task_status" field in the mutation.
+func (m *GroupMutation) Openai5hAutoWakeLastTaskStatus() (r string, exists bool) {
+	v := m.openai_5h_auto_wake_last_task_status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOpenai5hAutoWakeLastTaskStatus returns the old "openai_5h_auto_wake_last_task_status" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldOpenai5hAutoWakeLastTaskStatus(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOpenai5hAutoWakeLastTaskStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOpenai5hAutoWakeLastTaskStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOpenai5hAutoWakeLastTaskStatus: %w", err)
+	}
+	return oldValue.Openai5hAutoWakeLastTaskStatus, nil
+}
+
+// ClearOpenai5hAutoWakeLastTaskStatus clears the value of the "openai_5h_auto_wake_last_task_status" field.
+func (m *GroupMutation) ClearOpenai5hAutoWakeLastTaskStatus() {
+	m.openai_5h_auto_wake_last_task_status = nil
+	m.clearedFields[group.FieldOpenai5hAutoWakeLastTaskStatus] = struct{}{}
+}
+
+// Openai5hAutoWakeLastTaskStatusCleared returns if the "openai_5h_auto_wake_last_task_status" field was cleared in this mutation.
+func (m *GroupMutation) Openai5hAutoWakeLastTaskStatusCleared() bool {
+	_, ok := m.clearedFields[group.FieldOpenai5hAutoWakeLastTaskStatus]
+	return ok
+}
+
+// ResetOpenai5hAutoWakeLastTaskStatus resets all changes to the "openai_5h_auto_wake_last_task_status" field.
+func (m *GroupMutation) ResetOpenai5hAutoWakeLastTaskStatus() {
+	m.openai_5h_auto_wake_last_task_status = nil
+	delete(m.clearedFields, group.FieldOpenai5hAutoWakeLastTaskStatus)
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (m *GroupMutation) SetRequireOauthOnly(b bool) {
 	m.require_oauth_only = &b
@@ -25814,7 +26147,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 63)
+	fields := make([]string, 0, 69)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -25971,6 +26304,24 @@ func (m *GroupMutation) Fields() []string {
 	if m.allow_live != nil {
 		fields = append(fields, group.FieldAllowLive)
 	}
+	if m.openai_5h_auto_wake_enabled != nil {
+		fields = append(fields, group.FieldOpenai5hAutoWakeEnabled)
+	}
+	if m.openai_5h_auto_wake_last_checked_at != nil {
+		fields = append(fields, group.FieldOpenai5hAutoWakeLastCheckedAt)
+	}
+	if m.openai_5h_auto_wake_last_candidate_pool_count != nil {
+		fields = append(fields, group.FieldOpenai5hAutoWakeLastCandidatePoolCount)
+	}
+	if m.openai_5h_auto_wake_last_reason != nil {
+		fields = append(fields, group.FieldOpenai5hAutoWakeLastReason)
+	}
+	if m.openai_5h_auto_wake_last_task_id != nil {
+		fields = append(fields, group.FieldOpenai5hAutoWakeLastTaskID)
+	}
+	if m.openai_5h_auto_wake_last_task_status != nil {
+		fields = append(fields, group.FieldOpenai5hAutoWakeLastTaskStatus)
+	}
 	if m.require_oauth_only != nil {
 		fields = append(fields, group.FieldRequireOauthOnly)
 	}
@@ -26116,6 +26467,18 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.AllowMessagesDispatch()
 	case group.FieldAllowLive:
 		return m.AllowLive()
+	case group.FieldOpenai5hAutoWakeEnabled:
+		return m.Openai5hAutoWakeEnabled()
+	case group.FieldOpenai5hAutoWakeLastCheckedAt:
+		return m.Openai5hAutoWakeLastCheckedAt()
+	case group.FieldOpenai5hAutoWakeLastCandidatePoolCount:
+		return m.Openai5hAutoWakeLastCandidatePoolCount()
+	case group.FieldOpenai5hAutoWakeLastReason:
+		return m.Openai5hAutoWakeLastReason()
+	case group.FieldOpenai5hAutoWakeLastTaskID:
+		return m.Openai5hAutoWakeLastTaskID()
+	case group.FieldOpenai5hAutoWakeLastTaskStatus:
+		return m.Openai5hAutoWakeLastTaskStatus()
 	case group.FieldRequireOauthOnly:
 		return m.RequireOauthOnly()
 	case group.FieldRequirePrivacySet:
@@ -26251,6 +26614,18 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldAllowMessagesDispatch(ctx)
 	case group.FieldAllowLive:
 		return m.OldAllowLive(ctx)
+	case group.FieldOpenai5hAutoWakeEnabled:
+		return m.OldOpenai5hAutoWakeEnabled(ctx)
+	case group.FieldOpenai5hAutoWakeLastCheckedAt:
+		return m.OldOpenai5hAutoWakeLastCheckedAt(ctx)
+	case group.FieldOpenai5hAutoWakeLastCandidatePoolCount:
+		return m.OldOpenai5hAutoWakeLastCandidatePoolCount(ctx)
+	case group.FieldOpenai5hAutoWakeLastReason:
+		return m.OldOpenai5hAutoWakeLastReason(ctx)
+	case group.FieldOpenai5hAutoWakeLastTaskID:
+		return m.OldOpenai5hAutoWakeLastTaskID(ctx)
+	case group.FieldOpenai5hAutoWakeLastTaskStatus:
+		return m.OldOpenai5hAutoWakeLastTaskStatus(ctx)
 	case group.FieldRequireOauthOnly:
 		return m.OldRequireOauthOnly(ctx)
 	case group.FieldRequirePrivacySet:
@@ -26646,6 +27021,48 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetAllowLive(v)
 		return nil
+	case group.FieldOpenai5hAutoWakeEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOpenai5hAutoWakeEnabled(v)
+		return nil
+	case group.FieldOpenai5hAutoWakeLastCheckedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOpenai5hAutoWakeLastCheckedAt(v)
+		return nil
+	case group.FieldOpenai5hAutoWakeLastCandidatePoolCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOpenai5hAutoWakeLastCandidatePoolCount(v)
+		return nil
+	case group.FieldOpenai5hAutoWakeLastReason:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOpenai5hAutoWakeLastReason(v)
+		return nil
+	case group.FieldOpenai5hAutoWakeLastTaskID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOpenai5hAutoWakeLastTaskID(v)
+		return nil
+	case group.FieldOpenai5hAutoWakeLastTaskStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOpenai5hAutoWakeLastTaskStatus(v)
+		return nil
 	case group.FieldRequireOauthOnly:
 		v, ok := value.(bool)
 		if !ok {
@@ -26803,6 +27220,12 @@ func (m *GroupMutation) AddedFields() []string {
 	if m.addsort_order != nil {
 		fields = append(fields, group.FieldSortOrder)
 	}
+	if m.addopenai_5h_auto_wake_last_candidate_pool_count != nil {
+		fields = append(fields, group.FieldOpenai5hAutoWakeLastCandidatePoolCount)
+	}
+	if m.addopenai_5h_auto_wake_last_task_id != nil {
+		fields = append(fields, group.FieldOpenai5hAutoWakeLastTaskID)
+	}
 	if m.addrpm_limit != nil {
 		fields = append(fields, group.FieldRpmLimit)
 	}
@@ -26868,6 +27291,10 @@ func (m *GroupMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedFallbackGroupIDOnInvalidRequest()
 	case group.FieldSortOrder:
 		return m.AddedSortOrder()
+	case group.FieldOpenai5hAutoWakeLastCandidatePoolCount:
+		return m.AddedOpenai5hAutoWakeLastCandidatePoolCount()
+	case group.FieldOpenai5hAutoWakeLastTaskID:
+		return m.AddedOpenai5hAutoWakeLastTaskID()
 	case group.FieldRpmLimit:
 		return m.AddedRpmLimit()
 	case group.FieldProfitMinMargin:
@@ -27051,6 +27478,20 @@ func (m *GroupMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddSortOrder(v)
 		return nil
+	case group.FieldOpenai5hAutoWakeLastCandidatePoolCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddOpenai5hAutoWakeLastCandidatePoolCount(v)
+		return nil
+	case group.FieldOpenai5hAutoWakeLastTaskID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddOpenai5hAutoWakeLastTaskID(v)
+		return nil
 	case group.FieldRpmLimit:
 		v, ok := value.(int)
 		if !ok {
@@ -27146,6 +27587,21 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldModelRouting) {
 		fields = append(fields, group.FieldModelRouting)
 	}
+	if m.FieldCleared(group.FieldOpenai5hAutoWakeLastCheckedAt) {
+		fields = append(fields, group.FieldOpenai5hAutoWakeLastCheckedAt)
+	}
+	if m.FieldCleared(group.FieldOpenai5hAutoWakeLastCandidatePoolCount) {
+		fields = append(fields, group.FieldOpenai5hAutoWakeLastCandidatePoolCount)
+	}
+	if m.FieldCleared(group.FieldOpenai5hAutoWakeLastReason) {
+		fields = append(fields, group.FieldOpenai5hAutoWakeLastReason)
+	}
+	if m.FieldCleared(group.FieldOpenai5hAutoWakeLastTaskID) {
+		fields = append(fields, group.FieldOpenai5hAutoWakeLastTaskID)
+	}
+	if m.FieldCleared(group.FieldOpenai5hAutoWakeLastTaskStatus) {
+		fields = append(fields, group.FieldOpenai5hAutoWakeLastTaskStatus)
+	}
 	return fields
 }
 
@@ -27225,6 +27681,21 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldModelRouting:
 		m.ClearModelRouting()
+		return nil
+	case group.FieldOpenai5hAutoWakeLastCheckedAt:
+		m.ClearOpenai5hAutoWakeLastCheckedAt()
+		return nil
+	case group.FieldOpenai5hAutoWakeLastCandidatePoolCount:
+		m.ClearOpenai5hAutoWakeLastCandidatePoolCount()
+		return nil
+	case group.FieldOpenai5hAutoWakeLastReason:
+		m.ClearOpenai5hAutoWakeLastReason()
+		return nil
+	case group.FieldOpenai5hAutoWakeLastTaskID:
+		m.ClearOpenai5hAutoWakeLastTaskID()
+		return nil
+	case group.FieldOpenai5hAutoWakeLastTaskStatus:
+		m.ClearOpenai5hAutoWakeLastTaskStatus()
 		return nil
 	}
 	return fmt.Errorf("unknown Group nullable field %s", name)
@@ -27389,6 +27860,24 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldAllowLive:
 		m.ResetAllowLive()
+		return nil
+	case group.FieldOpenai5hAutoWakeEnabled:
+		m.ResetOpenai5hAutoWakeEnabled()
+		return nil
+	case group.FieldOpenai5hAutoWakeLastCheckedAt:
+		m.ResetOpenai5hAutoWakeLastCheckedAt()
+		return nil
+	case group.FieldOpenai5hAutoWakeLastCandidatePoolCount:
+		m.ResetOpenai5hAutoWakeLastCandidatePoolCount()
+		return nil
+	case group.FieldOpenai5hAutoWakeLastReason:
+		m.ResetOpenai5hAutoWakeLastReason()
+		return nil
+	case group.FieldOpenai5hAutoWakeLastTaskID:
+		m.ResetOpenai5hAutoWakeLastTaskID()
+		return nil
+	case group.FieldOpenai5hAutoWakeLastTaskStatus:
+		m.ResetOpenai5hAutoWakeLastTaskStatus()
 		return nil
 	case group.FieldRequireOauthOnly:
 		m.ResetRequireOauthOnly()
@@ -29398,12 +29887,788 @@ func (m *IdentityAdoptionDecisionMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown IdentityAdoptionDecision edge %s", name)
 }
 
+// OpenAI5hWakePoolLeaseMutation represents an operation that mutates the OpenAI5hWakePoolLease nodes in the graph.
+type OpenAI5hWakePoolLeaseMutation struct {
+	config
+	op               Op
+	typ              string
+	id               *int64
+	identity_hash    *string
+	task_id          *int64
+	addtask_id       *int64
+	item_id          *int64
+	additem_id       *int64
+	lease_owner      *string
+	lease_expires_at *time.Time
+	heartbeat_at     *time.Time
+	created_at       *time.Time
+	updated_at       *time.Time
+	clearedFields    map[string]struct{}
+	done             bool
+	oldValue         func(context.Context) (*OpenAI5hWakePoolLease, error)
+	predicates       []predicate.OpenAI5hWakePoolLease
+}
+
+var _ ent.Mutation = (*OpenAI5hWakePoolLeaseMutation)(nil)
+
+// openai5hwakepoolleaseOption allows management of the mutation configuration using functional options.
+type openai5hwakepoolleaseOption func(*OpenAI5hWakePoolLeaseMutation)
+
+// newOpenAI5hWakePoolLeaseMutation creates new mutation for the OpenAI5hWakePoolLease entity.
+func newOpenAI5hWakePoolLeaseMutation(c config, op Op, opts ...openai5hwakepoolleaseOption) *OpenAI5hWakePoolLeaseMutation {
+	m := &OpenAI5hWakePoolLeaseMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeOpenAI5hWakePoolLease,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withOpenAI5hWakePoolLeaseID sets the ID field of the mutation.
+func withOpenAI5hWakePoolLeaseID(id int64) openai5hwakepoolleaseOption {
+	return func(m *OpenAI5hWakePoolLeaseMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *OpenAI5hWakePoolLease
+		)
+		m.oldValue = func(ctx context.Context) (*OpenAI5hWakePoolLease, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().OpenAI5hWakePoolLease.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withOpenAI5hWakePoolLease sets the old OpenAI5hWakePoolLease of the mutation.
+func withOpenAI5hWakePoolLease(node *OpenAI5hWakePoolLease) openai5hwakepoolleaseOption {
+	return func(m *OpenAI5hWakePoolLeaseMutation) {
+		m.oldValue = func(context.Context) (*OpenAI5hWakePoolLease, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m OpenAI5hWakePoolLeaseMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m OpenAI5hWakePoolLeaseMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *OpenAI5hWakePoolLeaseMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().OpenAI5hWakePoolLease.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetIdentityHash sets the "identity_hash" field.
+func (m *OpenAI5hWakePoolLeaseMutation) SetIdentityHash(s string) {
+	m.identity_hash = &s
+}
+
+// IdentityHash returns the value of the "identity_hash" field in the mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) IdentityHash() (r string, exists bool) {
+	v := m.identity_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIdentityHash returns the old "identity_hash" field's value of the OpenAI5hWakePoolLease entity.
+// If the OpenAI5hWakePoolLease object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakePoolLeaseMutation) OldIdentityHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIdentityHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIdentityHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIdentityHash: %w", err)
+	}
+	return oldValue.IdentityHash, nil
+}
+
+// ResetIdentityHash resets all changes to the "identity_hash" field.
+func (m *OpenAI5hWakePoolLeaseMutation) ResetIdentityHash() {
+	m.identity_hash = nil
+}
+
+// SetTaskID sets the "task_id" field.
+func (m *OpenAI5hWakePoolLeaseMutation) SetTaskID(i int64) {
+	m.task_id = &i
+	m.addtask_id = nil
+}
+
+// TaskID returns the value of the "task_id" field in the mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) TaskID() (r int64, exists bool) {
+	v := m.task_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTaskID returns the old "task_id" field's value of the OpenAI5hWakePoolLease entity.
+// If the OpenAI5hWakePoolLease object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakePoolLeaseMutation) OldTaskID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTaskID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTaskID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTaskID: %w", err)
+	}
+	return oldValue.TaskID, nil
+}
+
+// AddTaskID adds i to the "task_id" field.
+func (m *OpenAI5hWakePoolLeaseMutation) AddTaskID(i int64) {
+	if m.addtask_id != nil {
+		*m.addtask_id += i
+	} else {
+		m.addtask_id = &i
+	}
+}
+
+// AddedTaskID returns the value that was added to the "task_id" field in this mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) AddedTaskID() (r int64, exists bool) {
+	v := m.addtask_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTaskID resets all changes to the "task_id" field.
+func (m *OpenAI5hWakePoolLeaseMutation) ResetTaskID() {
+	m.task_id = nil
+	m.addtask_id = nil
+}
+
+// SetItemID sets the "item_id" field.
+func (m *OpenAI5hWakePoolLeaseMutation) SetItemID(i int64) {
+	m.item_id = &i
+	m.additem_id = nil
+}
+
+// ItemID returns the value of the "item_id" field in the mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) ItemID() (r int64, exists bool) {
+	v := m.item_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldItemID returns the old "item_id" field's value of the OpenAI5hWakePoolLease entity.
+// If the OpenAI5hWakePoolLease object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakePoolLeaseMutation) OldItemID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldItemID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldItemID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldItemID: %w", err)
+	}
+	return oldValue.ItemID, nil
+}
+
+// AddItemID adds i to the "item_id" field.
+func (m *OpenAI5hWakePoolLeaseMutation) AddItemID(i int64) {
+	if m.additem_id != nil {
+		*m.additem_id += i
+	} else {
+		m.additem_id = &i
+	}
+}
+
+// AddedItemID returns the value that was added to the "item_id" field in this mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) AddedItemID() (r int64, exists bool) {
+	v := m.additem_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetItemID resets all changes to the "item_id" field.
+func (m *OpenAI5hWakePoolLeaseMutation) ResetItemID() {
+	m.item_id = nil
+	m.additem_id = nil
+}
+
+// SetLeaseOwner sets the "lease_owner" field.
+func (m *OpenAI5hWakePoolLeaseMutation) SetLeaseOwner(s string) {
+	m.lease_owner = &s
+}
+
+// LeaseOwner returns the value of the "lease_owner" field in the mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) LeaseOwner() (r string, exists bool) {
+	v := m.lease_owner
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLeaseOwner returns the old "lease_owner" field's value of the OpenAI5hWakePoolLease entity.
+// If the OpenAI5hWakePoolLease object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakePoolLeaseMutation) OldLeaseOwner(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLeaseOwner is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLeaseOwner requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLeaseOwner: %w", err)
+	}
+	return oldValue.LeaseOwner, nil
+}
+
+// ResetLeaseOwner resets all changes to the "lease_owner" field.
+func (m *OpenAI5hWakePoolLeaseMutation) ResetLeaseOwner() {
+	m.lease_owner = nil
+}
+
+// SetLeaseExpiresAt sets the "lease_expires_at" field.
+func (m *OpenAI5hWakePoolLeaseMutation) SetLeaseExpiresAt(t time.Time) {
+	m.lease_expires_at = &t
+}
+
+// LeaseExpiresAt returns the value of the "lease_expires_at" field in the mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) LeaseExpiresAt() (r time.Time, exists bool) {
+	v := m.lease_expires_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLeaseExpiresAt returns the old "lease_expires_at" field's value of the OpenAI5hWakePoolLease entity.
+// If the OpenAI5hWakePoolLease object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakePoolLeaseMutation) OldLeaseExpiresAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLeaseExpiresAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLeaseExpiresAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLeaseExpiresAt: %w", err)
+	}
+	return oldValue.LeaseExpiresAt, nil
+}
+
+// ResetLeaseExpiresAt resets all changes to the "lease_expires_at" field.
+func (m *OpenAI5hWakePoolLeaseMutation) ResetLeaseExpiresAt() {
+	m.lease_expires_at = nil
+}
+
+// SetHeartbeatAt sets the "heartbeat_at" field.
+func (m *OpenAI5hWakePoolLeaseMutation) SetHeartbeatAt(t time.Time) {
+	m.heartbeat_at = &t
+}
+
+// HeartbeatAt returns the value of the "heartbeat_at" field in the mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) HeartbeatAt() (r time.Time, exists bool) {
+	v := m.heartbeat_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldHeartbeatAt returns the old "heartbeat_at" field's value of the OpenAI5hWakePoolLease entity.
+// If the OpenAI5hWakePoolLease object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakePoolLeaseMutation) OldHeartbeatAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldHeartbeatAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldHeartbeatAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldHeartbeatAt: %w", err)
+	}
+	return oldValue.HeartbeatAt, nil
+}
+
+// ResetHeartbeatAt resets all changes to the "heartbeat_at" field.
+func (m *OpenAI5hWakePoolLeaseMutation) ResetHeartbeatAt() {
+	m.heartbeat_at = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *OpenAI5hWakePoolLeaseMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the OpenAI5hWakePoolLease entity.
+// If the OpenAI5hWakePoolLease object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakePoolLeaseMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *OpenAI5hWakePoolLeaseMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *OpenAI5hWakePoolLeaseMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the OpenAI5hWakePoolLease entity.
+// If the OpenAI5hWakePoolLease object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakePoolLeaseMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *OpenAI5hWakePoolLeaseMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the OpenAI5hWakePoolLeaseMutation builder.
+func (m *OpenAI5hWakePoolLeaseMutation) Where(ps ...predicate.OpenAI5hWakePoolLease) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the OpenAI5hWakePoolLeaseMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *OpenAI5hWakePoolLeaseMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.OpenAI5hWakePoolLease, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *OpenAI5hWakePoolLeaseMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *OpenAI5hWakePoolLeaseMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (OpenAI5hWakePoolLease).
+func (m *OpenAI5hWakePoolLeaseMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *OpenAI5hWakePoolLeaseMutation) Fields() []string {
+	fields := make([]string, 0, 8)
+	if m.identity_hash != nil {
+		fields = append(fields, openai5hwakepoollease.FieldIdentityHash)
+	}
+	if m.task_id != nil {
+		fields = append(fields, openai5hwakepoollease.FieldTaskID)
+	}
+	if m.item_id != nil {
+		fields = append(fields, openai5hwakepoollease.FieldItemID)
+	}
+	if m.lease_owner != nil {
+		fields = append(fields, openai5hwakepoollease.FieldLeaseOwner)
+	}
+	if m.lease_expires_at != nil {
+		fields = append(fields, openai5hwakepoollease.FieldLeaseExpiresAt)
+	}
+	if m.heartbeat_at != nil {
+		fields = append(fields, openai5hwakepoollease.FieldHeartbeatAt)
+	}
+	if m.created_at != nil {
+		fields = append(fields, openai5hwakepoollease.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, openai5hwakepoollease.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *OpenAI5hWakePoolLeaseMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case openai5hwakepoollease.FieldIdentityHash:
+		return m.IdentityHash()
+	case openai5hwakepoollease.FieldTaskID:
+		return m.TaskID()
+	case openai5hwakepoollease.FieldItemID:
+		return m.ItemID()
+	case openai5hwakepoollease.FieldLeaseOwner:
+		return m.LeaseOwner()
+	case openai5hwakepoollease.FieldLeaseExpiresAt:
+		return m.LeaseExpiresAt()
+	case openai5hwakepoollease.FieldHeartbeatAt:
+		return m.HeartbeatAt()
+	case openai5hwakepoollease.FieldCreatedAt:
+		return m.CreatedAt()
+	case openai5hwakepoollease.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *OpenAI5hWakePoolLeaseMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case openai5hwakepoollease.FieldIdentityHash:
+		return m.OldIdentityHash(ctx)
+	case openai5hwakepoollease.FieldTaskID:
+		return m.OldTaskID(ctx)
+	case openai5hwakepoollease.FieldItemID:
+		return m.OldItemID(ctx)
+	case openai5hwakepoollease.FieldLeaseOwner:
+		return m.OldLeaseOwner(ctx)
+	case openai5hwakepoollease.FieldLeaseExpiresAt:
+		return m.OldLeaseExpiresAt(ctx)
+	case openai5hwakepoollease.FieldHeartbeatAt:
+		return m.OldHeartbeatAt(ctx)
+	case openai5hwakepoollease.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case openai5hwakepoollease.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown OpenAI5hWakePoolLease field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *OpenAI5hWakePoolLeaseMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case openai5hwakepoollease.FieldIdentityHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIdentityHash(v)
+		return nil
+	case openai5hwakepoollease.FieldTaskID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTaskID(v)
+		return nil
+	case openai5hwakepoollease.FieldItemID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetItemID(v)
+		return nil
+	case openai5hwakepoollease.FieldLeaseOwner:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLeaseOwner(v)
+		return nil
+	case openai5hwakepoollease.FieldLeaseExpiresAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLeaseExpiresAt(v)
+		return nil
+	case openai5hwakepoollease.FieldHeartbeatAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetHeartbeatAt(v)
+		return nil
+	case openai5hwakepoollease.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case openai5hwakepoollease.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown OpenAI5hWakePoolLease field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) AddedFields() []string {
+	var fields []string
+	if m.addtask_id != nil {
+		fields = append(fields, openai5hwakepoollease.FieldTaskID)
+	}
+	if m.additem_id != nil {
+		fields = append(fields, openai5hwakepoollease.FieldItemID)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *OpenAI5hWakePoolLeaseMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case openai5hwakepoollease.FieldTaskID:
+		return m.AddedTaskID()
+	case openai5hwakepoollease.FieldItemID:
+		return m.AddedItemID()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *OpenAI5hWakePoolLeaseMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case openai5hwakepoollease.FieldTaskID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTaskID(v)
+		return nil
+	case openai5hwakepoollease.FieldItemID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddItemID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown OpenAI5hWakePoolLease numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *OpenAI5hWakePoolLeaseMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown OpenAI5hWakePoolLease nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *OpenAI5hWakePoolLeaseMutation) ResetField(name string) error {
+	switch name {
+	case openai5hwakepoollease.FieldIdentityHash:
+		m.ResetIdentityHash()
+		return nil
+	case openai5hwakepoollease.FieldTaskID:
+		m.ResetTaskID()
+		return nil
+	case openai5hwakepoollease.FieldItemID:
+		m.ResetItemID()
+		return nil
+	case openai5hwakepoollease.FieldLeaseOwner:
+		m.ResetLeaseOwner()
+		return nil
+	case openai5hwakepoollease.FieldLeaseExpiresAt:
+		m.ResetLeaseExpiresAt()
+		return nil
+	case openai5hwakepoollease.FieldHeartbeatAt:
+		m.ResetHeartbeatAt()
+		return nil
+	case openai5hwakepoollease.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case openai5hwakepoollease.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown OpenAI5hWakePoolLease field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *OpenAI5hWakePoolLeaseMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *OpenAI5hWakePoolLeaseMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown OpenAI5hWakePoolLease unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *OpenAI5hWakePoolLeaseMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown OpenAI5hWakePoolLease edge %s", name)
+}
+
 // OpenAI5hWakeTaskMutation represents an operation that mutates the OpenAI5hWakeTask nodes in the graph.
 type OpenAI5hWakeTaskMutation struct {
 	config
 	op                         Op
 	typ                        string
 	id                         *int64
+	trigger_type               *string
+	group_id                   *int64
+	addgroup_id                *int64
 	status                     *string
 	eligible_account_count     *int
 	addeligible_account_count  *int
@@ -29538,6 +30803,112 @@ func (m *OpenAI5hWakeTaskMutation) IDs(ctx context.Context) ([]int64, error) {
 	default:
 		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
 	}
+}
+
+// SetTriggerType sets the "trigger_type" field.
+func (m *OpenAI5hWakeTaskMutation) SetTriggerType(s string) {
+	m.trigger_type = &s
+}
+
+// TriggerType returns the value of the "trigger_type" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) TriggerType() (r string, exists bool) {
+	v := m.trigger_type
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTriggerType returns the old "trigger_type" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldTriggerType(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTriggerType is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTriggerType requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTriggerType: %w", err)
+	}
+	return oldValue.TriggerType, nil
+}
+
+// ResetTriggerType resets all changes to the "trigger_type" field.
+func (m *OpenAI5hWakeTaskMutation) ResetTriggerType() {
+	m.trigger_type = nil
+}
+
+// SetGroupID sets the "group_id" field.
+func (m *OpenAI5hWakeTaskMutation) SetGroupID(i int64) {
+	m.group_id = &i
+	m.addgroup_id = nil
+}
+
+// GroupID returns the value of the "group_id" field in the mutation.
+func (m *OpenAI5hWakeTaskMutation) GroupID() (r int64, exists bool) {
+	v := m.group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGroupID returns the old "group_id" field's value of the OpenAI5hWakeTask entity.
+// If the OpenAI5hWakeTask object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *OpenAI5hWakeTaskMutation) OldGroupID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGroupID: %w", err)
+	}
+	return oldValue.GroupID, nil
+}
+
+// AddGroupID adds i to the "group_id" field.
+func (m *OpenAI5hWakeTaskMutation) AddGroupID(i int64) {
+	if m.addgroup_id != nil {
+		*m.addgroup_id += i
+	} else {
+		m.addgroup_id = &i
+	}
+}
+
+// AddedGroupID returns the value that was added to the "group_id" field in this mutation.
+func (m *OpenAI5hWakeTaskMutation) AddedGroupID() (r int64, exists bool) {
+	v := m.addgroup_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearGroupID clears the value of the "group_id" field.
+func (m *OpenAI5hWakeTaskMutation) ClearGroupID() {
+	m.group_id = nil
+	m.addgroup_id = nil
+	m.clearedFields[openai5hwaketask.FieldGroupID] = struct{}{}
+}
+
+// GroupIDCleared returns if the "group_id" field was cleared in this mutation.
+func (m *OpenAI5hWakeTaskMutation) GroupIDCleared() bool {
+	_, ok := m.clearedFields[openai5hwaketask.FieldGroupID]
+	return ok
+}
+
+// ResetGroupID resets all changes to the "group_id" field.
+func (m *OpenAI5hWakeTaskMutation) ResetGroupID() {
+	m.group_id = nil
+	m.addgroup_id = nil
+	delete(m.clearedFields, openai5hwaketask.FieldGroupID)
 }
 
 // SetStatus sets the "status" field.
@@ -30697,7 +32068,13 @@ func (m *OpenAI5hWakeTaskMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *OpenAI5hWakeTaskMutation) Fields() []string {
-	fields := make([]string, 0, 22)
+	fields := make([]string, 0, 24)
+	if m.trigger_type != nil {
+		fields = append(fields, openai5hwaketask.FieldTriggerType)
+	}
+	if m.group_id != nil {
+		fields = append(fields, openai5hwaketask.FieldGroupID)
+	}
 	if m.status != nil {
 		fields = append(fields, openai5hwaketask.FieldStatus)
 	}
@@ -30772,6 +32149,10 @@ func (m *OpenAI5hWakeTaskMutation) Fields() []string {
 // schema.
 func (m *OpenAI5hWakeTaskMutation) Field(name string) (ent.Value, bool) {
 	switch name {
+	case openai5hwaketask.FieldTriggerType:
+		return m.TriggerType()
+	case openai5hwaketask.FieldGroupID:
+		return m.GroupID()
 	case openai5hwaketask.FieldStatus:
 		return m.Status()
 	case openai5hwaketask.FieldEligibleAccountCount:
@@ -30825,6 +32206,10 @@ func (m *OpenAI5hWakeTaskMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *OpenAI5hWakeTaskMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
+	case openai5hwaketask.FieldTriggerType:
+		return m.OldTriggerType(ctx)
+	case openai5hwaketask.FieldGroupID:
+		return m.OldGroupID(ctx)
 	case openai5hwaketask.FieldStatus:
 		return m.OldStatus(ctx)
 	case openai5hwaketask.FieldEligibleAccountCount:
@@ -30878,6 +32263,20 @@ func (m *OpenAI5hWakeTaskMutation) OldField(ctx context.Context, name string) (e
 // type.
 func (m *OpenAI5hWakeTaskMutation) SetField(name string, value ent.Value) error {
 	switch name {
+	case openai5hwaketask.FieldTriggerType:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTriggerType(v)
+		return nil
+	case openai5hwaketask.FieldGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGroupID(v)
+		return nil
 	case openai5hwaketask.FieldStatus:
 		v, ok := value.(string)
 		if !ok {
@@ -31040,6 +32439,9 @@ func (m *OpenAI5hWakeTaskMutation) SetField(name string, value ent.Value) error 
 // this mutation.
 func (m *OpenAI5hWakeTaskMutation) AddedFields() []string {
 	var fields []string
+	if m.addgroup_id != nil {
+		fields = append(fields, openai5hwaketask.FieldGroupID)
+	}
 	if m.addeligible_account_count != nil {
 		fields = append(fields, openai5hwaketask.FieldEligibleAccountCount)
 	}
@@ -31078,6 +32480,8 @@ func (m *OpenAI5hWakeTaskMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *OpenAI5hWakeTaskMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
+	case openai5hwaketask.FieldGroupID:
+		return m.AddedGroupID()
 	case openai5hwaketask.FieldEligibleAccountCount:
 		return m.AddedEligibleAccountCount()
 	case openai5hwaketask.FieldActiveWindowCount:
@@ -31107,6 +32511,13 @@ func (m *OpenAI5hWakeTaskMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *OpenAI5hWakeTaskMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case openai5hwaketask.FieldGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddGroupID(v)
+		return nil
 	case openai5hwaketask.FieldEligibleAccountCount:
 		v, ok := value.(int)
 		if !ok {
@@ -31185,6 +32596,9 @@ func (m *OpenAI5hWakeTaskMutation) AddField(name string, value ent.Value) error 
 // mutation.
 func (m *OpenAI5hWakeTaskMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(openai5hwaketask.FieldGroupID) {
+		fields = append(fields, openai5hwaketask.FieldGroupID)
+	}
 	if m.FieldCleared(openai5hwaketask.FieldRequestedByUserID) {
 		fields = append(fields, openai5hwaketask.FieldRequestedByUserID)
 	}
@@ -31229,6 +32643,9 @@ func (m *OpenAI5hWakeTaskMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *OpenAI5hWakeTaskMutation) ClearField(name string) error {
 	switch name {
+	case openai5hwaketask.FieldGroupID:
+		m.ClearGroupID()
+		return nil
 	case openai5hwaketask.FieldRequestedByUserID:
 		m.ClearRequestedByUserID()
 		return nil
@@ -31267,6 +32684,12 @@ func (m *OpenAI5hWakeTaskMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *OpenAI5hWakeTaskMutation) ResetField(name string) error {
 	switch name {
+	case openai5hwaketask.FieldTriggerType:
+		m.ResetTriggerType()
+		return nil
+	case openai5hwaketask.FieldGroupID:
+		m.ResetGroupID()
+		return nil
 	case openai5hwaketask.FieldStatus:
 		m.ResetStatus()
 		return nil

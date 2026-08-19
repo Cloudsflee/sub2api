@@ -718,6 +718,90 @@ func (_c *GroupCreate) SetNillableAllowLive(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field.
+func (_c *GroupCreate) SetOpenai5hAutoWakeEnabled(v bool) *GroupCreate {
+	_c.mutation.SetOpenai5hAutoWakeEnabled(v)
+	return _c
+}
+
+// SetNillableOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableOpenai5hAutoWakeEnabled(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetOpenai5hAutoWakeEnabled(*v)
+	}
+	return _c
+}
+
+// SetOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field.
+func (_c *GroupCreate) SetOpenai5hAutoWakeLastCheckedAt(v time.Time) *GroupCreate {
+	_c.mutation.SetOpenai5hAutoWakeLastCheckedAt(v)
+	return _c
+}
+
+// SetNillableOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableOpenai5hAutoWakeLastCheckedAt(v *time.Time) *GroupCreate {
+	if v != nil {
+		_c.SetOpenai5hAutoWakeLastCheckedAt(*v)
+	}
+	return _c
+}
+
+// SetOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (_c *GroupCreate) SetOpenai5hAutoWakeLastCandidatePoolCount(v int) *GroupCreate {
+	_c.mutation.SetOpenai5hAutoWakeLastCandidatePoolCount(v)
+	return _c
+}
+
+// SetNillableOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableOpenai5hAutoWakeLastCandidatePoolCount(v *int) *GroupCreate {
+	if v != nil {
+		_c.SetOpenai5hAutoWakeLastCandidatePoolCount(*v)
+	}
+	return _c
+}
+
+// SetOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field.
+func (_c *GroupCreate) SetOpenai5hAutoWakeLastReason(v string) *GroupCreate {
+	_c.mutation.SetOpenai5hAutoWakeLastReason(v)
+	return _c
+}
+
+// SetNillableOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableOpenai5hAutoWakeLastReason(v *string) *GroupCreate {
+	if v != nil {
+		_c.SetOpenai5hAutoWakeLastReason(*v)
+	}
+	return _c
+}
+
+// SetOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field.
+func (_c *GroupCreate) SetOpenai5hAutoWakeLastTaskID(v int64) *GroupCreate {
+	_c.mutation.SetOpenai5hAutoWakeLastTaskID(v)
+	return _c
+}
+
+// SetNillableOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableOpenai5hAutoWakeLastTaskID(v *int64) *GroupCreate {
+	if v != nil {
+		_c.SetOpenai5hAutoWakeLastTaskID(*v)
+	}
+	return _c
+}
+
+// SetOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field.
+func (_c *GroupCreate) SetOpenai5hAutoWakeLastTaskStatus(v string) *GroupCreate {
+	_c.mutation.SetOpenai5hAutoWakeLastTaskStatus(v)
+	return _c
+}
+
+// SetNillableOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableOpenai5hAutoWakeLastTaskStatus(v *string) *GroupCreate {
+	if v != nil {
+		_c.SetOpenai5hAutoWakeLastTaskStatus(*v)
+	}
+	return _c
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_c *GroupCreate) SetRequireOauthOnly(v bool) *GroupCreate {
 	_c.mutation.SetRequireOauthOnly(v)
@@ -1113,6 +1197,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultAllowLive
 		_c.mutation.SetAllowLive(v)
 	}
+	if _, ok := _c.mutation.Openai5hAutoWakeEnabled(); !ok {
+		v := group.DefaultOpenai5hAutoWakeEnabled
+		_c.mutation.SetOpenai5hAutoWakeEnabled(v)
+	}
 	if _, ok := _c.mutation.RequireOauthOnly(); !ok {
 		v := group.DefaultRequireOauthOnly
 		_c.mutation.SetRequireOauthOnly(v)
@@ -1306,6 +1394,19 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		return &ValidationError{Name: "allow_live", err: errors.New(`ent: missing required field "Group.allow_live"`)}
+	}
+	if _, ok := _c.mutation.Openai5hAutoWakeEnabled(); !ok {
+		return &ValidationError{Name: "openai_5h_auto_wake_enabled", err: errors.New(`ent: missing required field "Group.openai_5h_auto_wake_enabled"`)}
+	}
+	if v, ok := _c.mutation.Openai5hAutoWakeLastReason(); ok {
+		if err := group.Openai5hAutoWakeLastReasonValidator(v); err != nil {
+			return &ValidationError{Name: "openai_5h_auto_wake_last_reason", err: fmt.Errorf(`ent: validator failed for field "Group.openai_5h_auto_wake_last_reason": %w`, err)}
+		}
+	}
+	if v, ok := _c.mutation.Openai5hAutoWakeLastTaskStatus(); ok {
+		if err := group.Openai5hAutoWakeLastTaskStatusValidator(v); err != nil {
+			return &ValidationError{Name: "openai_5h_auto_wake_last_task_status", err: fmt.Errorf(`ent: validator failed for field "Group.openai_5h_auto_wake_last_task_status": %w`, err)}
+		}
 	}
 	if _, ok := _c.mutation.RequireOauthOnly(); !ok {
 		return &ValidationError{Name: "require_oauth_only", err: errors.New(`ent: missing required field "Group.require_oauth_only"`)}
@@ -1584,6 +1685,30 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
 		_node.AllowLive = value
+	}
+	if value, ok := _c.mutation.Openai5hAutoWakeEnabled(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeEnabled, field.TypeBool, value)
+		_node.Openai5hAutoWakeEnabled = value
+	}
+	if value, ok := _c.mutation.Openai5hAutoWakeLastCheckedAt(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastCheckedAt, field.TypeTime, value)
+		_node.Openai5hAutoWakeLastCheckedAt = &value
+	}
+	if value, ok := _c.mutation.Openai5hAutoWakeLastCandidatePoolCount(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastCandidatePoolCount, field.TypeInt, value)
+		_node.Openai5hAutoWakeLastCandidatePoolCount = &value
+	}
+	if value, ok := _c.mutation.Openai5hAutoWakeLastReason(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastReason, field.TypeString, value)
+		_node.Openai5hAutoWakeLastReason = &value
+	}
+	if value, ok := _c.mutation.Openai5hAutoWakeLastTaskID(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastTaskID, field.TypeInt64, value)
+		_node.Openai5hAutoWakeLastTaskID = &value
+	}
+	if value, ok := _c.mutation.Openai5hAutoWakeLastTaskStatus(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeLastTaskStatus, field.TypeString, value)
+		_node.Openai5hAutoWakeLastTaskStatus = &value
 	}
 	if value, ok := _c.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
@@ -2652,6 +2777,120 @@ func (u *GroupUpsert) SetAllowLive(v bool) *GroupUpsert {
 // UpdateAllowLive sets the "allow_live" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateAllowLive() *GroupUpsert {
 	u.SetExcluded(group.FieldAllowLive)
+	return u
+}
+
+// SetOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field.
+func (u *GroupUpsert) SetOpenai5hAutoWakeEnabled(v bool) *GroupUpsert {
+	u.Set(group.FieldOpenai5hAutoWakeEnabled, v)
+	return u
+}
+
+// UpdateOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateOpenai5hAutoWakeEnabled() *GroupUpsert {
+	u.SetExcluded(group.FieldOpenai5hAutoWakeEnabled)
+	return u
+}
+
+// SetOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field.
+func (u *GroupUpsert) SetOpenai5hAutoWakeLastCheckedAt(v time.Time) *GroupUpsert {
+	u.Set(group.FieldOpenai5hAutoWakeLastCheckedAt, v)
+	return u
+}
+
+// UpdateOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateOpenai5hAutoWakeLastCheckedAt() *GroupUpsert {
+	u.SetExcluded(group.FieldOpenai5hAutoWakeLastCheckedAt)
+	return u
+}
+
+// ClearOpenai5hAutoWakeLastCheckedAt clears the value of the "openai_5h_auto_wake_last_checked_at" field.
+func (u *GroupUpsert) ClearOpenai5hAutoWakeLastCheckedAt() *GroupUpsert {
+	u.SetNull(group.FieldOpenai5hAutoWakeLastCheckedAt)
+	return u
+}
+
+// SetOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (u *GroupUpsert) SetOpenai5hAutoWakeLastCandidatePoolCount(v int) *GroupUpsert {
+	u.Set(group.FieldOpenai5hAutoWakeLastCandidatePoolCount, v)
+	return u
+}
+
+// UpdateOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateOpenai5hAutoWakeLastCandidatePoolCount() *GroupUpsert {
+	u.SetExcluded(group.FieldOpenai5hAutoWakeLastCandidatePoolCount)
+	return u
+}
+
+// AddOpenai5hAutoWakeLastCandidatePoolCount adds v to the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (u *GroupUpsert) AddOpenai5hAutoWakeLastCandidatePoolCount(v int) *GroupUpsert {
+	u.Add(group.FieldOpenai5hAutoWakeLastCandidatePoolCount, v)
+	return u
+}
+
+// ClearOpenai5hAutoWakeLastCandidatePoolCount clears the value of the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (u *GroupUpsert) ClearOpenai5hAutoWakeLastCandidatePoolCount() *GroupUpsert {
+	u.SetNull(group.FieldOpenai5hAutoWakeLastCandidatePoolCount)
+	return u
+}
+
+// SetOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field.
+func (u *GroupUpsert) SetOpenai5hAutoWakeLastReason(v string) *GroupUpsert {
+	u.Set(group.FieldOpenai5hAutoWakeLastReason, v)
+	return u
+}
+
+// UpdateOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateOpenai5hAutoWakeLastReason() *GroupUpsert {
+	u.SetExcluded(group.FieldOpenai5hAutoWakeLastReason)
+	return u
+}
+
+// ClearOpenai5hAutoWakeLastReason clears the value of the "openai_5h_auto_wake_last_reason" field.
+func (u *GroupUpsert) ClearOpenai5hAutoWakeLastReason() *GroupUpsert {
+	u.SetNull(group.FieldOpenai5hAutoWakeLastReason)
+	return u
+}
+
+// SetOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field.
+func (u *GroupUpsert) SetOpenai5hAutoWakeLastTaskID(v int64) *GroupUpsert {
+	u.Set(group.FieldOpenai5hAutoWakeLastTaskID, v)
+	return u
+}
+
+// UpdateOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateOpenai5hAutoWakeLastTaskID() *GroupUpsert {
+	u.SetExcluded(group.FieldOpenai5hAutoWakeLastTaskID)
+	return u
+}
+
+// AddOpenai5hAutoWakeLastTaskID adds v to the "openai_5h_auto_wake_last_task_id" field.
+func (u *GroupUpsert) AddOpenai5hAutoWakeLastTaskID(v int64) *GroupUpsert {
+	u.Add(group.FieldOpenai5hAutoWakeLastTaskID, v)
+	return u
+}
+
+// ClearOpenai5hAutoWakeLastTaskID clears the value of the "openai_5h_auto_wake_last_task_id" field.
+func (u *GroupUpsert) ClearOpenai5hAutoWakeLastTaskID() *GroupUpsert {
+	u.SetNull(group.FieldOpenai5hAutoWakeLastTaskID)
+	return u
+}
+
+// SetOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field.
+func (u *GroupUpsert) SetOpenai5hAutoWakeLastTaskStatus(v string) *GroupUpsert {
+	u.Set(group.FieldOpenai5hAutoWakeLastTaskStatus, v)
+	return u
+}
+
+// UpdateOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateOpenai5hAutoWakeLastTaskStatus() *GroupUpsert {
+	u.SetExcluded(group.FieldOpenai5hAutoWakeLastTaskStatus)
+	return u
+}
+
+// ClearOpenai5hAutoWakeLastTaskStatus clears the value of the "openai_5h_auto_wake_last_task_status" field.
+func (u *GroupUpsert) ClearOpenai5hAutoWakeLastTaskStatus() *GroupUpsert {
+	u.SetNull(group.FieldOpenai5hAutoWakeLastTaskStatus)
 	return u
 }
 
@@ -3865,6 +4104,139 @@ func (u *GroupUpsertOne) SetAllowLive(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateAllowLive() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateAllowLive()
+	})
+}
+
+// SetOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field.
+func (u *GroupUpsertOne) SetOpenai5hAutoWakeEnabled(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeEnabled(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateOpenai5hAutoWakeEnabled() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeEnabled()
+	})
+}
+
+// SetOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field.
+func (u *GroupUpsertOne) SetOpenai5hAutoWakeLastCheckedAt(v time.Time) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeLastCheckedAt(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateOpenai5hAutoWakeLastCheckedAt() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeLastCheckedAt()
+	})
+}
+
+// ClearOpenai5hAutoWakeLastCheckedAt clears the value of the "openai_5h_auto_wake_last_checked_at" field.
+func (u *GroupUpsertOne) ClearOpenai5hAutoWakeLastCheckedAt() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenai5hAutoWakeLastCheckedAt()
+	})
+}
+
+// SetOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (u *GroupUpsertOne) SetOpenai5hAutoWakeLastCandidatePoolCount(v int) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeLastCandidatePoolCount(v)
+	})
+}
+
+// AddOpenai5hAutoWakeLastCandidatePoolCount adds v to the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (u *GroupUpsertOne) AddOpenai5hAutoWakeLastCandidatePoolCount(v int) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddOpenai5hAutoWakeLastCandidatePoolCount(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateOpenai5hAutoWakeLastCandidatePoolCount() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeLastCandidatePoolCount()
+	})
+}
+
+// ClearOpenai5hAutoWakeLastCandidatePoolCount clears the value of the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (u *GroupUpsertOne) ClearOpenai5hAutoWakeLastCandidatePoolCount() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenai5hAutoWakeLastCandidatePoolCount()
+	})
+}
+
+// SetOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field.
+func (u *GroupUpsertOne) SetOpenai5hAutoWakeLastReason(v string) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeLastReason(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateOpenai5hAutoWakeLastReason() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeLastReason()
+	})
+}
+
+// ClearOpenai5hAutoWakeLastReason clears the value of the "openai_5h_auto_wake_last_reason" field.
+func (u *GroupUpsertOne) ClearOpenai5hAutoWakeLastReason() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenai5hAutoWakeLastReason()
+	})
+}
+
+// SetOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field.
+func (u *GroupUpsertOne) SetOpenai5hAutoWakeLastTaskID(v int64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeLastTaskID(v)
+	})
+}
+
+// AddOpenai5hAutoWakeLastTaskID adds v to the "openai_5h_auto_wake_last_task_id" field.
+func (u *GroupUpsertOne) AddOpenai5hAutoWakeLastTaskID(v int64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddOpenai5hAutoWakeLastTaskID(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateOpenai5hAutoWakeLastTaskID() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeLastTaskID()
+	})
+}
+
+// ClearOpenai5hAutoWakeLastTaskID clears the value of the "openai_5h_auto_wake_last_task_id" field.
+func (u *GroupUpsertOne) ClearOpenai5hAutoWakeLastTaskID() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenai5hAutoWakeLastTaskID()
+	})
+}
+
+// SetOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field.
+func (u *GroupUpsertOne) SetOpenai5hAutoWakeLastTaskStatus(v string) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeLastTaskStatus(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateOpenai5hAutoWakeLastTaskStatus() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeLastTaskStatus()
+	})
+}
+
+// ClearOpenai5hAutoWakeLastTaskStatus clears the value of the "openai_5h_auto_wake_last_task_status" field.
+func (u *GroupUpsertOne) ClearOpenai5hAutoWakeLastTaskStatus() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenai5hAutoWakeLastTaskStatus()
 	})
 }
 
@@ -5269,6 +5641,139 @@ func (u *GroupUpsertBulk) SetAllowLive(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateAllowLive() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateAllowLive()
+	})
+}
+
+// SetOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field.
+func (u *GroupUpsertBulk) SetOpenai5hAutoWakeEnabled(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeEnabled(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateOpenai5hAutoWakeEnabled() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeEnabled()
+	})
+}
+
+// SetOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field.
+func (u *GroupUpsertBulk) SetOpenai5hAutoWakeLastCheckedAt(v time.Time) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeLastCheckedAt(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateOpenai5hAutoWakeLastCheckedAt() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeLastCheckedAt()
+	})
+}
+
+// ClearOpenai5hAutoWakeLastCheckedAt clears the value of the "openai_5h_auto_wake_last_checked_at" field.
+func (u *GroupUpsertBulk) ClearOpenai5hAutoWakeLastCheckedAt() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenai5hAutoWakeLastCheckedAt()
+	})
+}
+
+// SetOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (u *GroupUpsertBulk) SetOpenai5hAutoWakeLastCandidatePoolCount(v int) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeLastCandidatePoolCount(v)
+	})
+}
+
+// AddOpenai5hAutoWakeLastCandidatePoolCount adds v to the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (u *GroupUpsertBulk) AddOpenai5hAutoWakeLastCandidatePoolCount(v int) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddOpenai5hAutoWakeLastCandidatePoolCount(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeLastCandidatePoolCount sets the "openai_5h_auto_wake_last_candidate_pool_count" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateOpenai5hAutoWakeLastCandidatePoolCount() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeLastCandidatePoolCount()
+	})
+}
+
+// ClearOpenai5hAutoWakeLastCandidatePoolCount clears the value of the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func (u *GroupUpsertBulk) ClearOpenai5hAutoWakeLastCandidatePoolCount() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenai5hAutoWakeLastCandidatePoolCount()
+	})
+}
+
+// SetOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field.
+func (u *GroupUpsertBulk) SetOpenai5hAutoWakeLastReason(v string) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeLastReason(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeLastReason sets the "openai_5h_auto_wake_last_reason" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateOpenai5hAutoWakeLastReason() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeLastReason()
+	})
+}
+
+// ClearOpenai5hAutoWakeLastReason clears the value of the "openai_5h_auto_wake_last_reason" field.
+func (u *GroupUpsertBulk) ClearOpenai5hAutoWakeLastReason() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenai5hAutoWakeLastReason()
+	})
+}
+
+// SetOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field.
+func (u *GroupUpsertBulk) SetOpenai5hAutoWakeLastTaskID(v int64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeLastTaskID(v)
+	})
+}
+
+// AddOpenai5hAutoWakeLastTaskID adds v to the "openai_5h_auto_wake_last_task_id" field.
+func (u *GroupUpsertBulk) AddOpenai5hAutoWakeLastTaskID(v int64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddOpenai5hAutoWakeLastTaskID(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeLastTaskID sets the "openai_5h_auto_wake_last_task_id" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateOpenai5hAutoWakeLastTaskID() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeLastTaskID()
+	})
+}
+
+// ClearOpenai5hAutoWakeLastTaskID clears the value of the "openai_5h_auto_wake_last_task_id" field.
+func (u *GroupUpsertBulk) ClearOpenai5hAutoWakeLastTaskID() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenai5hAutoWakeLastTaskID()
+	})
+}
+
+// SetOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field.
+func (u *GroupUpsertBulk) SetOpenai5hAutoWakeLastTaskStatus(v string) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeLastTaskStatus(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeLastTaskStatus sets the "openai_5h_auto_wake_last_task_status" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateOpenai5hAutoWakeLastTaskStatus() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeLastTaskStatus()
+	})
+}
+
+// ClearOpenai5hAutoWakeLastTaskStatus clears the value of the "openai_5h_auto_wake_last_task_status" field.
+func (u *GroupUpsertBulk) ClearOpenai5hAutoWakeLastTaskStatus() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenai5hAutoWakeLastTaskStatus()
 	})
 }
 

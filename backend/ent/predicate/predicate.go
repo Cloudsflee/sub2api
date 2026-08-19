@@ -63,6 +63,9 @@ type IdempotencyRecord func(*sql.Selector)
 // IdentityAdoptionDecision is the predicate function for identityadoptiondecision builders.
 type IdentityAdoptionDecision func(*sql.Selector)
 
+// OpenAI5hWakePoolLease is the predicate function for openai5hwakepoollease builders.
+type OpenAI5hWakePoolLease func(*sql.Selector)
+
 // OpenAI5hWakeTask is the predicate function for openai5hwaketask builders.
 type OpenAI5hWakeTask func(*sql.Selector)
 

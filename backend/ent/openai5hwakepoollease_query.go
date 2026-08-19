@@ -12,69 +12,69 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketask"
+	"github.com/Wei-Shaw/sub2api/ent/openai5hwakepoollease"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 )
 
-// OpenAI5hWakeTaskQuery is the builder for querying OpenAI5hWakeTask entities.
-type OpenAI5hWakeTaskQuery struct {
+// OpenAI5hWakePoolLeaseQuery is the builder for querying OpenAI5hWakePoolLease entities.
+type OpenAI5hWakePoolLeaseQuery struct {
 	config
 	ctx        *QueryContext
-	order      []openai5hwaketask.OrderOption
+	order      []openai5hwakepoollease.OrderOption
 	inters     []Interceptor
-	predicates []predicate.OpenAI5hWakeTask
+	predicates []predicate.OpenAI5hWakePoolLease
 	modifiers  []func(*sql.Selector)
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
 }
 
-// Where adds a new predicate for the OpenAI5hWakeTaskQuery builder.
-func (_q *OpenAI5hWakeTaskQuery) Where(ps ...predicate.OpenAI5hWakeTask) *OpenAI5hWakeTaskQuery {
+// Where adds a new predicate for the OpenAI5hWakePoolLeaseQuery builder.
+func (_q *OpenAI5hWakePoolLeaseQuery) Where(ps ...predicate.OpenAI5hWakePoolLease) *OpenAI5hWakePoolLeaseQuery {
 	_q.predicates = append(_q.predicates, ps...)
 	return _q
 }
 
 // Limit the number of records to be returned by this query.
-func (_q *OpenAI5hWakeTaskQuery) Limit(limit int) *OpenAI5hWakeTaskQuery {
+func (_q *OpenAI5hWakePoolLeaseQuery) Limit(limit int) *OpenAI5hWakePoolLeaseQuery {
 	_q.ctx.Limit = &limit
 	return _q
 }
 
 // Offset to start from.
-func (_q *OpenAI5hWakeTaskQuery) Offset(offset int) *OpenAI5hWakeTaskQuery {
+func (_q *OpenAI5hWakePoolLeaseQuery) Offset(offset int) *OpenAI5hWakePoolLeaseQuery {
 	_q.ctx.Offset = &offset
 	return _q
 }
 
 // Unique configures the query builder to filter duplicate records on query.
 // By default, unique is set to true, and can be disabled using this method.
-func (_q *OpenAI5hWakeTaskQuery) Unique(unique bool) *OpenAI5hWakeTaskQuery {
+func (_q *OpenAI5hWakePoolLeaseQuery) Unique(unique bool) *OpenAI5hWakePoolLeaseQuery {
 	_q.ctx.Unique = &unique
 	return _q
 }
 
 // Order specifies how the records should be ordered.
-func (_q *OpenAI5hWakeTaskQuery) Order(o ...openai5hwaketask.OrderOption) *OpenAI5hWakeTaskQuery {
+func (_q *OpenAI5hWakePoolLeaseQuery) Order(o ...openai5hwakepoollease.OrderOption) *OpenAI5hWakePoolLeaseQuery {
 	_q.order = append(_q.order, o...)
 	return _q
 }
 
-// First returns the first OpenAI5hWakeTask entity from the query.
-// Returns a *NotFoundError when no OpenAI5hWakeTask was found.
-func (_q *OpenAI5hWakeTaskQuery) First(ctx context.Context) (*OpenAI5hWakeTask, error) {
+// First returns the first OpenAI5hWakePoolLease entity from the query.
+// Returns a *NotFoundError when no OpenAI5hWakePoolLease was found.
+func (_q *OpenAI5hWakePoolLeaseQuery) First(ctx context.Context) (*OpenAI5hWakePoolLease, error) {
 	nodes, err := _q.Limit(1).All(setContextOp(ctx, _q.ctx, ent.OpQueryFirst))
 	if err != nil {
 		return nil, err
 	}
 	if len(nodes) == 0 {
-		return nil, &NotFoundError{openai5hwaketask.Label}
+		return nil, &NotFoundError{openai5hwakepoollease.Label}
 	}
 	return nodes[0], nil
 }
 
 // FirstX is like First, but panics if an error occurs.
-func (_q *OpenAI5hWakeTaskQuery) FirstX(ctx context.Context) *OpenAI5hWakeTask {
+func (_q *OpenAI5hWakePoolLeaseQuery) FirstX(ctx context.Context) *OpenAI5hWakePoolLease {
 	node, err := _q.First(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
@@ -82,22 +82,22 @@ func (_q *OpenAI5hWakeTaskQuery) FirstX(ctx context.Context) *OpenAI5hWakeTask {
 	return node
 }
 
-// FirstID returns the first OpenAI5hWakeTask ID from the query.
-// Returns a *NotFoundError when no OpenAI5hWakeTask ID was found.
-func (_q *OpenAI5hWakeTaskQuery) FirstID(ctx context.Context) (id int64, err error) {
+// FirstID returns the first OpenAI5hWakePoolLease ID from the query.
+// Returns a *NotFoundError when no OpenAI5hWakePoolLease ID was found.
+func (_q *OpenAI5hWakePoolLeaseQuery) FirstID(ctx context.Context) (id int64, err error) {
 	var ids []int64
 	if ids, err = _q.Limit(1).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryFirstID)); err != nil {
 		return
 	}
 	if len(ids) == 0 {
-		err = &NotFoundError{openai5hwaketask.Label}
+		err = &NotFoundError{openai5hwakepoollease.Label}
 		return
 	}
 	return ids[0], nil
 }
 
 // FirstIDX is like FirstID, but panics if an error occurs.
-func (_q *OpenAI5hWakeTaskQuery) FirstIDX(ctx context.Context) int64 {
+func (_q *OpenAI5hWakePoolLeaseQuery) FirstIDX(ctx context.Context) int64 {
 	id, err := _q.FirstID(ctx)
 	if err != nil && !IsNotFound(err) {
 		panic(err)
@@ -105,10 +105,10 @@ func (_q *OpenAI5hWakeTaskQuery) FirstIDX(ctx context.Context) int64 {
 	return id
 }
 
-// Only returns a single OpenAI5hWakeTask entity found by the query, ensuring it only returns one.
-// Returns a *NotSingularError when more than one OpenAI5hWakeTask entity is found.
-// Returns a *NotFoundError when no OpenAI5hWakeTask entities are found.
-func (_q *OpenAI5hWakeTaskQuery) Only(ctx context.Context) (*OpenAI5hWakeTask, error) {
+// Only returns a single OpenAI5hWakePoolLease entity found by the query, ensuring it only returns one.
+// Returns a *NotSingularError when more than one OpenAI5hWakePoolLease entity is found.
+// Returns a *NotFoundError when no OpenAI5hWakePoolLease entities are found.
+func (_q *OpenAI5hWakePoolLeaseQuery) Only(ctx context.Context) (*OpenAI5hWakePoolLease, error) {
 	nodes, err := _q.Limit(2).All(setContextOp(ctx, _q.ctx, ent.OpQueryOnly))
 	if err != nil {
 		return nil, err
@@ -117,14 +117,14 @@ func (_q *OpenAI5hWakeTaskQuery) Only(ctx context.Context) (*OpenAI5hWakeTask, e
 	case 1:
 		return nodes[0], nil
 	case 0:
-		return nil, &NotFoundError{openai5hwaketask.Label}
+		return nil, &NotFoundError{openai5hwakepoollease.Label}
 	default:
-		return nil, &NotSingularError{openai5hwaketask.Label}
+		return nil, &NotSingularError{openai5hwakepoollease.Label}
 	}
 }
 
 // OnlyX is like Only, but panics if an error occurs.
-func (_q *OpenAI5hWakeTaskQuery) OnlyX(ctx context.Context) *OpenAI5hWakeTask {
+func (_q *OpenAI5hWakePoolLeaseQuery) OnlyX(ctx context.Context) *OpenAI5hWakePoolLease {
 	node, err := _q.Only(ctx)
 	if err != nil {
 		panic(err)
@@ -132,10 +132,10 @@ func (_q *OpenAI5hWakeTaskQuery) OnlyX(ctx context.Context) *OpenAI5hWakeTask {
 	return node
 }
 
-// OnlyID is like Only, but returns the only OpenAI5hWakeTask ID in the query.
-// Returns a *NotSingularError when more than one OpenAI5hWakeTask ID is found.
+// OnlyID is like Only, but returns the only OpenAI5hWakePoolLease ID in the query.
+// Returns a *NotSingularError when more than one OpenAI5hWakePoolLease ID is found.
 // Returns a *NotFoundError when no entities are found.
-func (_q *OpenAI5hWakeTaskQuery) OnlyID(ctx context.Context) (id int64, err error) {
+func (_q *OpenAI5hWakePoolLeaseQuery) OnlyID(ctx context.Context) (id int64, err error) {
 	var ids []int64
 	if ids, err = _q.Limit(2).IDs(setContextOp(ctx, _q.ctx, ent.OpQueryOnlyID)); err != nil {
 		return
@@ -144,15 +144,15 @@ func (_q *OpenAI5hWakeTaskQuery) OnlyID(ctx context.Context) (id int64, err erro
 	case 1:
 		id = ids[0]
 	case 0:
-		err = &NotFoundError{openai5hwaketask.Label}
+		err = &NotFoundError{openai5hwakepoollease.Label}
 	default:
-		err = &NotSingularError{openai5hwaketask.Label}
+		err = &NotSingularError{openai5hwakepoollease.Label}
 	}
 	return
 }
 
 // OnlyIDX is like OnlyID, but panics if an error occurs.
-func (_q *OpenAI5hWakeTaskQuery) OnlyIDX(ctx context.Context) int64 {
+func (_q *OpenAI5hWakePoolLeaseQuery) OnlyIDX(ctx context.Context) int64 {
 	id, err := _q.OnlyID(ctx)
 	if err != nil {
 		panic(err)
@@ -160,18 +160,18 @@ func (_q *OpenAI5hWakeTaskQuery) OnlyIDX(ctx context.Context) int64 {
 	return id
 }
 
-// All executes the query and returns a list of OpenAI5hWakeTasks.
-func (_q *OpenAI5hWakeTaskQuery) All(ctx context.Context) ([]*OpenAI5hWakeTask, error) {
+// All executes the query and returns a list of OpenAI5hWakePoolLeases.
+func (_q *OpenAI5hWakePoolLeaseQuery) All(ctx context.Context) ([]*OpenAI5hWakePoolLease, error) {
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryAll)
 	if err := _q.prepareQuery(ctx); err != nil {
 		return nil, err
 	}
-	qr := querierAll[[]*OpenAI5hWakeTask, *OpenAI5hWakeTaskQuery]()
-	return withInterceptors[[]*OpenAI5hWakeTask](ctx, _q, qr, _q.inters)
+	qr := querierAll[[]*OpenAI5hWakePoolLease, *OpenAI5hWakePoolLeaseQuery]()
+	return withInterceptors[[]*OpenAI5hWakePoolLease](ctx, _q, qr, _q.inters)
 }
 
 // AllX is like All, but panics if an error occurs.
-func (_q *OpenAI5hWakeTaskQuery) AllX(ctx context.Context) []*OpenAI5hWakeTask {
+func (_q *OpenAI5hWakePoolLeaseQuery) AllX(ctx context.Context) []*OpenAI5hWakePoolLease {
 	nodes, err := _q.All(ctx)
 	if err != nil {
 		panic(err)
@@ -179,20 +179,20 @@ func (_q *OpenAI5hWakeTaskQuery) AllX(ctx context.Context) []*OpenAI5hWakeTask {
 	return nodes
 }
 
-// IDs executes the query and returns a list of OpenAI5hWakeTask IDs.
-func (_q *OpenAI5hWakeTaskQuery) IDs(ctx context.Context) (ids []int64, err error) {
+// IDs executes the query and returns a list of OpenAI5hWakePoolLease IDs.
+func (_q *OpenAI5hWakePoolLeaseQuery) IDs(ctx context.Context) (ids []int64, err error) {
 	if _q.ctx.Unique == nil && _q.path != nil {
 		_q.Unique(true)
 	}
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryIDs)
-	if err = _q.Select(openai5hwaketask.FieldID).Scan(ctx, &ids); err != nil {
+	if err = _q.Select(openai5hwakepoollease.FieldID).Scan(ctx, &ids); err != nil {
 		return nil, err
 	}
 	return ids, nil
 }
 
 // IDsX is like IDs, but panics if an error occurs.
-func (_q *OpenAI5hWakeTaskQuery) IDsX(ctx context.Context) []int64 {
+func (_q *OpenAI5hWakePoolLeaseQuery) IDsX(ctx context.Context) []int64 {
 	ids, err := _q.IDs(ctx)
 	if err != nil {
 		panic(err)
@@ -201,16 +201,16 @@ func (_q *OpenAI5hWakeTaskQuery) IDsX(ctx context.Context) []int64 {
 }
 
 // Count returns the count of the given query.
-func (_q *OpenAI5hWakeTaskQuery) Count(ctx context.Context) (int, error) {
+func (_q *OpenAI5hWakePoolLeaseQuery) Count(ctx context.Context) (int, error) {
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryCount)
 	if err := _q.prepareQuery(ctx); err != nil {
 		return 0, err
 	}
-	return withInterceptors[int](ctx, _q, querierCount[*OpenAI5hWakeTaskQuery](), _q.inters)
+	return withInterceptors[int](ctx, _q, querierCount[*OpenAI5hWakePoolLeaseQuery](), _q.inters)
 }
 
 // CountX is like Count, but panics if an error occurs.
-func (_q *OpenAI5hWakeTaskQuery) CountX(ctx context.Context) int {
+func (_q *OpenAI5hWakePoolLeaseQuery) CountX(ctx context.Context) int {
 	count, err := _q.Count(ctx)
 	if err != nil {
 		panic(err)
@@ -219,7 +219,7 @@ func (_q *OpenAI5hWakeTaskQuery) CountX(ctx context.Context) int {
 }
 
 // Exist returns true if the query has elements in the graph.
-func (_q *OpenAI5hWakeTaskQuery) Exist(ctx context.Context) (bool, error) {
+func (_q *OpenAI5hWakePoolLeaseQuery) Exist(ctx context.Context) (bool, error) {
 	ctx = setContextOp(ctx, _q.ctx, ent.OpQueryExist)
 	switch _, err := _q.FirstID(ctx); {
 	case IsNotFound(err):
@@ -232,7 +232,7 @@ func (_q *OpenAI5hWakeTaskQuery) Exist(ctx context.Context) (bool, error) {
 }
 
 // ExistX is like Exist, but panics if an error occurs.
-func (_q *OpenAI5hWakeTaskQuery) ExistX(ctx context.Context) bool {
+func (_q *OpenAI5hWakePoolLeaseQuery) ExistX(ctx context.Context) bool {
 	exist, err := _q.Exist(ctx)
 	if err != nil {
 		panic(err)
@@ -240,18 +240,18 @@ func (_q *OpenAI5hWakeTaskQuery) ExistX(ctx context.Context) bool {
 	return exist
 }
 
-// Clone returns a duplicate of the OpenAI5hWakeTaskQuery builder, including all associated steps. It can be
+// Clone returns a duplicate of the OpenAI5hWakePoolLeaseQuery builder, including all associated steps. It can be
 // used to prepare common query builders and use them differently after the clone is made.
-func (_q *OpenAI5hWakeTaskQuery) Clone() *OpenAI5hWakeTaskQuery {
+func (_q *OpenAI5hWakePoolLeaseQuery) Clone() *OpenAI5hWakePoolLeaseQuery {
 	if _q == nil {
 		return nil
 	}
-	return &OpenAI5hWakeTaskQuery{
+	return &OpenAI5hWakePoolLeaseQuery{
 		config:     _q.config,
 		ctx:        _q.ctx.Clone(),
-		order:      append([]openai5hwaketask.OrderOption{}, _q.order...),
+		order:      append([]openai5hwakepoollease.OrderOption{}, _q.order...),
 		inters:     append([]Interceptor{}, _q.inters...),
-		predicates: append([]predicate.OpenAI5hWakeTask{}, _q.predicates...),
+		predicates: append([]predicate.OpenAI5hWakePoolLease{}, _q.predicates...),
 		// clone intermediate query.
 		sql:  _q.sql.Clone(),
 		path: _q.path,
@@ -264,19 +264,19 @@ func (_q *OpenAI5hWakeTaskQuery) Clone() *OpenAI5hWakeTaskQuery {
 // Example:
 //
 //	var v []struct {
-//		TriggerType string `json:"trigger_type,omitempty"`
+//		IdentityHash string `json:"identity_hash,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
-//	client.OpenAI5hWakeTask.Query().
-//		GroupBy(openai5hwaketask.FieldTriggerType).
+//	client.OpenAI5hWakePoolLease.Query().
+//		GroupBy(openai5hwakepoollease.FieldIdentityHash).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
-func (_q *OpenAI5hWakeTaskQuery) GroupBy(field string, fields ...string) *OpenAI5hWakeTaskGroupBy {
+func (_q *OpenAI5hWakePoolLeaseQuery) GroupBy(field string, fields ...string) *OpenAI5hWakePoolLeaseGroupBy {
 	_q.ctx.Fields = append([]string{field}, fields...)
-	grbuild := &OpenAI5hWakeTaskGroupBy{build: _q}
+	grbuild := &OpenAI5hWakePoolLeaseGroupBy{build: _q}
 	grbuild.flds = &_q.ctx.Fields
-	grbuild.label = openai5hwaketask.Label
+	grbuild.label = openai5hwakepoollease.Label
 	grbuild.scan = grbuild.Scan
 	return grbuild
 }
@@ -287,26 +287,26 @@ func (_q *OpenAI5hWakeTaskQuery) GroupBy(field string, fields ...string) *OpenAI
 // Example:
 //
 //	var v []struct {
-//		TriggerType string `json:"trigger_type,omitempty"`
+//		IdentityHash string `json:"identity_hash,omitempty"`
 //	}
 //
-//	client.OpenAI5hWakeTask.Query().
-//		Select(openai5hwaketask.FieldTriggerType).
+//	client.OpenAI5hWakePoolLease.Query().
+//		Select(openai5hwakepoollease.FieldIdentityHash).
 //		Scan(ctx, &v)
-func (_q *OpenAI5hWakeTaskQuery) Select(fields ...string) *OpenAI5hWakeTaskSelect {
+func (_q *OpenAI5hWakePoolLeaseQuery) Select(fields ...string) *OpenAI5hWakePoolLeaseSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)
-	sbuild := &OpenAI5hWakeTaskSelect{OpenAI5hWakeTaskQuery: _q}
-	sbuild.label = openai5hwaketask.Label
+	sbuild := &OpenAI5hWakePoolLeaseSelect{OpenAI5hWakePoolLeaseQuery: _q}
+	sbuild.label = openai5hwakepoollease.Label
 	sbuild.flds, sbuild.scan = &_q.ctx.Fields, sbuild.Scan
 	return sbuild
 }
 
-// Aggregate returns a OpenAI5hWakeTaskSelect configured with the given aggregations.
-func (_q *OpenAI5hWakeTaskQuery) Aggregate(fns ...AggregateFunc) *OpenAI5hWakeTaskSelect {
+// Aggregate returns a OpenAI5hWakePoolLeaseSelect configured with the given aggregations.
+func (_q *OpenAI5hWakePoolLeaseQuery) Aggregate(fns ...AggregateFunc) *OpenAI5hWakePoolLeaseSelect {
 	return _q.Select().Aggregate(fns...)
 }
 
-func (_q *OpenAI5hWakeTaskQuery) prepareQuery(ctx context.Context) error {
+func (_q *OpenAI5hWakePoolLeaseQuery) prepareQuery(ctx context.Context) error {
 	for _, inter := range _q.inters {
 		if inter == nil {
 			return fmt.Errorf("ent: uninitialized interceptor (forgotten import ent/runtime?)")
@@ -318,7 +318,7 @@ func (_q *OpenAI5hWakeTaskQuery) prepareQuery(ctx context.Context) error {
 		}
 	}
 	for _, f := range _q.ctx.Fields {
-		if !openai5hwaketask.ValidColumn(f) {
+		if !openai5hwakepoollease.ValidColumn(f) {
 			return &ValidationError{Name: f, err: fmt.Errorf("ent: invalid field %q for query", f)}
 		}
 	}
@@ -332,16 +332,16 @@ func (_q *OpenAI5hWakeTaskQuery) prepareQuery(ctx context.Context) error {
 	return nil
 }
 
-func (_q *OpenAI5hWakeTaskQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*OpenAI5hWakeTask, error) {
+func (_q *OpenAI5hWakePoolLeaseQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*OpenAI5hWakePoolLease, error) {
 	var (
-		nodes = []*OpenAI5hWakeTask{}
+		nodes = []*OpenAI5hWakePoolLease{}
 		_spec = _q.querySpec()
 	)
 	_spec.ScanValues = func(columns []string) ([]any, error) {
-		return (*OpenAI5hWakeTask).scanValues(nil, columns)
+		return (*OpenAI5hWakePoolLease).scanValues(nil, columns)
 	}
 	_spec.Assign = func(columns []string, values []any) error {
-		node := &OpenAI5hWakeTask{config: _q.config}
+		node := &OpenAI5hWakePoolLease{config: _q.config}
 		nodes = append(nodes, node)
 		return node.assignValues(columns, values)
 	}
@@ -360,7 +360,7 @@ func (_q *OpenAI5hWakeTaskQuery) sqlAll(ctx context.Context, hooks ...queryHook)
 	return nodes, nil
 }
 
-func (_q *OpenAI5hWakeTaskQuery) sqlCount(ctx context.Context) (int, error) {
+func (_q *OpenAI5hWakePoolLeaseQuery) sqlCount(ctx context.Context) (int, error) {
 	_spec := _q.querySpec()
 	if len(_q.modifiers) > 0 {
 		_spec.Modifiers = _q.modifiers
@@ -372,8 +372,8 @@ func (_q *OpenAI5hWakeTaskQuery) sqlCount(ctx context.Context) (int, error) {
 	return sqlgraph.CountNodes(ctx, _q.driver, _spec)
 }
 
-func (_q *OpenAI5hWakeTaskQuery) querySpec() *sqlgraph.QuerySpec {
-	_spec := sqlgraph.NewQuerySpec(openai5hwaketask.Table, openai5hwaketask.Columns, sqlgraph.NewFieldSpec(openai5hwaketask.FieldID, field.TypeInt64))
+func (_q *OpenAI5hWakePoolLeaseQuery) querySpec() *sqlgraph.QuerySpec {
+	_spec := sqlgraph.NewQuerySpec(openai5hwakepoollease.Table, openai5hwakepoollease.Columns, sqlgraph.NewFieldSpec(openai5hwakepoollease.FieldID, field.TypeInt64))
 	_spec.From = _q.sql
 	if unique := _q.ctx.Unique; unique != nil {
 		_spec.Unique = *unique
@@ -382,9 +382,9 @@ func (_q *OpenAI5hWakeTaskQuery) querySpec() *sqlgraph.QuerySpec {
 	}
 	if fields := _q.ctx.Fields; len(fields) > 0 {
 		_spec.Node.Columns = make([]string, 0, len(fields))
-		_spec.Node.Columns = append(_spec.Node.Columns, openai5hwaketask.FieldID)
+		_spec.Node.Columns = append(_spec.Node.Columns, openai5hwakepoollease.FieldID)
 		for i := range fields {
-			if fields[i] != openai5hwaketask.FieldID {
+			if fields[i] != openai5hwakepoollease.FieldID {
 				_spec.Node.Columns = append(_spec.Node.Columns, fields[i])
 			}
 		}
@@ -412,12 +412,12 @@ func (_q *OpenAI5hWakeTaskQuery) querySpec() *sqlgraph.QuerySpec {
 	return _spec
 }
 
-func (_q *OpenAI5hWakeTaskQuery) sqlQuery(ctx context.Context) *sql.Selector {
+func (_q *OpenAI5hWakePoolLeaseQuery) sqlQuery(ctx context.Context) *sql.Selector {
 	builder := sql.Dialect(_q.driver.Dialect())
-	t1 := builder.Table(openai5hwaketask.Table)
+	t1 := builder.Table(openai5hwakepoollease.Table)
 	columns := _q.ctx.Fields
 	if len(columns) == 0 {
-		columns = openai5hwaketask.Columns
+		columns = openai5hwakepoollease.Columns
 	}
 	selector := builder.Select(t1.Columns(columns...)...).From(t1)
 	if _q.sql != nil {
@@ -450,7 +450,7 @@ func (_q *OpenAI5hWakeTaskQuery) sqlQuery(ctx context.Context) *sql.Selector {
 // ForUpdate locks the selected rows against concurrent updates, and prevent them from being
 // updated, deleted or "selected ... for update" by other sessions, until the transaction is
 // either committed or rolled-back.
-func (_q *OpenAI5hWakeTaskQuery) ForUpdate(opts ...sql.LockOption) *OpenAI5hWakeTaskQuery {
+func (_q *OpenAI5hWakePoolLeaseQuery) ForUpdate(opts ...sql.LockOption) *OpenAI5hWakePoolLeaseQuery {
 	if _q.driver.Dialect() == dialect.Postgres {
 		_q.Unique(false)
 	}
@@ -463,7 +463,7 @@ func (_q *OpenAI5hWakeTaskQuery) ForUpdate(opts ...sql.LockOption) *OpenAI5hWake
 // ForShare behaves similarly to ForUpdate, except that it acquires a shared mode lock
 // on any rows that are read. Other sessions can read the rows, but cannot modify them
 // until your transaction commits.
-func (_q *OpenAI5hWakeTaskQuery) ForShare(opts ...sql.LockOption) *OpenAI5hWakeTaskQuery {
+func (_q *OpenAI5hWakePoolLeaseQuery) ForShare(opts ...sql.LockOption) *OpenAI5hWakePoolLeaseQuery {
 	if _q.driver.Dialect() == dialect.Postgres {
 		_q.Unique(false)
 	}
@@ -473,28 +473,28 @@ func (_q *OpenAI5hWakeTaskQuery) ForShare(opts ...sql.LockOption) *OpenAI5hWakeT
 	return _q
 }
 
-// OpenAI5hWakeTaskGroupBy is the group-by builder for OpenAI5hWakeTask entities.
-type OpenAI5hWakeTaskGroupBy struct {
+// OpenAI5hWakePoolLeaseGroupBy is the group-by builder for OpenAI5hWakePoolLease entities.
+type OpenAI5hWakePoolLeaseGroupBy struct {
 	selector
-	build *OpenAI5hWakeTaskQuery
+	build *OpenAI5hWakePoolLeaseQuery
 }
 
 // Aggregate adds the given aggregation functions to the group-by query.
-func (_g *OpenAI5hWakeTaskGroupBy) Aggregate(fns ...AggregateFunc) *OpenAI5hWakeTaskGroupBy {
+func (_g *OpenAI5hWakePoolLeaseGroupBy) Aggregate(fns ...AggregateFunc) *OpenAI5hWakePoolLeaseGroupBy {
 	_g.fns = append(_g.fns, fns...)
 	return _g
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (_g *OpenAI5hWakeTaskGroupBy) Scan(ctx context.Context, v any) error {
+func (_g *OpenAI5hWakePoolLeaseGroupBy) Scan(ctx context.Context, v any) error {
 	ctx = setContextOp(ctx, _g.build.ctx, ent.OpQueryGroupBy)
 	if err := _g.build.prepareQuery(ctx); err != nil {
 		return err
 	}
-	return scanWithInterceptors[*OpenAI5hWakeTaskQuery, *OpenAI5hWakeTaskGroupBy](ctx, _g.build, _g, _g.build.inters, v)
+	return scanWithInterceptors[*OpenAI5hWakePoolLeaseQuery, *OpenAI5hWakePoolLeaseGroupBy](ctx, _g.build, _g, _g.build.inters, v)
 }
 
-func (_g *OpenAI5hWakeTaskGroupBy) sqlScan(ctx context.Context, root *OpenAI5hWakeTaskQuery, v any) error {
+func (_g *OpenAI5hWakePoolLeaseGroupBy) sqlScan(ctx context.Context, root *OpenAI5hWakePoolLeaseQuery, v any) error {
 	selector := root.sqlQuery(ctx).Select()
 	aggregation := make([]string, 0, len(_g.fns))
 	for _, fn := range _g.fns {
@@ -521,28 +521,28 @@ func (_g *OpenAI5hWakeTaskGroupBy) sqlScan(ctx context.Context, root *OpenAI5hWa
 	return sql.ScanSlice(rows, v)
 }
 
-// OpenAI5hWakeTaskSelect is the builder for selecting fields of OpenAI5hWakeTask entities.
-type OpenAI5hWakeTaskSelect struct {
-	*OpenAI5hWakeTaskQuery
+// OpenAI5hWakePoolLeaseSelect is the builder for selecting fields of OpenAI5hWakePoolLease entities.
+type OpenAI5hWakePoolLeaseSelect struct {
+	*OpenAI5hWakePoolLeaseQuery
 	selector
 }
 
 // Aggregate adds the given aggregation functions to the selector query.
-func (_s *OpenAI5hWakeTaskSelect) Aggregate(fns ...AggregateFunc) *OpenAI5hWakeTaskSelect {
+func (_s *OpenAI5hWakePoolLeaseSelect) Aggregate(fns ...AggregateFunc) *OpenAI5hWakePoolLeaseSelect {
 	_s.fns = append(_s.fns, fns...)
 	return _s
 }
 
 // Scan applies the selector query and scans the result into the given value.
-func (_s *OpenAI5hWakeTaskSelect) Scan(ctx context.Context, v any) error {
+func (_s *OpenAI5hWakePoolLeaseSelect) Scan(ctx context.Context, v any) error {
 	ctx = setContextOp(ctx, _s.ctx, ent.OpQuerySelect)
 	if err := _s.prepareQuery(ctx); err != nil {
 		return err
 	}
-	return scanWithInterceptors[*OpenAI5hWakeTaskQuery, *OpenAI5hWakeTaskSelect](ctx, _s.OpenAI5hWakeTaskQuery, _s, _s.inters, v)
+	return scanWithInterceptors[*OpenAI5hWakePoolLeaseQuery, *OpenAI5hWakePoolLeaseSelect](ctx, _s.OpenAI5hWakePoolLeaseQuery, _s, _s.inters, v)
 }
 
-func (_s *OpenAI5hWakeTaskSelect) sqlScan(ctx context.Context, root *OpenAI5hWakeTaskQuery, v any) error {
+func (_s *OpenAI5hWakePoolLeaseSelect) sqlScan(ctx context.Context, root *OpenAI5hWakePoolLeaseQuery, v any) error {
 	selector := root.sqlQuery(ctx)
 	aggregation := make([]string, 0, len(_s.fns))
 	for _, fn := range _s.fns {

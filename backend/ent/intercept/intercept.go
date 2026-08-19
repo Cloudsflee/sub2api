@@ -27,6 +27,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/idempotencyrecord"
 	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
+	"github.com/Wei-Shaw/sub2api/ent/openai5hwakepoollease"
 	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketask"
 	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketaskitem"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
@@ -619,6 +620,33 @@ func (f TraverseIdentityAdoptionDecision) Traverse(ctx context.Context, q ent.Qu
 		return f(ctx, q)
 	}
 	return fmt.Errorf("unexpected query type %T. expect *ent.IdentityAdoptionDecisionQuery", q)
+}
+
+// The OpenAI5hWakePoolLeaseFunc type is an adapter to allow the use of ordinary function as a Querier.
+type OpenAI5hWakePoolLeaseFunc func(context.Context, *ent.OpenAI5hWakePoolLeaseQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f OpenAI5hWakePoolLeaseFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.OpenAI5hWakePoolLeaseQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.OpenAI5hWakePoolLeaseQuery", q)
+}
+
+// The TraverseOpenAI5hWakePoolLease type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseOpenAI5hWakePoolLease func(context.Context, *ent.OpenAI5hWakePoolLeaseQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseOpenAI5hWakePoolLease) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseOpenAI5hWakePoolLease) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.OpenAI5hWakePoolLeaseQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.OpenAI5hWakePoolLeaseQuery", q)
 }
 
 // The OpenAI5hWakeTaskFunc type is an adapter to allow the use of ordinary function as a Querier.
@@ -1256,6 +1284,8 @@ func NewQuery(q ent.Query) (Query, error) {
 		return &query[*ent.IdempotencyRecordQuery, predicate.IdempotencyRecord, idempotencyrecord.OrderOption]{typ: ent.TypeIdempotencyRecord, tq: q}, nil
 	case *ent.IdentityAdoptionDecisionQuery:
 		return &query[*ent.IdentityAdoptionDecisionQuery, predicate.IdentityAdoptionDecision, identityadoptiondecision.OrderOption]{typ: ent.TypeIdentityAdoptionDecision, tq: q}, nil
+	case *ent.OpenAI5hWakePoolLeaseQuery:
+		return &query[*ent.OpenAI5hWakePoolLeaseQuery, predicate.OpenAI5hWakePoolLease, openai5hwakepoollease.OrderOption]{typ: ent.TypeOpenAI5hWakePoolLease, tq: q}, nil
 	case *ent.OpenAI5hWakeTaskQuery:
 		return &query[*ent.OpenAI5hWakeTaskQuery, predicate.OpenAI5hWakeTask, openai5hwaketask.OrderOption]{typ: ent.TypeOpenAI5hWakeTask, tq: q}, nil
 	case *ent.OpenAI5hWakeTaskItemQuery:

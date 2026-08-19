@@ -836,6 +836,7 @@ var ProviderSet = wire.NewSet(
 	ProvideOpenAITokenProvider,
 	ProvideOpenAIQuotaService,
 	ProvideOpenAI5hWakeService,
+	wire.Bind(new(OpenAI5hAutoWakeGroupChecker), new(*OpenAI5hWakeService)),
 	ProvideGrokQuotaService,
 	ProvideCNProviderQuotaService,
 	ProvideCNProviderBalanceService,

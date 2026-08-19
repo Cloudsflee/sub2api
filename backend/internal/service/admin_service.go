@@ -264,6 +264,7 @@ type CreateGroupInput struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	AllowMessagesDispatch       bool
 	AllowLive                   bool
+	OpenAI5hAutoWakeEnabled     bool
 	DefaultMappedModel          string
 	RequireOAuthOnly            bool
 	RequirePrivacySet           bool
@@ -340,6 +341,7 @@ type UpdateGroupInput struct {
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
 	AllowMessagesDispatch       *bool
 	AllowLive                   *bool
+	OpenAI5hAutoWakeEnabled     *bool
 	DefaultMappedModel          *string
 	RequireOAuthOnly            *bool
 	RequirePrivacySet           *bool
@@ -671,12 +673,19 @@ type adminServiceImpl struct {
 	compositeResolver    *CompositeRouteResolver
 	// 分组平台变更后用来失效渠道缓存；可为 nil（缓存会在 TTL 到期后自然重建）
 	channelCacheInvalidator ChannelCacheInvalidator
+	openAI5hAutoWakeChecker OpenAI5hAutoWakeGroupChecker
 }
 
 // ChannelCacheInvalidator 失效渠道缓存。
 // 窄接口，避免 admin 服务依赖整个 ChannelService——与 APIKeyAuthCacheInvalidator 同一思路。
 type ChannelCacheInvalidator interface {
 	InvalidateCache()
+}
+
+// OpenAI5hAutoWakeGroupChecker is the narrow post-save hook used by group
+// management. The implementation queues work and never extends request latency.
+type OpenAI5hAutoWakeGroupChecker interface {
+	TriggerGroupCheck(groupID int64)
 }
 
 type adminRechargeAffiliateAccruer interface {
@@ -711,6 +720,7 @@ func NewAdminService(
 	compositeRouteRepo CompositeModelRouteRepository,
 	compositeResolver *CompositeRouteResolver,
 	channelCacheInvalidator ChannelCacheInvalidator,
+	openAI5hAutoWakeChecker OpenAI5hAutoWakeGroupChecker,
 ) AdminService {
 	return &adminServiceImpl{
 		userRepo:             userRepo,
@@ -739,5 +749,6 @@ func NewAdminService(
 		compositeResolver:    compositeResolver,
 
 		channelCacheInvalidator: channelCacheInvalidator,
+		openAI5hAutoWakeChecker: openAI5hAutoWakeChecker,
 	}
 }

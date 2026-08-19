@@ -3,6 +3,7 @@ package dto
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -14,6 +15,15 @@ var profitControlJSONFields = []string{
 	"profit_control_enabled",
 	"profit_min_margin",
 	"profit_safety_buffer",
+}
+
+var openAI5hAutoWakeJSONFields = []string{
+	"openai_5h_auto_wake_enabled",
+	"openai_5h_auto_wake_last_checked_at",
+	"openai_5h_auto_wake_last_candidate_pool_count",
+	"openai_5h_auto_wake_last_reason",
+	"openai_5h_auto_wake_last_task_id",
+	"openai_5h_auto_wake_last_task_status",
 }
 
 func profitControlServiceGroup() *service.Group {
@@ -70,6 +80,39 @@ func TestGroupFromServiceAdminIncludesProfitControl(t *testing.T) {
 	for _, f := range profitControlJSONFields {
 		if _, ok := fields[f]; !ok {
 			t.Errorf("管理员 DTO 应包含 %q", f)
+		}
+	}
+}
+
+func TestGroupFromServiceAdminIncludesOpenAI5hAutoWakeState(t *testing.T) {
+	checkedAt := time.Now().UTC().Truncate(time.Second)
+	candidates := 3
+	taskID := int64(19)
+	group := profitControlServiceGroup()
+	group.Platform = service.PlatformOpenAI
+	group.OpenAI5hAutoWakeEnabled = true
+	group.OpenAI5hAutoWakeLastCheckedAt = &checkedAt
+	group.OpenAI5hAutoWakeLastCandidatePoolCount = &candidates
+	group.OpenAI5hAutoWakeLastReason = service.OpenAI5hAutoWakeReasonTaskCreated
+	group.OpenAI5hAutoWakeLastTaskID = &taskID
+	group.OpenAI5hAutoWakeLastTaskStatus = service.OpenAI5hWakeTaskStatusRunning
+
+	admin := GroupFromServiceAdmin(group)
+	if !admin.OpenAI5hAutoWakeEnabled || admin.OpenAI5hAutoWakeLastCheckedAt == nil ||
+		admin.OpenAI5hAutoWakeLastCandidatePoolCount == nil || admin.OpenAI5hAutoWakeLastTaskID == nil {
+		t.Fatalf("admin DTO did not preserve OpenAI 5h auto-wake state: %+v", admin)
+	}
+	fields := marshalToMap(t, admin)
+	for _, field := range openAI5hAutoWakeJSONFields {
+		if _, ok := fields[field]; !ok {
+			t.Errorf("admin DTO should contain %q", field)
+		}
+	}
+
+	publicFields := marshalToMap(t, GroupFromService(group))
+	for _, field := range openAI5hAutoWakeJSONFields {
+		if _, ok := publicFields[field]; ok {
+			t.Errorf("public group DTO must not contain %q", field)
 		}
 	}
 }

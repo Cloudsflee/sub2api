@@ -924,6 +924,33 @@ export default {
         privacySetOnlyEnabled: '已启用 — Privacy 未设置的账号将被排除',
         disabled: '未启用'
       },
+      openAI5hAutoWake: {
+        title: 'OpenAI 5h 自动唤醒',
+        enabled: '已启用',
+        disabled: '已关闭',
+        paused: '已暂停',
+        lastChecked: '最近检查',
+        neverChecked: '尚未检查',
+        candidatePools: '候选额度池',
+        lastTask: '最近任务',
+        reason: '最近结果',
+        notAvailable: '暂无',
+        reasons: {
+          no_candidate: '没有候选额度池',
+          task_created: '已创建任务',
+          skipped_manual_active: '手动任务执行中，已跳过',
+          skipped_auto_active: '当前分组任务执行中，已跳过',
+          check_error: '检查失败'
+        },
+        statuses: {
+          pending: '等待执行',
+          running: '执行中',
+          succeeded: '成功',
+          partial_succeeded: '部分成功',
+          failed: '失败',
+          cancelled: '已取消'
+        }
+      },
       enterGroupName: '请输入分组名称',
       optionalDescription: '可选描述',
       platformHint: '选择此分组关联的平台',

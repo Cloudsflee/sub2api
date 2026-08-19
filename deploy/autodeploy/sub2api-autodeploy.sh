@@ -425,6 +425,15 @@ check_migration_compatibility() {
       remaining=$(printf '%s' "$remaining" | sed -E \
         's/drop[[:space:]]+constraint[[:space:]]+if[[:space:]]+exists[^;]*;/ /g')
     fi
+    # Replacing an index in a regular migration is atomic because the runner
+    # wraps the file in one transaction. Require guarded drop/create forms;
+    # standalone drops and non-transactional replacements remain blocked.
+    if [[ "$path" != *_notx.sql ]] \
+      && grep -Eiq 'drop[[:space:]]+index[[:space:]]+if[[:space:]]+exists' <<<"$remaining" \
+      && grep -Eiq 'create[[:space:]]+(unique[[:space:]]+)?index[[:space:]]+if[[:space:]]+not[[:space:]]+exists' <<<"$remaining"; then
+      remaining=$(printf '%s' "$remaining" | sed -E \
+        's/drop[[:space:]]+index[[:space:]]+if[[:space:]]+exists[^;]*;/ /g')
+    fi
     if grep -Eiq \
       '(^|[^[:alnum:]_])(DROP|RENAME)([^[:alnum:]_]|$)|ALTER[[:space:]]+COLUMN[^;]*(TYPE|SET[[:space:]]+DATA[[:space:]]+TYPE)|ALTER[[:space:]]+TABLE[^;]*(SET[[:space:]]+NOT[[:space:]]+NULL|ADD[[:space:]]+COLUMN[^,;]*NOT[[:space:]]+NULL)' \
       <<<"$remaining"; then

@@ -22,6 +22,34 @@ type OpenAI5hWakeTaskCreate struct {
 	conflict []sql.ConflictOption
 }
 
+// SetTriggerType sets the "trigger_type" field.
+func (_c *OpenAI5hWakeTaskCreate) SetTriggerType(v string) *OpenAI5hWakeTaskCreate {
+	_c.mutation.SetTriggerType(v)
+	return _c
+}
+
+// SetNillableTriggerType sets the "trigger_type" field if the given value is not nil.
+func (_c *OpenAI5hWakeTaskCreate) SetNillableTriggerType(v *string) *OpenAI5hWakeTaskCreate {
+	if v != nil {
+		_c.SetTriggerType(*v)
+	}
+	return _c
+}
+
+// SetGroupID sets the "group_id" field.
+func (_c *OpenAI5hWakeTaskCreate) SetGroupID(v int64) *OpenAI5hWakeTaskCreate {
+	_c.mutation.SetGroupID(v)
+	return _c
+}
+
+// SetNillableGroupID sets the "group_id" field if the given value is not nil.
+func (_c *OpenAI5hWakeTaskCreate) SetNillableGroupID(v *int64) *OpenAI5hWakeTaskCreate {
+	if v != nil {
+		_c.SetGroupID(*v)
+	}
+	return _c
+}
+
 // SetStatus sets the "status" field.
 func (_c *OpenAI5hWakeTaskCreate) SetStatus(v string) *OpenAI5hWakeTaskCreate {
 	_c.mutation.SetStatus(v)
@@ -365,6 +393,10 @@ func (_c *OpenAI5hWakeTaskCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *OpenAI5hWakeTaskCreate) defaults() {
+	if _, ok := _c.mutation.TriggerType(); !ok {
+		v := openai5hwaketask.DefaultTriggerType
+		_c.mutation.SetTriggerType(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := openai5hwaketask.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -417,6 +449,14 @@ func (_c *OpenAI5hWakeTaskCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *OpenAI5hWakeTaskCreate) check() error {
+	if _, ok := _c.mutation.TriggerType(); !ok {
+		return &ValidationError{Name: "trigger_type", err: errors.New(`ent: missing required field "OpenAI5hWakeTask.trigger_type"`)}
+	}
+	if v, ok := _c.mutation.TriggerType(); ok {
+		if err := openai5hwaketask.TriggerTypeValidator(v); err != nil {
+			return &ValidationError{Name: "trigger_type", err: fmt.Errorf(`ent: validator failed for field "OpenAI5hWakeTask.trigger_type": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "OpenAI5hWakeTask.status"`)}
 	}
@@ -495,6 +535,14 @@ func (_c *OpenAI5hWakeTaskCreate) createSpec() (*OpenAI5hWakeTask, *sqlgraph.Cre
 		_spec = sqlgraph.NewCreateSpec(openai5hwaketask.Table, sqlgraph.NewFieldSpec(openai5hwaketask.FieldID, field.TypeInt64))
 	)
 	_spec.OnConflict = _c.conflict
+	if value, ok := _c.mutation.TriggerType(); ok {
+		_spec.SetField(openai5hwaketask.FieldTriggerType, field.TypeString, value)
+		_node.TriggerType = value
+	}
+	if value, ok := _c.mutation.GroupID(); ok {
+		_spec.SetField(openai5hwaketask.FieldGroupID, field.TypeInt64, value)
+		_node.GroupID = &value
+	}
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(openai5hwaketask.FieldStatus, field.TypeString, value)
 		_node.Status = value
@@ -590,7 +638,7 @@ func (_c *OpenAI5hWakeTaskCreate) createSpec() (*OpenAI5hWakeTask, *sqlgraph.Cre
 // of the `INSERT` statement. For example:
 //
 //	client.OpenAI5hWakeTask.Create().
-//		SetStatus(v).
+//		SetTriggerType(v).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -599,7 +647,7 @@ func (_c *OpenAI5hWakeTaskCreate) createSpec() (*OpenAI5hWakeTask, *sqlgraph.Cre
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.OpenAI5hWakeTaskUpsert) {
-//			SetStatus(v+v).
+//			SetTriggerType(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *OpenAI5hWakeTaskCreate) OnConflict(opts ...sql.ConflictOption) *OpenAI5hWakeTaskUpsertOne {
@@ -634,6 +682,42 @@ type (
 		*sql.UpdateSet
 	}
 )
+
+// SetTriggerType sets the "trigger_type" field.
+func (u *OpenAI5hWakeTaskUpsert) SetTriggerType(v string) *OpenAI5hWakeTaskUpsert {
+	u.Set(openai5hwaketask.FieldTriggerType, v)
+	return u
+}
+
+// UpdateTriggerType sets the "trigger_type" field to the value that was provided on create.
+func (u *OpenAI5hWakeTaskUpsert) UpdateTriggerType() *OpenAI5hWakeTaskUpsert {
+	u.SetExcluded(openai5hwaketask.FieldTriggerType)
+	return u
+}
+
+// SetGroupID sets the "group_id" field.
+func (u *OpenAI5hWakeTaskUpsert) SetGroupID(v int64) *OpenAI5hWakeTaskUpsert {
+	u.Set(openai5hwaketask.FieldGroupID, v)
+	return u
+}
+
+// UpdateGroupID sets the "group_id" field to the value that was provided on create.
+func (u *OpenAI5hWakeTaskUpsert) UpdateGroupID() *OpenAI5hWakeTaskUpsert {
+	u.SetExcluded(openai5hwaketask.FieldGroupID)
+	return u
+}
+
+// AddGroupID adds v to the "group_id" field.
+func (u *OpenAI5hWakeTaskUpsert) AddGroupID(v int64) *OpenAI5hWakeTaskUpsert {
+	u.Add(openai5hwaketask.FieldGroupID, v)
+	return u
+}
+
+// ClearGroupID clears the value of the "group_id" field.
+func (u *OpenAI5hWakeTaskUpsert) ClearGroupID() *OpenAI5hWakeTaskUpsert {
+	u.SetNull(openai5hwaketask.FieldGroupID)
+	return u
+}
 
 // SetStatus sets the "status" field.
 func (u *OpenAI5hWakeTaskUpsert) SetStatus(v string) *OpenAI5hWakeTaskUpsert {
@@ -1050,6 +1134,48 @@ func (u *OpenAI5hWakeTaskUpsertOne) Update(set func(*OpenAI5hWakeTaskUpsert)) *O
 		set(&OpenAI5hWakeTaskUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetTriggerType sets the "trigger_type" field.
+func (u *OpenAI5hWakeTaskUpsertOne) SetTriggerType(v string) *OpenAI5hWakeTaskUpsertOne {
+	return u.Update(func(s *OpenAI5hWakeTaskUpsert) {
+		s.SetTriggerType(v)
+	})
+}
+
+// UpdateTriggerType sets the "trigger_type" field to the value that was provided on create.
+func (u *OpenAI5hWakeTaskUpsertOne) UpdateTriggerType() *OpenAI5hWakeTaskUpsertOne {
+	return u.Update(func(s *OpenAI5hWakeTaskUpsert) {
+		s.UpdateTriggerType()
+	})
+}
+
+// SetGroupID sets the "group_id" field.
+func (u *OpenAI5hWakeTaskUpsertOne) SetGroupID(v int64) *OpenAI5hWakeTaskUpsertOne {
+	return u.Update(func(s *OpenAI5hWakeTaskUpsert) {
+		s.SetGroupID(v)
+	})
+}
+
+// AddGroupID adds v to the "group_id" field.
+func (u *OpenAI5hWakeTaskUpsertOne) AddGroupID(v int64) *OpenAI5hWakeTaskUpsertOne {
+	return u.Update(func(s *OpenAI5hWakeTaskUpsert) {
+		s.AddGroupID(v)
+	})
+}
+
+// UpdateGroupID sets the "group_id" field to the value that was provided on create.
+func (u *OpenAI5hWakeTaskUpsertOne) UpdateGroupID() *OpenAI5hWakeTaskUpsertOne {
+	return u.Update(func(s *OpenAI5hWakeTaskUpsert) {
+		s.UpdateGroupID()
+	})
+}
+
+// ClearGroupID clears the value of the "group_id" field.
+func (u *OpenAI5hWakeTaskUpsertOne) ClearGroupID() *OpenAI5hWakeTaskUpsertOne {
+	return u.Update(func(s *OpenAI5hWakeTaskUpsert) {
+		s.ClearGroupID()
+	})
 }
 
 // SetStatus sets the "status" field.
@@ -1621,7 +1747,7 @@ func (_c *OpenAI5hWakeTaskCreateBulk) ExecX(ctx context.Context) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.OpenAI5hWakeTaskUpsert) {
-//			SetStatus(v+v).
+//			SetTriggerType(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *OpenAI5hWakeTaskCreateBulk) OnConflict(opts ...sql.ConflictOption) *OpenAI5hWakeTaskUpsertBulk {
@@ -1695,6 +1821,48 @@ func (u *OpenAI5hWakeTaskUpsertBulk) Update(set func(*OpenAI5hWakeTaskUpsert)) *
 		set(&OpenAI5hWakeTaskUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetTriggerType sets the "trigger_type" field.
+func (u *OpenAI5hWakeTaskUpsertBulk) SetTriggerType(v string) *OpenAI5hWakeTaskUpsertBulk {
+	return u.Update(func(s *OpenAI5hWakeTaskUpsert) {
+		s.SetTriggerType(v)
+	})
+}
+
+// UpdateTriggerType sets the "trigger_type" field to the value that was provided on create.
+func (u *OpenAI5hWakeTaskUpsertBulk) UpdateTriggerType() *OpenAI5hWakeTaskUpsertBulk {
+	return u.Update(func(s *OpenAI5hWakeTaskUpsert) {
+		s.UpdateTriggerType()
+	})
+}
+
+// SetGroupID sets the "group_id" field.
+func (u *OpenAI5hWakeTaskUpsertBulk) SetGroupID(v int64) *OpenAI5hWakeTaskUpsertBulk {
+	return u.Update(func(s *OpenAI5hWakeTaskUpsert) {
+		s.SetGroupID(v)
+	})
+}
+
+// AddGroupID adds v to the "group_id" field.
+func (u *OpenAI5hWakeTaskUpsertBulk) AddGroupID(v int64) *OpenAI5hWakeTaskUpsertBulk {
+	return u.Update(func(s *OpenAI5hWakeTaskUpsert) {
+		s.AddGroupID(v)
+	})
+}
+
+// UpdateGroupID sets the "group_id" field to the value that was provided on create.
+func (u *OpenAI5hWakeTaskUpsertBulk) UpdateGroupID() *OpenAI5hWakeTaskUpsertBulk {
+	return u.Update(func(s *OpenAI5hWakeTaskUpsert) {
+		s.UpdateGroupID()
+	})
+}
+
+// ClearGroupID clears the value of the "group_id" field.
+func (u *OpenAI5hWakeTaskUpsertBulk) ClearGroupID() *OpenAI5hWakeTaskUpsertBulk {
+	return u.Update(func(s *OpenAI5hWakeTaskUpsert) {
+		s.ClearGroupID()
+	})
 }
 
 // SetStatus sets the "status" field.

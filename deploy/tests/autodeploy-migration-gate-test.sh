@@ -69,6 +69,28 @@ git -C "$REPO" commit -m replace-check-constraint >/dev/null
 REPLACE_CHECK=$(git -C "$REPO" rev-parse HEAD)
 check_migration_compatibility "$REPLACE_TRIGGER" "$REPLACE_CHECK"
 
+cat >"$REPO/backend/migrations/007_replace_active_index.sql" <<'SQL'
+DROP INDEX IF EXISTS users_one_active_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS users_one_manual_active_idx
+  ON users ((TRUE)) WHERE display_name = 'manual';
+CREATE UNIQUE INDEX IF NOT EXISTS users_one_group_active_idx
+  ON users (display_name) WHERE display_name <> 'manual';
+SQL
+git -C "$REPO" add .
+git -C "$REPO" commit -m replace-index >/dev/null
+REPLACE_INDEX=$(git -C "$REPO" rev-parse HEAD)
+check_migration_compatibility "$REPLACE_CHECK" "$REPLACE_INDEX"
+
+printf 'DROP INDEX IF EXISTS users_one_manual_active_idx;\n' \
+  >"$REPO/backend/migrations/008_drop_index.sql"
+git -C "$REPO" add .
+git -C "$REPO" commit -m destructive-drop-index >/dev/null
+DROP_INDEX=$(git -C "$REPO" rev-parse HEAD)
+if check_migration_compatibility "$REPLACE_INDEX" "$DROP_INDEX"; then
+  echo 'unpaired DROP INDEX migration was not rejected' >&2
+  exit 1
+fi
+
 printf 'ALTER TABLE users DROP CONSTRAINT IF EXISTS users_platform_check;\n' \
   >"$REPO/backend/migrations/007_drop_constraint.sql"
 git -C "$REPO" add .

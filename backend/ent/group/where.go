@@ -295,6 +295,36 @@ func AllowLive(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldAllowLive, v))
 }
 
+// Openai5hAutoWakeEnabled applies equality check predicate on the "openai_5h_auto_wake_enabled" field. It's identical to Openai5hAutoWakeEnabledEQ.
+func Openai5hAutoWakeEnabled(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeEnabled, v))
+}
+
+// Openai5hAutoWakeLastCheckedAt applies equality check predicate on the "openai_5h_auto_wake_last_checked_at" field. It's identical to Openai5hAutoWakeLastCheckedAtEQ.
+func Openai5hAutoWakeLastCheckedAt(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeLastCheckedAt, v))
+}
+
+// Openai5hAutoWakeLastCandidatePoolCount applies equality check predicate on the "openai_5h_auto_wake_last_candidate_pool_count" field. It's identical to Openai5hAutoWakeLastCandidatePoolCountEQ.
+func Openai5hAutoWakeLastCandidatePoolCount(v int) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeLastCandidatePoolCount, v))
+}
+
+// Openai5hAutoWakeLastReason applies equality check predicate on the "openai_5h_auto_wake_last_reason" field. It's identical to Openai5hAutoWakeLastReasonEQ.
+func Openai5hAutoWakeLastReason(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeLastReason, v))
+}
+
+// Openai5hAutoWakeLastTaskID applies equality check predicate on the "openai_5h_auto_wake_last_task_id" field. It's identical to Openai5hAutoWakeLastTaskIDEQ.
+func Openai5hAutoWakeLastTaskID(v int64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeLastTaskID, v))
+}
+
+// Openai5hAutoWakeLastTaskStatus applies equality check predicate on the "openai_5h_auto_wake_last_task_status" field. It's identical to Openai5hAutoWakeLastTaskStatusEQ.
+func Openai5hAutoWakeLastTaskStatus(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeLastTaskStatus, v))
+}
+
 // RequireOauthOnly applies equality check predicate on the "require_oauth_only" field. It's identical to RequireOauthOnlyEQ.
 func RequireOauthOnly(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRequireOauthOnly, v))
@@ -2283,6 +2313,316 @@ func AllowLiveEQ(v bool) predicate.Group {
 // AllowLiveNEQ applies the NEQ predicate on the "allow_live" field.
 func AllowLiveNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldAllowLive, v))
+}
+
+// Openai5hAutoWakeEnabledEQ applies the EQ predicate on the "openai_5h_auto_wake_enabled" field.
+func Openai5hAutoWakeEnabledEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeEnabled, v))
+}
+
+// Openai5hAutoWakeEnabledNEQ applies the NEQ predicate on the "openai_5h_auto_wake_enabled" field.
+func Openai5hAutoWakeEnabledNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldOpenai5hAutoWakeEnabled, v))
+}
+
+// Openai5hAutoWakeLastCheckedAtEQ applies the EQ predicate on the "openai_5h_auto_wake_last_checked_at" field.
+func Openai5hAutoWakeLastCheckedAtEQ(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeLastCheckedAt, v))
+}
+
+// Openai5hAutoWakeLastCheckedAtNEQ applies the NEQ predicate on the "openai_5h_auto_wake_last_checked_at" field.
+func Openai5hAutoWakeLastCheckedAtNEQ(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldOpenai5hAutoWakeLastCheckedAt, v))
+}
+
+// Openai5hAutoWakeLastCheckedAtIn applies the In predicate on the "openai_5h_auto_wake_last_checked_at" field.
+func Openai5hAutoWakeLastCheckedAtIn(vs ...time.Time) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldOpenai5hAutoWakeLastCheckedAt, vs...))
+}
+
+// Openai5hAutoWakeLastCheckedAtNotIn applies the NotIn predicate on the "openai_5h_auto_wake_last_checked_at" field.
+func Openai5hAutoWakeLastCheckedAtNotIn(vs ...time.Time) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldOpenai5hAutoWakeLastCheckedAt, vs...))
+}
+
+// Openai5hAutoWakeLastCheckedAtGT applies the GT predicate on the "openai_5h_auto_wake_last_checked_at" field.
+func Openai5hAutoWakeLastCheckedAtGT(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldOpenai5hAutoWakeLastCheckedAt, v))
+}
+
+// Openai5hAutoWakeLastCheckedAtGTE applies the GTE predicate on the "openai_5h_auto_wake_last_checked_at" field.
+func Openai5hAutoWakeLastCheckedAtGTE(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldOpenai5hAutoWakeLastCheckedAt, v))
+}
+
+// Openai5hAutoWakeLastCheckedAtLT applies the LT predicate on the "openai_5h_auto_wake_last_checked_at" field.
+func Openai5hAutoWakeLastCheckedAtLT(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldOpenai5hAutoWakeLastCheckedAt, v))
+}
+
+// Openai5hAutoWakeLastCheckedAtLTE applies the LTE predicate on the "openai_5h_auto_wake_last_checked_at" field.
+func Openai5hAutoWakeLastCheckedAtLTE(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldOpenai5hAutoWakeLastCheckedAt, v))
+}
+
+// Openai5hAutoWakeLastCheckedAtIsNil applies the IsNil predicate on the "openai_5h_auto_wake_last_checked_at" field.
+func Openai5hAutoWakeLastCheckedAtIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldOpenai5hAutoWakeLastCheckedAt))
+}
+
+// Openai5hAutoWakeLastCheckedAtNotNil applies the NotNil predicate on the "openai_5h_auto_wake_last_checked_at" field.
+func Openai5hAutoWakeLastCheckedAtNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldOpenai5hAutoWakeLastCheckedAt))
+}
+
+// Openai5hAutoWakeLastCandidatePoolCountEQ applies the EQ predicate on the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func Openai5hAutoWakeLastCandidatePoolCountEQ(v int) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeLastCandidatePoolCount, v))
+}
+
+// Openai5hAutoWakeLastCandidatePoolCountNEQ applies the NEQ predicate on the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func Openai5hAutoWakeLastCandidatePoolCountNEQ(v int) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldOpenai5hAutoWakeLastCandidatePoolCount, v))
+}
+
+// Openai5hAutoWakeLastCandidatePoolCountIn applies the In predicate on the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func Openai5hAutoWakeLastCandidatePoolCountIn(vs ...int) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldOpenai5hAutoWakeLastCandidatePoolCount, vs...))
+}
+
+// Openai5hAutoWakeLastCandidatePoolCountNotIn applies the NotIn predicate on the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func Openai5hAutoWakeLastCandidatePoolCountNotIn(vs ...int) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldOpenai5hAutoWakeLastCandidatePoolCount, vs...))
+}
+
+// Openai5hAutoWakeLastCandidatePoolCountGT applies the GT predicate on the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func Openai5hAutoWakeLastCandidatePoolCountGT(v int) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldOpenai5hAutoWakeLastCandidatePoolCount, v))
+}
+
+// Openai5hAutoWakeLastCandidatePoolCountGTE applies the GTE predicate on the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func Openai5hAutoWakeLastCandidatePoolCountGTE(v int) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldOpenai5hAutoWakeLastCandidatePoolCount, v))
+}
+
+// Openai5hAutoWakeLastCandidatePoolCountLT applies the LT predicate on the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func Openai5hAutoWakeLastCandidatePoolCountLT(v int) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldOpenai5hAutoWakeLastCandidatePoolCount, v))
+}
+
+// Openai5hAutoWakeLastCandidatePoolCountLTE applies the LTE predicate on the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func Openai5hAutoWakeLastCandidatePoolCountLTE(v int) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldOpenai5hAutoWakeLastCandidatePoolCount, v))
+}
+
+// Openai5hAutoWakeLastCandidatePoolCountIsNil applies the IsNil predicate on the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func Openai5hAutoWakeLastCandidatePoolCountIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldOpenai5hAutoWakeLastCandidatePoolCount))
+}
+
+// Openai5hAutoWakeLastCandidatePoolCountNotNil applies the NotNil predicate on the "openai_5h_auto_wake_last_candidate_pool_count" field.
+func Openai5hAutoWakeLastCandidatePoolCountNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldOpenai5hAutoWakeLastCandidatePoolCount))
+}
+
+// Openai5hAutoWakeLastReasonEQ applies the EQ predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeLastReason, v))
+}
+
+// Openai5hAutoWakeLastReasonNEQ applies the NEQ predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldOpenai5hAutoWakeLastReason, v))
+}
+
+// Openai5hAutoWakeLastReasonIn applies the In predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldOpenai5hAutoWakeLastReason, vs...))
+}
+
+// Openai5hAutoWakeLastReasonNotIn applies the NotIn predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldOpenai5hAutoWakeLastReason, vs...))
+}
+
+// Openai5hAutoWakeLastReasonGT applies the GT predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldOpenai5hAutoWakeLastReason, v))
+}
+
+// Openai5hAutoWakeLastReasonGTE applies the GTE predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldOpenai5hAutoWakeLastReason, v))
+}
+
+// Openai5hAutoWakeLastReasonLT applies the LT predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldOpenai5hAutoWakeLastReason, v))
+}
+
+// Openai5hAutoWakeLastReasonLTE applies the LTE predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldOpenai5hAutoWakeLastReason, v))
+}
+
+// Openai5hAutoWakeLastReasonContains applies the Contains predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldOpenai5hAutoWakeLastReason, v))
+}
+
+// Openai5hAutoWakeLastReasonHasPrefix applies the HasPrefix predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldOpenai5hAutoWakeLastReason, v))
+}
+
+// Openai5hAutoWakeLastReasonHasSuffix applies the HasSuffix predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldOpenai5hAutoWakeLastReason, v))
+}
+
+// Openai5hAutoWakeLastReasonIsNil applies the IsNil predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldOpenai5hAutoWakeLastReason))
+}
+
+// Openai5hAutoWakeLastReasonNotNil applies the NotNil predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldOpenai5hAutoWakeLastReason))
+}
+
+// Openai5hAutoWakeLastReasonEqualFold applies the EqualFold predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldOpenai5hAutoWakeLastReason, v))
+}
+
+// Openai5hAutoWakeLastReasonContainsFold applies the ContainsFold predicate on the "openai_5h_auto_wake_last_reason" field.
+func Openai5hAutoWakeLastReasonContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldOpenai5hAutoWakeLastReason, v))
+}
+
+// Openai5hAutoWakeLastTaskIDEQ applies the EQ predicate on the "openai_5h_auto_wake_last_task_id" field.
+func Openai5hAutoWakeLastTaskIDEQ(v int64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeLastTaskID, v))
+}
+
+// Openai5hAutoWakeLastTaskIDNEQ applies the NEQ predicate on the "openai_5h_auto_wake_last_task_id" field.
+func Openai5hAutoWakeLastTaskIDNEQ(v int64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldOpenai5hAutoWakeLastTaskID, v))
+}
+
+// Openai5hAutoWakeLastTaskIDIn applies the In predicate on the "openai_5h_auto_wake_last_task_id" field.
+func Openai5hAutoWakeLastTaskIDIn(vs ...int64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldOpenai5hAutoWakeLastTaskID, vs...))
+}
+
+// Openai5hAutoWakeLastTaskIDNotIn applies the NotIn predicate on the "openai_5h_auto_wake_last_task_id" field.
+func Openai5hAutoWakeLastTaskIDNotIn(vs ...int64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldOpenai5hAutoWakeLastTaskID, vs...))
+}
+
+// Openai5hAutoWakeLastTaskIDGT applies the GT predicate on the "openai_5h_auto_wake_last_task_id" field.
+func Openai5hAutoWakeLastTaskIDGT(v int64) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldOpenai5hAutoWakeLastTaskID, v))
+}
+
+// Openai5hAutoWakeLastTaskIDGTE applies the GTE predicate on the "openai_5h_auto_wake_last_task_id" field.
+func Openai5hAutoWakeLastTaskIDGTE(v int64) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldOpenai5hAutoWakeLastTaskID, v))
+}
+
+// Openai5hAutoWakeLastTaskIDLT applies the LT predicate on the "openai_5h_auto_wake_last_task_id" field.
+func Openai5hAutoWakeLastTaskIDLT(v int64) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldOpenai5hAutoWakeLastTaskID, v))
+}
+
+// Openai5hAutoWakeLastTaskIDLTE applies the LTE predicate on the "openai_5h_auto_wake_last_task_id" field.
+func Openai5hAutoWakeLastTaskIDLTE(v int64) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldOpenai5hAutoWakeLastTaskID, v))
+}
+
+// Openai5hAutoWakeLastTaskIDIsNil applies the IsNil predicate on the "openai_5h_auto_wake_last_task_id" field.
+func Openai5hAutoWakeLastTaskIDIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldOpenai5hAutoWakeLastTaskID))
+}
+
+// Openai5hAutoWakeLastTaskIDNotNil applies the NotNil predicate on the "openai_5h_auto_wake_last_task_id" field.
+func Openai5hAutoWakeLastTaskIDNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldOpenai5hAutoWakeLastTaskID))
+}
+
+// Openai5hAutoWakeLastTaskStatusEQ applies the EQ predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeLastTaskStatus, v))
+}
+
+// Openai5hAutoWakeLastTaskStatusNEQ applies the NEQ predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldOpenai5hAutoWakeLastTaskStatus, v))
+}
+
+// Openai5hAutoWakeLastTaskStatusIn applies the In predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldOpenai5hAutoWakeLastTaskStatus, vs...))
+}
+
+// Openai5hAutoWakeLastTaskStatusNotIn applies the NotIn predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldOpenai5hAutoWakeLastTaskStatus, vs...))
+}
+
+// Openai5hAutoWakeLastTaskStatusGT applies the GT predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldOpenai5hAutoWakeLastTaskStatus, v))
+}
+
+// Openai5hAutoWakeLastTaskStatusGTE applies the GTE predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldOpenai5hAutoWakeLastTaskStatus, v))
+}
+
+// Openai5hAutoWakeLastTaskStatusLT applies the LT predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldOpenai5hAutoWakeLastTaskStatus, v))
+}
+
+// Openai5hAutoWakeLastTaskStatusLTE applies the LTE predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldOpenai5hAutoWakeLastTaskStatus, v))
+}
+
+// Openai5hAutoWakeLastTaskStatusContains applies the Contains predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldOpenai5hAutoWakeLastTaskStatus, v))
+}
+
+// Openai5hAutoWakeLastTaskStatusHasPrefix applies the HasPrefix predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldOpenai5hAutoWakeLastTaskStatus, v))
+}
+
+// Openai5hAutoWakeLastTaskStatusHasSuffix applies the HasSuffix predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldOpenai5hAutoWakeLastTaskStatus, v))
+}
+
+// Openai5hAutoWakeLastTaskStatusIsNil applies the IsNil predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldOpenai5hAutoWakeLastTaskStatus))
+}
+
+// Openai5hAutoWakeLastTaskStatusNotNil applies the NotNil predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldOpenai5hAutoWakeLastTaskStatus))
+}
+
+// Openai5hAutoWakeLastTaskStatusEqualFold applies the EqualFold predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldOpenai5hAutoWakeLastTaskStatus, v))
+}
+
+// Openai5hAutoWakeLastTaskStatusContainsFold applies the ContainsFold predicate on the "openai_5h_auto_wake_last_task_status" field.
+func Openai5hAutoWakeLastTaskStatusContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldOpenai5hAutoWakeLastTaskStatus, v))
 }
 
 // RequireOauthOnlyEQ applies the EQ predicate on the "require_oauth_only" field.

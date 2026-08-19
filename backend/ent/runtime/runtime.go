@@ -24,6 +24,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/idempotencyrecord"
 	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
+	"github.com/Wei-Shaw/sub2api/ent/openai5hwakepoollease"
 	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketask"
 	"github.com/Wei-Shaw/sub2api/ent/openai5hwaketaskitem"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
@@ -1163,52 +1164,64 @@ func init() {
 	groupDescAllowLive := groupFields[48].Descriptor()
 	// group.DefaultAllowLive holds the default value on creation for the allow_live field.
 	group.DefaultAllowLive = groupDescAllowLive.Default.(bool)
+	// groupDescOpenai5hAutoWakeEnabled is the schema descriptor for openai_5h_auto_wake_enabled field.
+	groupDescOpenai5hAutoWakeEnabled := groupFields[49].Descriptor()
+	// group.DefaultOpenai5hAutoWakeEnabled holds the default value on creation for the openai_5h_auto_wake_enabled field.
+	group.DefaultOpenai5hAutoWakeEnabled = groupDescOpenai5hAutoWakeEnabled.Default.(bool)
+	// groupDescOpenai5hAutoWakeLastReason is the schema descriptor for openai_5h_auto_wake_last_reason field.
+	groupDescOpenai5hAutoWakeLastReason := groupFields[52].Descriptor()
+	// group.Openai5hAutoWakeLastReasonValidator is a validator for the "openai_5h_auto_wake_last_reason" field. It is called by the builders before save.
+	group.Openai5hAutoWakeLastReasonValidator = groupDescOpenai5hAutoWakeLastReason.Validators[0].(func(string) error)
+	// groupDescOpenai5hAutoWakeLastTaskStatus is the schema descriptor for openai_5h_auto_wake_last_task_status field.
+	groupDescOpenai5hAutoWakeLastTaskStatus := groupFields[54].Descriptor()
+	// group.Openai5hAutoWakeLastTaskStatusValidator is a validator for the "openai_5h_auto_wake_last_task_status" field. It is called by the builders before save.
+	group.Openai5hAutoWakeLastTaskStatusValidator = groupDescOpenai5hAutoWakeLastTaskStatus.Validators[0].(func(string) error)
 	// groupDescRequireOauthOnly is the schema descriptor for require_oauth_only field.
-	groupDescRequireOauthOnly := groupFields[49].Descriptor()
+	groupDescRequireOauthOnly := groupFields[55].Descriptor()
 	// group.DefaultRequireOauthOnly holds the default value on creation for the require_oauth_only field.
 	group.DefaultRequireOauthOnly = groupDescRequireOauthOnly.Default.(bool)
 	// groupDescRequirePrivacySet is the schema descriptor for require_privacy_set field.
-	groupDescRequirePrivacySet := groupFields[50].Descriptor()
+	groupDescRequirePrivacySet := groupFields[56].Descriptor()
 	// group.DefaultRequirePrivacySet holds the default value on creation for the require_privacy_set field.
 	group.DefaultRequirePrivacySet = groupDescRequirePrivacySet.Default.(bool)
 	// groupDescDefaultMappedModel is the schema descriptor for default_mapped_model field.
-	groupDescDefaultMappedModel := groupFields[51].Descriptor()
+	groupDescDefaultMappedModel := groupFields[57].Descriptor()
 	// group.DefaultDefaultMappedModel holds the default value on creation for the default_mapped_model field.
 	group.DefaultDefaultMappedModel = groupDescDefaultMappedModel.Default.(string)
 	// group.DefaultMappedModelValidator is a validator for the "default_mapped_model" field. It is called by the builders before save.
 	group.DefaultMappedModelValidator = groupDescDefaultMappedModel.Validators[0].(func(string) error)
 	// groupDescMessagesDispatchModelConfig is the schema descriptor for messages_dispatch_model_config field.
-	groupDescMessagesDispatchModelConfig := groupFields[52].Descriptor()
+	groupDescMessagesDispatchModelConfig := groupFields[58].Descriptor()
 	// group.DefaultMessagesDispatchModelConfig holds the default value on creation for the messages_dispatch_model_config field.
 	group.DefaultMessagesDispatchModelConfig = groupDescMessagesDispatchModelConfig.Default.(domain.OpenAIMessagesDispatchModelConfig)
 	// groupDescModelsListConfig is the schema descriptor for models_list_config field.
-	groupDescModelsListConfig := groupFields[53].Descriptor()
+	groupDescModelsListConfig := groupFields[59].Descriptor()
 	// group.DefaultModelsListConfig holds the default value on creation for the models_list_config field.
 	group.DefaultModelsListConfig = groupDescModelsListConfig.Default.(domain.GroupModelsListConfig)
 	// groupDescRpmLimit is the schema descriptor for rpm_limit field.
-	groupDescRpmLimit := groupFields[54].Descriptor()
+	groupDescRpmLimit := groupFields[60].Descriptor()
 	// group.DefaultRpmLimit holds the default value on creation for the rpm_limit field.
 	group.DefaultRpmLimit = groupDescRpmLimit.Default.(int)
 	// groupDescMaxReasoningEffort is the schema descriptor for max_reasoning_effort field.
-	groupDescMaxReasoningEffort := groupFields[55].Descriptor()
+	groupDescMaxReasoningEffort := groupFields[61].Descriptor()
 	// group.DefaultMaxReasoningEffort holds the default value on creation for the max_reasoning_effort field.
 	group.DefaultMaxReasoningEffort = groupDescMaxReasoningEffort.Default.(string)
 	// group.MaxReasoningEffortValidator is a validator for the "max_reasoning_effort" field. It is called by the builders before save.
 	group.MaxReasoningEffortValidator = groupDescMaxReasoningEffort.Validators[0].(func(string) error)
 	// groupDescReasoningEffortMappings is the schema descriptor for reasoning_effort_mappings field.
-	groupDescReasoningEffortMappings := groupFields[56].Descriptor()
+	groupDescReasoningEffortMappings := groupFields[62].Descriptor()
 	// group.DefaultReasoningEffortMappings holds the default value on creation for the reasoning_effort_mappings field.
 	group.DefaultReasoningEffortMappings = groupDescReasoningEffortMappings.Default.([]domain.ReasoningEffortMapping)
 	// groupDescProfitControlEnabled is the schema descriptor for profit_control_enabled field.
-	groupDescProfitControlEnabled := groupFields[57].Descriptor()
+	groupDescProfitControlEnabled := groupFields[63].Descriptor()
 	// group.DefaultProfitControlEnabled holds the default value on creation for the profit_control_enabled field.
 	group.DefaultProfitControlEnabled = groupDescProfitControlEnabled.Default.(bool)
 	// groupDescProfitMinMargin is the schema descriptor for profit_min_margin field.
-	groupDescProfitMinMargin := groupFields[58].Descriptor()
+	groupDescProfitMinMargin := groupFields[64].Descriptor()
 	// group.DefaultProfitMinMargin holds the default value on creation for the profit_min_margin field.
 	group.DefaultProfitMinMargin = groupDescProfitMinMargin.Default.(float64)
 	// groupDescProfitSafetyBuffer is the schema descriptor for profit_safety_buffer field.
-	groupDescProfitSafetyBuffer := groupFields[59].Descriptor()
+	groupDescProfitSafetyBuffer := groupFields[65].Descriptor()
 	// group.DefaultProfitSafetyBuffer holds the default value on creation for the profit_safety_buffer field.
 	group.DefaultProfitSafetyBuffer = groupDescProfitSafetyBuffer.Default.(float64)
 	idempotencyrecordMixin := schema.IdempotencyRecord{}.Mixin()
@@ -1273,64 +1286,94 @@ func init() {
 	identityadoptiondecisionDescDecidedAt := identityadoptiondecisionFields[4].Descriptor()
 	// identityadoptiondecision.DefaultDecidedAt holds the default value on creation for the decided_at field.
 	identityadoptiondecision.DefaultDecidedAt = identityadoptiondecisionDescDecidedAt.Default.(func() time.Time)
+	openai5hwakepoolleaseFields := schema.OpenAI5hWakePoolLease{}.Fields()
+	_ = openai5hwakepoolleaseFields
+	// openai5hwakepoolleaseDescIdentityHash is the schema descriptor for identity_hash field.
+	openai5hwakepoolleaseDescIdentityHash := openai5hwakepoolleaseFields[0].Descriptor()
+	// openai5hwakepoollease.IdentityHashValidator is a validator for the "identity_hash" field. It is called by the builders before save.
+	openai5hwakepoollease.IdentityHashValidator = openai5hwakepoolleaseDescIdentityHash.Validators[0].(func(string) error)
+	// openai5hwakepoolleaseDescLeaseOwner is the schema descriptor for lease_owner field.
+	openai5hwakepoolleaseDescLeaseOwner := openai5hwakepoolleaseFields[3].Descriptor()
+	// openai5hwakepoollease.LeaseOwnerValidator is a validator for the "lease_owner" field. It is called by the builders before save.
+	openai5hwakepoollease.LeaseOwnerValidator = openai5hwakepoolleaseDescLeaseOwner.Validators[0].(func(string) error)
+	// openai5hwakepoolleaseDescHeartbeatAt is the schema descriptor for heartbeat_at field.
+	openai5hwakepoolleaseDescHeartbeatAt := openai5hwakepoolleaseFields[5].Descriptor()
+	// openai5hwakepoollease.DefaultHeartbeatAt holds the default value on creation for the heartbeat_at field.
+	openai5hwakepoollease.DefaultHeartbeatAt = openai5hwakepoolleaseDescHeartbeatAt.Default.(func() time.Time)
+	// openai5hwakepoolleaseDescCreatedAt is the schema descriptor for created_at field.
+	openai5hwakepoolleaseDescCreatedAt := openai5hwakepoolleaseFields[6].Descriptor()
+	// openai5hwakepoollease.DefaultCreatedAt holds the default value on creation for the created_at field.
+	openai5hwakepoollease.DefaultCreatedAt = openai5hwakepoolleaseDescCreatedAt.Default.(func() time.Time)
+	// openai5hwakepoolleaseDescUpdatedAt is the schema descriptor for updated_at field.
+	openai5hwakepoolleaseDescUpdatedAt := openai5hwakepoolleaseFields[7].Descriptor()
+	// openai5hwakepoollease.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	openai5hwakepoollease.DefaultUpdatedAt = openai5hwakepoolleaseDescUpdatedAt.Default.(func() time.Time)
+	// openai5hwakepoollease.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	openai5hwakepoollease.UpdateDefaultUpdatedAt = openai5hwakepoolleaseDescUpdatedAt.UpdateDefault.(func() time.Time)
 	openai5hwaketaskFields := schema.OpenAI5hWakeTask{}.Fields()
 	_ = openai5hwaketaskFields
+	// openai5hwaketaskDescTriggerType is the schema descriptor for trigger_type field.
+	openai5hwaketaskDescTriggerType := openai5hwaketaskFields[0].Descriptor()
+	// openai5hwaketask.DefaultTriggerType holds the default value on creation for the trigger_type field.
+	openai5hwaketask.DefaultTriggerType = openai5hwaketaskDescTriggerType.Default.(string)
+	// openai5hwaketask.TriggerTypeValidator is a validator for the "trigger_type" field. It is called by the builders before save.
+	openai5hwaketask.TriggerTypeValidator = openai5hwaketaskDescTriggerType.Validators[0].(func(string) error)
 	// openai5hwaketaskDescStatus is the schema descriptor for status field.
-	openai5hwaketaskDescStatus := openai5hwaketaskFields[0].Descriptor()
+	openai5hwaketaskDescStatus := openai5hwaketaskFields[2].Descriptor()
 	// openai5hwaketask.DefaultStatus holds the default value on creation for the status field.
 	openai5hwaketask.DefaultStatus = openai5hwaketaskDescStatus.Default.(string)
 	// openai5hwaketask.StatusValidator is a validator for the "status" field. It is called by the builders before save.
 	openai5hwaketask.StatusValidator = openai5hwaketaskDescStatus.Validators[0].(func(string) error)
 	// openai5hwaketaskDescEligibleAccountCount is the schema descriptor for eligible_account_count field.
-	openai5hwaketaskDescEligibleAccountCount := openai5hwaketaskFields[1].Descriptor()
+	openai5hwaketaskDescEligibleAccountCount := openai5hwaketaskFields[3].Descriptor()
 	// openai5hwaketask.DefaultEligibleAccountCount holds the default value on creation for the eligible_account_count field.
 	openai5hwaketask.DefaultEligibleAccountCount = openai5hwaketaskDescEligibleAccountCount.Default.(int)
 	// openai5hwaketaskDescActiveWindowCount is the schema descriptor for active_window_count field.
-	openai5hwaketaskDescActiveWindowCount := openai5hwaketaskFields[2].Descriptor()
+	openai5hwaketaskDescActiveWindowCount := openai5hwaketaskFields[4].Descriptor()
 	// openai5hwaketask.DefaultActiveWindowCount holds the default value on creation for the active_window_count field.
 	openai5hwaketask.DefaultActiveWindowCount = openai5hwaketaskDescActiveWindowCount.Default.(int)
 	// openai5hwaketaskDescEstimatedRequestCount is the schema descriptor for estimated_request_count field.
-	openai5hwaketaskDescEstimatedRequestCount := openai5hwaketaskFields[3].Descriptor()
+	openai5hwaketaskDescEstimatedRequestCount := openai5hwaketaskFields[5].Descriptor()
 	// openai5hwaketask.DefaultEstimatedRequestCount holds the default value on creation for the estimated_request_count field.
 	openai5hwaketask.DefaultEstimatedRequestCount = openai5hwaketaskDescEstimatedRequestCount.Default.(int)
 	// openai5hwaketaskDescTotalItems is the schema descriptor for total_items field.
-	openai5hwaketaskDescTotalItems := openai5hwaketaskFields[4].Descriptor()
+	openai5hwaketaskDescTotalItems := openai5hwaketaskFields[6].Descriptor()
 	// openai5hwaketask.DefaultTotalItems holds the default value on creation for the total_items field.
 	openai5hwaketask.DefaultTotalItems = openai5hwaketaskDescTotalItems.Default.(int)
 	// openai5hwaketaskDescProcessedItems is the schema descriptor for processed_items field.
-	openai5hwaketaskDescProcessedItems := openai5hwaketaskFields[5].Descriptor()
+	openai5hwaketaskDescProcessedItems := openai5hwaketaskFields[7].Descriptor()
 	// openai5hwaketask.DefaultProcessedItems holds the default value on creation for the processed_items field.
 	openai5hwaketask.DefaultProcessedItems = openai5hwaketaskDescProcessedItems.Default.(int)
 	// openai5hwaketaskDescWokenCount is the schema descriptor for woken_count field.
-	openai5hwaketaskDescWokenCount := openai5hwaketaskFields[6].Descriptor()
+	openai5hwaketaskDescWokenCount := openai5hwaketaskFields[8].Descriptor()
 	// openai5hwaketask.DefaultWokenCount holds the default value on creation for the woken_count field.
 	openai5hwaketask.DefaultWokenCount = openai5hwaketaskDescWokenCount.Default.(int)
 	// openai5hwaketaskDescSkippedActiveCount is the schema descriptor for skipped_active_count field.
-	openai5hwaketaskDescSkippedActiveCount := openai5hwaketaskFields[7].Descriptor()
+	openai5hwaketaskDescSkippedActiveCount := openai5hwaketaskFields[9].Descriptor()
 	// openai5hwaketask.DefaultSkippedActiveCount holds the default value on creation for the skipped_active_count field.
 	openai5hwaketask.DefaultSkippedActiveCount = openai5hwaketaskDescSkippedActiveCount.Default.(int)
 	// openai5hwaketaskDescFailedCount is the schema descriptor for failed_count field.
-	openai5hwaketaskDescFailedCount := openai5hwaketaskFields[8].Descriptor()
+	openai5hwaketaskDescFailedCount := openai5hwaketaskFields[10].Descriptor()
 	// openai5hwaketask.DefaultFailedCount holds the default value on creation for the failed_count field.
 	openai5hwaketask.DefaultFailedCount = openai5hwaketaskDescFailedCount.Default.(int)
 	// openai5hwaketaskDescCancelledCount is the schema descriptor for cancelled_count field.
-	openai5hwaketaskDescCancelledCount := openai5hwaketaskFields[9].Descriptor()
+	openai5hwaketaskDescCancelledCount := openai5hwaketaskFields[11].Descriptor()
 	// openai5hwaketask.DefaultCancelledCount holds the default value on creation for the cancelled_count field.
 	openai5hwaketask.DefaultCancelledCount = openai5hwaketaskDescCancelledCount.Default.(int)
 	// openai5hwaketaskDescRequestedByEmail is the schema descriptor for requested_by_email field.
-	openai5hwaketaskDescRequestedByEmail := openai5hwaketaskFields[11].Descriptor()
+	openai5hwaketaskDescRequestedByEmail := openai5hwaketaskFields[13].Descriptor()
 	// openai5hwaketask.RequestedByEmailValidator is a validator for the "requested_by_email" field. It is called by the builders before save.
 	openai5hwaketask.RequestedByEmailValidator = openai5hwaketaskDescRequestedByEmail.Validators[0].(func(string) error)
 	// openai5hwaketaskDescLeaseOwner is the schema descriptor for lease_owner field.
-	openai5hwaketaskDescLeaseOwner := openai5hwaketaskFields[12].Descriptor()
+	openai5hwaketaskDescLeaseOwner := openai5hwaketaskFields[14].Descriptor()
 	// openai5hwaketask.LeaseOwnerValidator is a validator for the "lease_owner" field. It is called by the builders before save.
 	openai5hwaketask.LeaseOwnerValidator = openai5hwaketaskDescLeaseOwner.Validators[0].(func(string) error)
 	// openai5hwaketaskDescCreatedAt is the schema descriptor for created_at field.
-	openai5hwaketaskDescCreatedAt := openai5hwaketaskFields[20].Descriptor()
+	openai5hwaketaskDescCreatedAt := openai5hwaketaskFields[22].Descriptor()
 	// openai5hwaketask.DefaultCreatedAt holds the default value on creation for the created_at field.
 	openai5hwaketask.DefaultCreatedAt = openai5hwaketaskDescCreatedAt.Default.(func() time.Time)
 	// openai5hwaketaskDescUpdatedAt is the schema descriptor for updated_at field.
-	openai5hwaketaskDescUpdatedAt := openai5hwaketaskFields[21].Descriptor()
+	openai5hwaketaskDescUpdatedAt := openai5hwaketaskFields[23].Descriptor()
 	// openai5hwaketask.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	openai5hwaketask.DefaultUpdatedAt = openai5hwaketaskDescUpdatedAt.Default.(func() time.Time)
 	// openai5hwaketask.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

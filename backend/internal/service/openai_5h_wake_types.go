@@ -8,6 +8,9 @@ import (
 )
 
 const (
+	OpenAI5hWakeTriggerManual    = "manual"
+	OpenAI5hWakeTriggerGroupAuto = "group_auto"
+
 	OpenAI5hWakeTaskStatusPending          = "pending"
 	OpenAI5hWakeTaskStatusRunning          = "running"
 	OpenAI5hWakeTaskStatusSucceeded        = "succeeded"
@@ -25,10 +28,19 @@ const (
 	OpenAI5hWakeEventLevelInfo  = "info"
 	OpenAI5hWakeEventLevelWarn  = "warn"
 	OpenAI5hWakeEventLevelError = "error"
+
+	OpenAI5hAutoWakeReasonNoCandidate         = "no_candidate"
+	OpenAI5hAutoWakeReasonTaskCreated         = "task_created"
+	OpenAI5hAutoWakeReasonSkippedManualActive = "skipped_manual_active"
+	OpenAI5hAutoWakeReasonSkippedAutoActive   = "skipped_auto_active"
+	OpenAI5hAutoWakeReasonCheckError          = "check_error"
 )
 
 var ErrOpenAI5hWakeTaskNotFound = infraerrors.NotFound("OPENAI_5H_WAKE_TASK_NOT_FOUND", "OpenAI 5h wake task not found")
 var ErrOpenAI5hWakeNoEligiblePools = infraerrors.BadRequest("OPENAI_5H_WAKE_NO_ELIGIBLE_POOLS", "no eligible quota pools are available for OpenAI 5h wake")
+var ErrOpenAI5hWakePoolLeaseContended = infraerrors.Conflict("OPENAI_5H_WAKE_POOL_LEASE_CONTENDED", "all pending quota pools are temporarily leased")
+var ErrOpenAI5hWakeGroupNotEligible = infraerrors.Conflict("OPENAI_5H_WAKE_GROUP_NOT_ELIGIBLE", "OpenAI 5h automatic wake group is no longer eligible")
+var ErrOpenAI5hWakeManualTaskActive = infraerrors.Conflict("OPENAI_5H_WAKE_MANUAL_TASK_ACTIVE", "a manual OpenAI 5h wake task is active")
 
 type OpenAI5hWakeExclusions struct {
 	APIKey          int `json:"api_key"`
@@ -55,6 +67,8 @@ type OpenAI5hWakePreview struct {
 
 type OpenAI5hWakeTask struct {
 	ID                    int64      `json:"id"`
+	TriggerType           string     `json:"trigger_type"`
+	GroupID               *int64     `json:"group_id,omitempty"`
 	Status                string     `json:"status"`
 	EligibleAccountCount  int        `json:"eligible_account_count"`
 	ActiveWindowCount     int        `json:"active_window_count"`
@@ -147,12 +161,29 @@ type OpenAI5hWakeTaskItemSeed struct {
 }
 
 type OpenAI5hWakeCreateParams struct {
+	TriggerType           string
+	GroupID               *int64
 	EligibleAccountCount  int
 	ActiveWindowCount     int
 	EstimatedRequestCount int
 	RequestedByUserID     *int64
 	RequestedByEmail      string
 	Items                 []OpenAI5hWakeTaskItemSeed
+}
+
+type OpenAI5hAutoWakeGroup struct {
+	ID      int64
+	Enabled bool
+	Status  string
+}
+
+type OpenAI5hAutoWakeCheckUpdate struct {
+	GroupID            int64
+	CheckedAt          time.Time
+	CandidatePoolCount int
+	Reason             string
+	TaskID             *int64
+	TaskStatus         string
 }
 
 type OpenAI5hWakeCompleteItemParams struct {
@@ -181,4 +212,19 @@ type OpenAI5hWakeTaskRepository interface {
 	IsCancelRequested(ctx context.Context, taskID int64) (bool, error)
 	FinalizeTask(ctx context.Context, taskID int64, owner string, cancelled bool, now time.Time) (*OpenAI5hWakeTask, error)
 	DeleteTerminalBefore(ctx context.Context, cutoff time.Time) (int64, error)
+}
+
+// Optional extensions keep existing task repository doubles source-compatible
+// while enabling group-scoped scheduling and durable pool leases.
+type OpenAI5hWakeScopedTaskRepository interface {
+	GetActiveManualTask(context.Context) (*OpenAI5hWakeTask, error)
+	GetActiveGroupTask(context.Context, int64) (*OpenAI5hWakeTask, error)
+	ListAutoWakeGroups(context.Context) ([]OpenAI5hAutoWakeGroup, error)
+	GetAutoWakeGroup(context.Context, int64) (*OpenAI5hAutoWakeGroup, error)
+	UpdateAutoWakeGroupCheck(context.Context, OpenAI5hAutoWakeCheckUpdate) (bool, error)
+	UpdateAutoWakeTaskStatus(context.Context, int64, string) error
+}
+
+type OpenAI5hWakeLeaseTaskRepository interface {
+	ClaimNextItemWithLease(context.Context, int64, string, time.Time, time.Time) (*OpenAI5hWakeTaskItem, error)
 }

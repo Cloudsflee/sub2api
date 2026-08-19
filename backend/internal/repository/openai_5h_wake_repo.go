@@ -16,6 +16,8 @@ type openAI5hWakeRepository struct {
 	db *sql.DB
 }
 
+const openAI5hWakeCreateLockID int64 = 583967205114203187
+
 func NewOpenAI5hWakeTaskRepository(db *sql.DB) service.OpenAI5hWakeTaskRepository {
 	return &openAI5hWakeRepository{db: db}
 }
@@ -23,8 +25,9 @@ func NewOpenAI5hWakeTaskRepository(db *sql.DB) service.OpenAI5hWakeTaskRepositor
 const openAI5hWakeTaskSelect = `
 SELECT id, status, eligible_account_count, active_window_count, estimated_request_count,
        total_items, processed_items, woken_count, skipped_active_count, failed_count, cancelled_count,
-       requested_by_user_id, requested_by_email, lease_owner, lease_expires_at, heartbeat_at,
-       earliest_reset_at, latest_reset_at, cancel_requested_at, started_at, finished_at, created_at, updated_at
+	       requested_by_user_id, requested_by_email, lease_owner, lease_expires_at, heartbeat_at,
+	       earliest_reset_at, latest_reset_at, cancel_requested_at, started_at, finished_at, created_at, updated_at,
+	       trigger_type, group_id
 FROM openai_5h_wake_tasks`
 
 const openAI5hWakeItemSelect = `
@@ -47,11 +50,14 @@ func scanOpenAI5hWakeTask(scanner sqlScanner) (*service.OpenAI5hWakeTask, error)
 	var requestedEmail, leaseOwner sql.NullString
 	var leaseExpires, heartbeat, earliestReset, latestReset sql.NullTime
 	var cancelRequested, started, finished sql.NullTime
+	var triggerType sql.NullString
+	var groupID sql.NullInt64
 	if err := scanner.Scan(
 		&task.ID, &task.Status, &task.EligibleAccountCount, &task.ActiveWindowCount, &task.EstimatedRequestCount,
 		&task.TotalItems, &task.ProcessedItems, &task.WokenCount, &task.SkippedActiveCount, &task.FailedCount, &task.CancelledCount,
 		&requestedBy, &requestedEmail, &leaseOwner, &leaseExpires, &heartbeat,
 		&earliestReset, &latestReset, &cancelRequested, &started, &finished, &task.CreatedAt, &task.UpdatedAt,
+		&triggerType, &groupID,
 	); err != nil {
 		return nil, err
 	}
@@ -72,6 +78,14 @@ func scanOpenAI5hWakeTask(scanner sqlScanner) (*service.OpenAI5hWakeTask, error)
 	task.CancelRequestedAt = nullTimePtr(cancelRequested)
 	task.StartedAt = nullTimePtr(started)
 	task.FinishedAt = nullTimePtr(finished)
+	task.TriggerType = service.OpenAI5hWakeTriggerManual
+	if triggerType.Valid && triggerType.String != "" {
+		task.TriggerType = triggerType.String
+	}
+	if groupID.Valid {
+		value := groupID.Int64
+		task.GroupID = &value
+	}
 	task.AlignmentSpanSeconds = task.ComputeAlignmentSpanSeconds()
 	return &task, nil
 }
@@ -139,11 +153,17 @@ func nullTimePtr(value sql.NullTime) *time.Time {
 func isWakeUniqueViolation(err error) bool {
 	var pqErr *pq.Error
 	return errors.As(err, &pqErr) && pqErr != nil &&
-		pqErr.Code == "23505" && pqErr.Constraint == "openai_5h_wake_tasks_one_active_idx"
+		pqErr.Code == "23505" && (pqErr.Constraint == "openai_5h_wake_tasks_one_active_idx" ||
+		pqErr.Constraint == "openai_5h_wake_tasks_one_manual_active_idx" ||
+		pqErr.Constraint == "openai_5h_wake_tasks_one_group_auto_active_idx")
 }
 
 func (r *openAI5hWakeRepository) CreateOrGetActive(ctx context.Context, params service.OpenAI5hWakeCreateParams) (*service.OpenAI5hWakeTask, bool, error) {
-	active, err := r.getActiveTask(ctx)
+	params.TriggerType = normalizeOpenAI5hWakeTriggerType(params.TriggerType)
+	if params.TriggerType == service.OpenAI5hWakeTriggerGroupAuto && (params.GroupID == nil || *params.GroupID <= 0) {
+		return nil, false, service.ErrOpenAI5hWakeGroupNotEligible
+	}
+	active, err := r.getActiveTask(ctx, params.TriggerType, params.GroupID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -153,6 +173,15 @@ func (r *openAI5hWakeRepository) CreateOrGetActive(ctx context.Context, params s
 	if len(params.Items) == 0 {
 		return nil, false, service.ErrOpenAI5hWakeNoEligiblePools
 	}
+	if params.TriggerType == service.OpenAI5hWakeTriggerGroupAuto {
+		manual, manualErr := r.GetActiveManualTask(ctx)
+		if manualErr != nil {
+			return nil, false, manualErr
+		}
+		if manual != nil {
+			return nil, false, service.ErrOpenAI5hWakeManualTaskActive
+		}
+	}
 	for attempt := 0; attempt < 2; attempt++ {
 		task, err := r.createTask(ctx, params)
 		if err == nil {
@@ -161,7 +190,7 @@ func (r *openAI5hWakeRepository) CreateOrGetActive(ctx context.Context, params s
 		if !isWakeUniqueViolation(err) {
 			return nil, false, err
 		}
-		active, activeErr := r.getActiveTask(ctx)
+		active, activeErr := r.getActiveTask(ctx, params.TriggerType, params.GroupID)
 		if activeErr != nil {
 			return nil, false, activeErr
 		}
@@ -172,23 +201,57 @@ func (r *openAI5hWakeRepository) CreateOrGetActive(ctx context.Context, params s
 	return nil, false, fmt.Errorf("active OpenAI 5h wake task changed while creating task")
 }
 
+func normalizeOpenAI5hWakeTriggerType(triggerType string) string {
+	if triggerType == service.OpenAI5hWakeTriggerGroupAuto {
+		return triggerType
+	}
+	return service.OpenAI5hWakeTriggerManual
+}
+
 func (r *openAI5hWakeRepository) createTask(ctx context.Context, params service.OpenAI5hWakeCreateParams) (*service.OpenAI5hWakeTask, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, openAI5hWakeCreateLockID); err != nil {
+		return nil, err
+	}
+	if params.TriggerType == service.OpenAI5hWakeTriggerGroupAuto {
+		var groupEligible, manualActive bool
+		err = tx.QueryRowContext(ctx, `
+SELECT EXISTS (
+           SELECT 1 FROM groups
+           WHERE id = $1 AND deleted_at IS NULL AND platform = 'openai'
+             AND status = 'active' AND openai_5h_auto_wake_enabled = TRUE
+       ),
+       EXISTS (
+           SELECT 1 FROM openai_5h_wake_tasks
+           WHERE trigger_type = 'manual' AND status IN ('pending', 'running')
+       )`, *params.GroupID).Scan(&groupEligible, &manualActive)
+		if err != nil {
+			return nil, err
+		}
+		if !groupEligible {
+			return nil, service.ErrOpenAI5hWakeGroupNotEligible
+		}
+		if manualActive {
+			return nil, service.ErrOpenAI5hWakeManualTaskActive
+		}
+	}
 
 	now := time.Now().UTC()
 	row := tx.QueryRowContext(ctx, `
 INSERT INTO openai_5h_wake_tasks (
-    status, eligible_account_count, active_window_count, estimated_request_count,
+	trigger_type, group_id, status, eligible_account_count, active_window_count, estimated_request_count,
     total_items, requested_by_user_id, requested_by_email, created_at, updated_at
-) VALUES ('pending', $1, $2, $3, $4, $5, NULLIF($6, ''), $7, $7)
+) VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7, NULLIF($8, ''), $9, $9)
 RETURNING id, status, eligible_account_count, active_window_count, estimated_request_count,
           total_items, processed_items, woken_count, skipped_active_count, failed_count, cancelled_count,
           requested_by_user_id, requested_by_email, lease_owner, lease_expires_at, heartbeat_at,
-          earliest_reset_at, latest_reset_at, cancel_requested_at, started_at, finished_at, created_at, updated_at`,
+	          earliest_reset_at, latest_reset_at, cancel_requested_at, started_at, finished_at, created_at, updated_at,
+	          trigger_type, group_id`,
+		params.TriggerType, params.GroupID,
 		params.EligibleAccountCount, params.ActiveWindowCount, params.EstimatedRequestCount,
 		len(params.Items), params.RequestedByUserID, params.RequestedByEmail, now)
 	task, err := scanOpenAI5hWakeTask(row)
@@ -214,9 +277,16 @@ INSERT INTO openai_5h_wake_task_items (
 	return task, nil
 }
 
-func (r *openAI5hWakeRepository) getActiveTask(ctx context.Context) (*service.OpenAI5hWakeTask, error) {
-	task, err := scanOpenAI5hWakeTask(r.db.QueryRowContext(ctx, openAI5hWakeTaskSelect+`
- WHERE status IN ('pending', 'running') ORDER BY id DESC LIMIT 1`))
+func (r *openAI5hWakeRepository) getActiveTask(ctx context.Context, triggerType string, groupID *int64) (*service.OpenAI5hWakeTask, error) {
+	query := openAI5hWakeTaskSelect + `
+ WHERE trigger_type = $1 AND status IN ('pending', 'running')`
+	args := []any{normalizeOpenAI5hWakeTriggerType(triggerType)}
+	if triggerType == service.OpenAI5hWakeTriggerGroupAuto {
+		query += ` AND group_id = $2`
+		args = append(args, groupID)
+	}
+	query += ` ORDER BY id DESC LIMIT 1`
+	task, err := scanOpenAI5hWakeTask(r.db.QueryRowContext(ctx, query, args...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -232,11 +302,89 @@ func (r *openAI5hWakeRepository) GetTask(ctx context.Context, id int64) (*servic
 }
 
 func (r *openAI5hWakeRepository) GetLatestTask(ctx context.Context) (*service.OpenAI5hWakeTask, error) {
-	task, err := scanOpenAI5hWakeTask(r.db.QueryRowContext(ctx, openAI5hWakeTaskSelect+` ORDER BY id DESC LIMIT 1`))
+	task, err := scanOpenAI5hWakeTask(r.db.QueryRowContext(ctx, openAI5hWakeTaskSelect+`
+ WHERE trigger_type = 'manual' ORDER BY id DESC LIMIT 1`))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return task, err
+}
+
+func (r *openAI5hWakeRepository) GetActiveManualTask(ctx context.Context) (*service.OpenAI5hWakeTask, error) {
+	return r.getActiveTask(ctx, service.OpenAI5hWakeTriggerManual, nil)
+}
+
+func (r *openAI5hWakeRepository) GetActiveGroupTask(ctx context.Context, groupID int64) (*service.OpenAI5hWakeTask, error) {
+	return r.getActiveTask(ctx, service.OpenAI5hWakeTriggerGroupAuto, &groupID)
+}
+
+func (r *openAI5hWakeRepository) ListAutoWakeGroups(ctx context.Context) ([]service.OpenAI5hAutoWakeGroup, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, openai_5h_auto_wake_enabled, status
+FROM groups
+WHERE deleted_at IS NULL AND platform = 'openai' AND status = 'active'
+  AND openai_5h_auto_wake_enabled = TRUE
+ORDER BY id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	groups := make([]service.OpenAI5hAutoWakeGroup, 0)
+	for rows.Next() {
+		var group service.OpenAI5hAutoWakeGroup
+		if err := rows.Scan(&group.ID, &group.Enabled, &group.Status); err != nil {
+			return nil, err
+		}
+		groups = append(groups, group)
+	}
+	return groups, rows.Err()
+}
+
+func (r *openAI5hWakeRepository) GetAutoWakeGroup(ctx context.Context, groupID int64) (*service.OpenAI5hAutoWakeGroup, error) {
+	var group service.OpenAI5hAutoWakeGroup
+	err := r.db.QueryRowContext(ctx, `
+SELECT id, openai_5h_auto_wake_enabled, status
+FROM groups
+WHERE id = $1 AND deleted_at IS NULL AND platform = 'openai'
+  AND status = 'active' AND openai_5h_auto_wake_enabled = TRUE`, groupID).
+		Scan(&group.ID, &group.Enabled, &group.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &group, nil
+}
+
+func (r *openAI5hWakeRepository) UpdateAutoWakeGroupCheck(ctx context.Context, update service.OpenAI5hAutoWakeCheckUpdate) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
+UPDATE groups
+SET openai_5h_auto_wake_last_checked_at = $2,
+    openai_5h_auto_wake_last_candidate_pool_count = $3,
+    openai_5h_auto_wake_last_reason = NULLIF($4, ''),
+    openai_5h_auto_wake_last_task_id = COALESCE($5, openai_5h_auto_wake_last_task_id),
+    openai_5h_auto_wake_last_task_status = CASE
+        WHEN $5::bigint IS NULL THEN openai_5h_auto_wake_last_task_status
+        ELSE NULLIF($6, '')
+    END,
+    updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL AND platform = 'openai'
+  AND status = 'active' AND openai_5h_auto_wake_enabled = TRUE`,
+		update.GroupID, update.CheckedAt, update.CandidatePoolCount, update.Reason, update.TaskID, update.TaskStatus)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected == 1, err
+}
+
+func (r *openAI5hWakeRepository) UpdateAutoWakeTaskStatus(ctx context.Context, taskID int64, status string) error {
+	_, err := r.db.ExecContext(ctx, `
+UPDATE groups
+SET openai_5h_auto_wake_last_task_status = NULLIF($2, ''), updated_at = NOW()
+WHERE deleted_at IS NULL AND openai_5h_auto_wake_last_task_id = $1`, taskID, status)
+	return err
 }
 
 func (r *openAI5hWakeRepository) CountRunningTaskItems(ctx context.Context, taskID int64) (int, error) {
@@ -328,16 +476,27 @@ SET status = 'running', lease_owner = $1,
     heartbeat_at = NOW(), started_at = COALESCE(started_at, NOW()), updated_at = NOW()
 WHERE id = (
     SELECT id FROM openai_5h_wake_tasks
-    WHERE status = 'pending'
-       OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < NOW()))
-    ORDER BY id ASC
+    WHERE (
+        status = 'pending'
+        OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < NOW()))
+    )
+      AND (
+        trigger_type = 'group_auto'
+        OR NOT EXISTS (
+            SELECT 1 FROM openai_5h_wake_tasks AS auto_task
+            WHERE auto_task.trigger_type = 'group_auto'
+              AND auto_task.status IN ('pending', 'running')
+        )
+      )
+    ORDER BY CASE WHEN trigger_type = 'group_auto' THEN 0 ELSE 1 END, id ASC
     LIMIT 1
     FOR UPDATE SKIP LOCKED
 )
 RETURNING id, status, eligible_account_count, active_window_count, estimated_request_count,
           total_items, processed_items, woken_count, skipped_active_count, failed_count, cancelled_count,
           requested_by_user_id, requested_by_email, lease_owner, lease_expires_at, heartbeat_at,
-          earliest_reset_at, latest_reset_at, cancel_requested_at, started_at, finished_at, created_at, updated_at`, owner, now, leaseUntil)
+	          earliest_reset_at, latest_reset_at, cancel_requested_at, started_at, finished_at, created_at, updated_at,
+	          trigger_type, group_id`, owner, now, leaseUntil)
 	task, err := scanOpenAI5hWakeTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -346,18 +505,37 @@ RETURNING id, status, eligible_account_count, active_window_count, estimated_req
 }
 
 func (r *openAI5hWakeRepository) HeartbeatTask(ctx context.Context, taskID int64, owner string, now, leaseUntil time.Time) (bool, error) {
-	result, err := r.db.ExecContext(ctx, `
-UPDATE openai_5h_wake_tasks
-SET heartbeat_at = NOW(),
-    lease_expires_at = NOW() + ($4::timestamptz - $3::timestamptz),
-    updated_at = NOW()
-WHERE id = $1 AND status = 'running' AND lease_owner = $2
-  AND lease_expires_at > NOW()`, taskID, owner, now, leaseUntil)
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	return affected == 1, err
+	var owned bool
+	err := r.db.QueryRowContext(ctx, `
+WITH owned_task AS (
+    UPDATE openai_5h_wake_tasks AS task
+    SET heartbeat_at = NOW(),
+        lease_expires_at = NOW() + ($4::timestamptz - $3::timestamptz),
+        updated_at = NOW()
+    WHERE task.id = $1 AND task.status = 'running' AND task.lease_owner = $2
+      AND task.lease_expires_at > NOW()
+      AND NOT EXISTS (
+          SELECT 1
+          FROM openai_5h_wake_task_items AS item
+          WHERE item.task_id = task.id AND item.status = 'running'
+            AND NOT EXISTS (
+                SELECT 1 FROM openai_5h_wake_pool_leases AS pool_lease
+                WHERE pool_lease.identity_hash = item.identity_hash
+                  AND pool_lease.task_id = task.id AND pool_lease.item_id = item.id
+                  AND pool_lease.lease_owner = $2 AND pool_lease.lease_expires_at > NOW()
+            )
+      )
+    RETURNING task.id
+), renewed_leases AS (
+    UPDATE openai_5h_wake_pool_leases
+    SET heartbeat_at = NOW(),
+        lease_expires_at = NOW() + ($4::timestamptz - $3::timestamptz),
+        updated_at = NOW()
+    WHERE task_id IN (SELECT id FROM owned_task) AND lease_owner = $2
+    RETURNING identity_hash
+)
+SELECT EXISTS (SELECT 1 FROM owned_task)`, taskID, owner, now, leaseUntil).Scan(&owned)
+	return owned, err
 }
 
 func (r *openAI5hWakeRepository) RecoverTaskItems(ctx context.Context, taskID int64, owner string, maxAttempts int) (int, error) {
@@ -381,6 +559,9 @@ FOR UPDATE`, taskID, owner).Scan(&cancelRequested)
 		return 0, fmt.Errorf("wake task %d lease is no longer owned", taskID)
 	}
 	if err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM openai_5h_wake_pool_leases WHERE task_id = $1`, taskID); err != nil {
 		return 0, err
 	}
 	if _, err = tx.ExecContext(ctx, `
@@ -448,6 +629,9 @@ WHERE task.id = $1 AND task.status = 'running' AND task.lease_owner = $2`, taskI
 }
 
 func (r *openAI5hWakeRepository) ClaimNextItem(ctx context.Context, taskID int64, owner string) (*service.OpenAI5hWakeTaskItem, error) {
+	// Keep the original repository contract for callers that do not opt into
+	// durable pool leases. The worker selects ClaimNextItemWithLease through
+	// OpenAI5hWakeLeaseTaskRepository when lease support is available.
 	row := r.db.QueryRowContext(ctx, `
 WITH owned_task AS MATERIALIZED (
     SELECT id FROM openai_5h_wake_tasks
@@ -480,6 +664,104 @@ RETURNING id, task_id, identity_hash, member_account_ids, attempted_account_ids,
 	return item, err
 }
 
+func (r *openAI5hWakeRepository) ClaimNextItemWithLease(ctx context.Context, taskID int64, owner string, now, leaseUntil time.Time) (*service.OpenAI5hWakeTaskItem, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var ownedTaskID int64
+	err = tx.QueryRowContext(ctx, `
+SELECT id FROM openai_5h_wake_tasks
+WHERE id = $1 AND status = 'running' AND lease_owner = $2
+  AND lease_expires_at > NOW() AND cancel_requested_at IS NULL
+FOR UPDATE`, taskID, owner).Scan(&ownedTaskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("wake task %d lease is no longer owned", taskID)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var itemID int64
+	var identityHash string
+	err = tx.QueryRowContext(ctx, `
+SELECT item.id, item.identity_hash
+FROM openai_5h_wake_task_items AS item
+WHERE item.task_id = $1 AND item.status = 'pending'
+  AND NOT EXISTS (
+      SELECT 1 FROM openai_5h_wake_pool_leases AS pool_lease
+      WHERE pool_lease.identity_hash = item.identity_hash
+        AND pool_lease.lease_expires_at > NOW()
+  )
+ORDER BY item.id ASC
+LIMIT 1
+FOR UPDATE OF item SKIP LOCKED`, taskID).Scan(&itemID, &identityHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		var pending int
+		if countErr := tx.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM openai_5h_wake_task_items
+WHERE task_id = $1 AND status = 'pending'`, taskID).Scan(&pending); countErr != nil {
+			return nil, countErr
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		if pending > 0 {
+			return nil, service.ErrOpenAI5hWakePoolLeaseContended
+		}
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var leasedItemID int64
+	err = tx.QueryRowContext(ctx, `
+INSERT INTO openai_5h_wake_pool_leases (
+    identity_hash, task_id, item_id, lease_owner, lease_expires_at,
+    heartbeat_at, created_at, updated_at
+) VALUES ($1, $2, $3, $4, NOW() + ($6::timestamptz - $5::timestamptz), NOW(), NOW(), NOW())
+ON CONFLICT (identity_hash) DO UPDATE
+SET task_id = EXCLUDED.task_id,
+    item_id = EXCLUDED.item_id,
+    lease_owner = EXCLUDED.lease_owner,
+    lease_expires_at = EXCLUDED.lease_expires_at,
+    heartbeat_at = NOW(),
+    updated_at = NOW()
+WHERE openai_5h_wake_pool_leases.lease_expires_at <= NOW()
+RETURNING item_id`, identityHash, taskID, itemID, owner, now, leaseUntil).Scan(&leasedItemID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrOpenAI5hWakePoolLeaseContended
+	}
+	if err != nil {
+		return nil, err
+	}
+	if leasedItemID != itemID {
+		return nil, fmt.Errorf("wake pool lease returned unexpected item %d", leasedItemID)
+	}
+
+	item, err := scanOpenAI5hWakeItem(tx.QueryRowContext(ctx, `
+UPDATE openai_5h_wake_task_items
+SET status = 'running', attempt_count = attempt_count + 1,
+    attempted_account_ids = '[]'::jsonb,
+    successful_account_id = NULL, error_code = NULL, reset_at = NULL,
+    finished_at = NULL,
+    started_at = COALESCE(started_at, NOW()), updated_at = NOW()
+WHERE id = $1 AND task_id = $2 AND status = 'pending'
+RETURNING id, task_id, identity_hash, member_account_ids, attempted_account_ids,
+          successful_account_id, status, attempt_count, error_code, reset_at,
+          started_at, finished_at, created_at, updated_at`, itemID, taskID))
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
 func (r *openAI5hWakeRepository) CompleteItem(ctx context.Context, taskID int64, owner string, params service.OpenAI5hWakeCompleteItemParams) (bool, error) {
 	attemptedAccountIDs := params.AttemptedAccountIDs
 	if attemptedAccountIDs == nil {
@@ -506,7 +788,18 @@ WITH owned_task AS MATERIALIZED (
         updated_at = NOW()
     WHERE id = $3 AND task_id = $1 AND status = 'running'
       AND EXISTS (SELECT 1 FROM owned_task)
+      AND EXISTS (
+          SELECT 1 FROM openai_5h_wake_pool_leases AS pool_lease
+          WHERE pool_lease.identity_hash = openai_5h_wake_task_items.identity_hash
+            AND pool_lease.task_id = $1 AND pool_lease.item_id = $3
+            AND pool_lease.lease_owner = $2 AND pool_lease.lease_expires_at > NOW()
+      )
     RETURNING status, reset_at
+), released AS (
+    DELETE FROM openai_5h_wake_pool_leases
+    WHERE task_id = $1 AND item_id = $3 AND lease_owner = $2
+      AND EXISTS (SELECT 1 FROM completed)
+    RETURNING identity_hash
 )
 UPDATE openai_5h_wake_tasks
 SET processed_items = processed_items + 1,
@@ -526,7 +819,8 @@ SET processed_items = processed_items + 1,
     END,
     updated_at = NOW()
 WHERE id IN (SELECT id FROM owned_task)
-  AND EXISTS (SELECT 1 FROM completed)`,
+  AND EXISTS (SELECT 1 FROM completed)
+  AND EXISTS (SELECT 1 FROM released)`,
 		taskID, owner, params.ItemID, params.Status, attemptedJSON,
 		params.SuccessfulAccountID, params.ResetAt, params.ErrorCode)
 	if err != nil {
@@ -544,7 +838,8 @@ WHERE id = $1 AND status IN ('pending', 'running') AND cancel_requested_at IS NU
 RETURNING id, status, eligible_account_count, active_window_count, estimated_request_count,
           total_items, processed_items, woken_count, skipped_active_count, failed_count, cancelled_count,
           requested_by_user_id, requested_by_email, lease_owner, lease_expires_at, heartbeat_at,
-          earliest_reset_at, latest_reset_at, cancel_requested_at, started_at, finished_at, created_at, updated_at`, taskID, now)
+	          earliest_reset_at, latest_reset_at, cancel_requested_at, started_at, finished_at, created_at, updated_at,
+	          trigger_type, group_id`, taskID, now)
 	task, err := scanOpenAI5hWakeTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		task, err = r.GetTask(ctx, taskID)
@@ -603,6 +898,9 @@ WITH cancelled AS (
 SELECT COUNT(*) FROM cancelled`, taskID).Scan(&cancelledItems); err != nil {
 			return nil, err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM openai_5h_wake_pool_leases WHERE task_id = $1`, taskID); err != nil {
+			return nil, err
+		}
 		result, err := tx.ExecContext(ctx, `
 UPDATE openai_5h_wake_tasks
 SET status = 'cancelled',
@@ -644,11 +942,22 @@ WHERE id = $1 AND status = 'running' AND lease_owner = $2
 			}
 			return nil, fmt.Errorf("wake task %d is not ready to finalize", taskID)
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM openai_5h_wake_pool_leases WHERE task_id = $1`, taskID); err != nil {
+			return nil, err
+		}
 	}
 
 	task, err := scanOpenAI5hWakeTask(tx.QueryRowContext(ctx, openAI5hWakeTaskSelect+` WHERE id = $1`, taskID))
 	if err != nil {
 		return nil, err
+	}
+	if task.TriggerType == service.OpenAI5hWakeTriggerGroupAuto {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE groups
+SET openai_5h_auto_wake_last_task_status = $2, updated_at = NOW()
+WHERE deleted_at IS NULL AND openai_5h_auto_wake_last_task_id = $1`, task.ID, task.Status); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err

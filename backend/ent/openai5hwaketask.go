@@ -17,6 +17,10 @@ type OpenAI5hWakeTask struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int64 `json:"id,omitempty"`
+	// TriggerType holds the value of the "trigger_type" field.
+	TriggerType string `json:"trigger_type,omitempty"`
+	// GroupID holds the value of the "group_id" field.
+	GroupID *int64 `json:"group_id,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
 	// EligibleAccountCount holds the value of the "eligible_account_count" field.
@@ -69,9 +73,9 @@ func (*OpenAI5hWakeTask) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case openai5hwaketask.FieldID, openai5hwaketask.FieldEligibleAccountCount, openai5hwaketask.FieldActiveWindowCount, openai5hwaketask.FieldEstimatedRequestCount, openai5hwaketask.FieldTotalItems, openai5hwaketask.FieldProcessedItems, openai5hwaketask.FieldWokenCount, openai5hwaketask.FieldSkippedActiveCount, openai5hwaketask.FieldFailedCount, openai5hwaketask.FieldCancelledCount, openai5hwaketask.FieldRequestedByUserID:
+		case openai5hwaketask.FieldID, openai5hwaketask.FieldGroupID, openai5hwaketask.FieldEligibleAccountCount, openai5hwaketask.FieldActiveWindowCount, openai5hwaketask.FieldEstimatedRequestCount, openai5hwaketask.FieldTotalItems, openai5hwaketask.FieldProcessedItems, openai5hwaketask.FieldWokenCount, openai5hwaketask.FieldSkippedActiveCount, openai5hwaketask.FieldFailedCount, openai5hwaketask.FieldCancelledCount, openai5hwaketask.FieldRequestedByUserID:
 			values[i] = new(sql.NullInt64)
-		case openai5hwaketask.FieldStatus, openai5hwaketask.FieldRequestedByEmail, openai5hwaketask.FieldLeaseOwner:
+		case openai5hwaketask.FieldTriggerType, openai5hwaketask.FieldStatus, openai5hwaketask.FieldRequestedByEmail, openai5hwaketask.FieldLeaseOwner:
 			values[i] = new(sql.NullString)
 		case openai5hwaketask.FieldLeaseExpiresAt, openai5hwaketask.FieldHeartbeatAt, openai5hwaketask.FieldEarliestResetAt, openai5hwaketask.FieldLatestResetAt, openai5hwaketask.FieldCancelRequestedAt, openai5hwaketask.FieldStartedAt, openai5hwaketask.FieldFinishedAt, openai5hwaketask.FieldCreatedAt, openai5hwaketask.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -96,6 +100,19 @@ func (_m *OpenAI5hWakeTask) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int64(value.Int64)
+		case openai5hwaketask.FieldTriggerType:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field trigger_type", values[i])
+			} else if value.Valid {
+				_m.TriggerType = value.String
+			}
+		case openai5hwaketask.FieldGroupID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field group_id", values[i])
+			} else if value.Valid {
+				_m.GroupID = new(int64)
+				*_m.GroupID = value.Int64
+			}
 		case openai5hwaketask.FieldStatus:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field status", values[i])
@@ -274,6 +291,14 @@ func (_m *OpenAI5hWakeTask) String() string {
 	var builder strings.Builder
 	builder.WriteString("OpenAI5hWakeTask(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("trigger_type=")
+	builder.WriteString(_m.TriggerType)
+	builder.WriteString(", ")
+	if v := _m.GroupID; v != nil {
+		builder.WriteString("group_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
 	builder.WriteString("status=")
 	builder.WriteString(_m.Status)
 	builder.WriteString(", ")

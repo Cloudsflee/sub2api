@@ -28,6 +28,47 @@ func (_u *OpenAI5hWakeTaskUpdate) Where(ps ...predicate.OpenAI5hWakeTask) *OpenA
 	return _u
 }
 
+// SetTriggerType sets the "trigger_type" field.
+func (_u *OpenAI5hWakeTaskUpdate) SetTriggerType(v string) *OpenAI5hWakeTaskUpdate {
+	_u.mutation.SetTriggerType(v)
+	return _u
+}
+
+// SetNillableTriggerType sets the "trigger_type" field if the given value is not nil.
+func (_u *OpenAI5hWakeTaskUpdate) SetNillableTriggerType(v *string) *OpenAI5hWakeTaskUpdate {
+	if v != nil {
+		_u.SetTriggerType(*v)
+	}
+	return _u
+}
+
+// SetGroupID sets the "group_id" field.
+func (_u *OpenAI5hWakeTaskUpdate) SetGroupID(v int64) *OpenAI5hWakeTaskUpdate {
+	_u.mutation.ResetGroupID()
+	_u.mutation.SetGroupID(v)
+	return _u
+}
+
+// SetNillableGroupID sets the "group_id" field if the given value is not nil.
+func (_u *OpenAI5hWakeTaskUpdate) SetNillableGroupID(v *int64) *OpenAI5hWakeTaskUpdate {
+	if v != nil {
+		_u.SetGroupID(*v)
+	}
+	return _u
+}
+
+// AddGroupID adds value to the "group_id" field.
+func (_u *OpenAI5hWakeTaskUpdate) AddGroupID(v int64) *OpenAI5hWakeTaskUpdate {
+	_u.mutation.AddGroupID(v)
+	return _u
+}
+
+// ClearGroupID clears the value of the "group_id" field.
+func (_u *OpenAI5hWakeTaskUpdate) ClearGroupID() *OpenAI5hWakeTaskUpdate {
+	_u.mutation.ClearGroupID()
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *OpenAI5hWakeTaskUpdate) SetStatus(v string) *OpenAI5hWakeTaskUpdate {
 	_u.mutation.SetStatus(v)
@@ -487,6 +528,11 @@ func (_u *OpenAI5hWakeTaskUpdate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *OpenAI5hWakeTaskUpdate) check() error {
+	if v, ok := _u.mutation.TriggerType(); ok {
+		if err := openai5hwaketask.TriggerTypeValidator(v); err != nil {
+			return &ValidationError{Name: "trigger_type", err: fmt.Errorf(`ent: validator failed for field "OpenAI5hWakeTask.trigger_type": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Status(); ok {
 		if err := openai5hwaketask.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "OpenAI5hWakeTask.status": %w`, err)}
@@ -516,6 +562,18 @@ func (_u *OpenAI5hWakeTaskUpdate) sqlSave(ctx context.Context) (_node int, err e
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TriggerType(); ok {
+		_spec.SetField(openai5hwaketask.FieldTriggerType, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.GroupID(); ok {
+		_spec.SetField(openai5hwaketask.FieldGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedGroupID(); ok {
+		_spec.AddField(openai5hwaketask.FieldGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.GroupIDCleared() {
+		_spec.ClearField(openai5hwaketask.FieldGroupID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(openai5hwaketask.FieldStatus, field.TypeString, value)
@@ -658,6 +716,47 @@ type OpenAI5hWakeTaskUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *OpenAI5hWakeTaskMutation
+}
+
+// SetTriggerType sets the "trigger_type" field.
+func (_u *OpenAI5hWakeTaskUpdateOne) SetTriggerType(v string) *OpenAI5hWakeTaskUpdateOne {
+	_u.mutation.SetTriggerType(v)
+	return _u
+}
+
+// SetNillableTriggerType sets the "trigger_type" field if the given value is not nil.
+func (_u *OpenAI5hWakeTaskUpdateOne) SetNillableTriggerType(v *string) *OpenAI5hWakeTaskUpdateOne {
+	if v != nil {
+		_u.SetTriggerType(*v)
+	}
+	return _u
+}
+
+// SetGroupID sets the "group_id" field.
+func (_u *OpenAI5hWakeTaskUpdateOne) SetGroupID(v int64) *OpenAI5hWakeTaskUpdateOne {
+	_u.mutation.ResetGroupID()
+	_u.mutation.SetGroupID(v)
+	return _u
+}
+
+// SetNillableGroupID sets the "group_id" field if the given value is not nil.
+func (_u *OpenAI5hWakeTaskUpdateOne) SetNillableGroupID(v *int64) *OpenAI5hWakeTaskUpdateOne {
+	if v != nil {
+		_u.SetGroupID(*v)
+	}
+	return _u
+}
+
+// AddGroupID adds value to the "group_id" field.
+func (_u *OpenAI5hWakeTaskUpdateOne) AddGroupID(v int64) *OpenAI5hWakeTaskUpdateOne {
+	_u.mutation.AddGroupID(v)
+	return _u
+}
+
+// ClearGroupID clears the value of the "group_id" field.
+func (_u *OpenAI5hWakeTaskUpdateOne) ClearGroupID() *OpenAI5hWakeTaskUpdateOne {
+	_u.mutation.ClearGroupID()
+	return _u
 }
 
 // SetStatus sets the "status" field.
@@ -1132,6 +1231,11 @@ func (_u *OpenAI5hWakeTaskUpdateOne) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *OpenAI5hWakeTaskUpdateOne) check() error {
+	if v, ok := _u.mutation.TriggerType(); ok {
+		if err := openai5hwaketask.TriggerTypeValidator(v); err != nil {
+			return &ValidationError{Name: "trigger_type", err: fmt.Errorf(`ent: validator failed for field "OpenAI5hWakeTask.trigger_type": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Status(); ok {
 		if err := openai5hwaketask.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "OpenAI5hWakeTask.status": %w`, err)}
@@ -1178,6 +1282,18 @@ func (_u *OpenAI5hWakeTaskUpdateOne) sqlSave(ctx context.Context) (_node *OpenAI
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.TriggerType(); ok {
+		_spec.SetField(openai5hwaketask.FieldTriggerType, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.GroupID(); ok {
+		_spec.SetField(openai5hwaketask.FieldGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedGroupID(); ok {
+		_spec.AddField(openai5hwaketask.FieldGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.GroupIDCleared() {
+		_spec.ClearField(openai5hwaketask.FieldGroupID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(openai5hwaketask.FieldStatus, field.TypeString, value)

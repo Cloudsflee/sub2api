@@ -1,0 +1,364 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+type openAI5hAutoWakeAccountRepoStub struct {
+	AccountRepository
+	accountsByGroup map[int64][]Account
+	err             error
+	calls           []struct {
+		groupID  int64
+		platform string
+	}
+}
+
+func (r *openAI5hAutoWakeAccountRepoStub) ListSchedulableByGroupIDAndPlatform(
+	_ context.Context,
+	groupID int64,
+	platform string,
+) ([]Account, error) {
+	r.calls = append(r.calls, struct {
+		groupID  int64
+		platform string
+	}{groupID: groupID, platform: platform})
+	if r.err != nil {
+		return nil, r.err
+	}
+	return append([]Account(nil), r.accountsByGroup[groupID]...), nil
+}
+
+type openAI5hAutoWakeTaskRepoStub struct {
+	OpenAI5hWakeTaskRepository
+	group       *OpenAI5hAutoWakeGroup
+	groups      []OpenAI5hAutoWakeGroup
+	manual      *OpenAI5hWakeTask
+	active      *OpenAI5hWakeTask
+	createFn    func(OpenAI5hWakeCreateParams) (*OpenAI5hWakeTask, bool, error)
+	createCalls []OpenAI5hWakeCreateParams
+	updates     []OpenAI5hAutoWakeCheckUpdate
+	events      []OpenAI5hWakeTaskEventParams
+}
+
+func (r *openAI5hAutoWakeTaskRepoStub) CreateOrGetActive(
+	_ context.Context,
+	params OpenAI5hWakeCreateParams,
+) (*OpenAI5hWakeTask, bool, error) {
+	params.Items = append([]OpenAI5hWakeTaskItemSeed(nil), params.Items...)
+	r.createCalls = append(r.createCalls, params)
+	if r.createFn != nil {
+		return r.createFn(params)
+	}
+	groupID := *params.GroupID
+	return &OpenAI5hWakeTask{
+		ID: 77, TriggerType: params.TriggerType, GroupID: &groupID,
+		Status:                OpenAI5hWakeTaskStatusPending,
+		EligibleAccountCount:  params.EligibleAccountCount,
+		ActiveWindowCount:     params.ActiveWindowCount,
+		EstimatedRequestCount: params.EstimatedRequestCount,
+		TotalItems:            len(params.Items),
+	}, true, nil
+}
+
+func (r *openAI5hAutoWakeTaskRepoStub) AppendTaskEvent(_ context.Context, event OpenAI5hWakeTaskEventParams) error {
+	r.events = append(r.events, event)
+	return nil
+}
+
+func (r *openAI5hAutoWakeTaskRepoStub) GetActiveManualTask(context.Context) (*OpenAI5hWakeTask, error) {
+	return r.manual, nil
+}
+
+func (r *openAI5hAutoWakeTaskRepoStub) GetActiveGroupTask(context.Context, int64) (*OpenAI5hWakeTask, error) {
+	return r.active, nil
+}
+
+func (r *openAI5hAutoWakeTaskRepoStub) ListAutoWakeGroups(context.Context) ([]OpenAI5hAutoWakeGroup, error) {
+	return append([]OpenAI5hAutoWakeGroup(nil), r.groups...), nil
+}
+
+func (r *openAI5hAutoWakeTaskRepoStub) GetAutoWakeGroup(context.Context, int64) (*OpenAI5hAutoWakeGroup, error) {
+	return r.group, nil
+}
+
+func (r *openAI5hAutoWakeTaskRepoStub) UpdateAutoWakeGroupCheck(
+	_ context.Context,
+	update OpenAI5hAutoWakeCheckUpdate,
+) (bool, error) {
+	r.updates = append(r.updates, update)
+	return true, nil
+}
+
+func (*openAI5hAutoWakeTaskRepoStub) UpdateAutoWakeTaskStatus(context.Context, int64, string) error {
+	return nil
+}
+
+func trustedOpenAI5hWakeAccount(id int64, identity string, resetAt time.Time) Account {
+	account := *newOpenAI5hWakeAccount(id, identity)
+	account.Extra["codex_5h_reset_at"] = resetAt.UTC().Format(time.RFC3339)
+	account.Extra["codex_5h_used_percent"] = float64(1)
+	account.Extra[openAI5hWakeSnapshotIdentityKey] = openAI5hWakeIdentityHash(&account)
+	return account
+}
+
+func TestOpenAI5hAutoWakeCheckUsesOnlyGroupCandidatesAndExcludesTrustedWindows(t *testing.T) {
+	now := time.Now().UTC()
+	candidate := *newOpenAI5hWakeAccount(1, "candidate-pool")
+	active := trustedOpenAI5hWakeAccount(2, "active-pool", now.Add(4*time.Hour))
+	apiKey := *newOpenAI5hWakeAccount(3, "api-key-pool")
+	apiKey.Type = AccountTypeAPIKey
+	nonGlobal := *newOpenAI5hWakeAccount(4, "spark-pool")
+	nonGlobal.QuotaDimension = QuotaDimensionSpark
+
+	accountRepo := &openAI5hAutoWakeAccountRepoStub{accountsByGroup: map[int64][]Account{
+		9: {candidate, active, apiKey, nonGlobal},
+	}}
+	taskRepo := &openAI5hAutoWakeTaskRepoStub{group: &OpenAI5hAutoWakeGroup{
+		ID: 9, Enabled: true, Status: StatusActive,
+	}}
+	wake := &OpenAI5hWakeService{repo: taskRepo, accountRepo: accountRepo}
+
+	err := wake.CheckGroupNow(context.Background(), 9)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, len(accountRepo.calls))
+	require.Equal(t, int64(9), accountRepo.calls[0].groupID)
+	require.Equal(t, PlatformOpenAI, accountRepo.calls[0].platform)
+	require.Len(t, taskRepo.createCalls, 1)
+	created := taskRepo.createCalls[0]
+	require.Equal(t, OpenAI5hWakeTriggerGroupAuto, created.TriggerType)
+	require.Equal(t, int64(9), *created.GroupID)
+	require.Equal(t, 1, created.EligibleAccountCount)
+	require.Equal(t, 1, created.ActiveWindowCount)
+	require.Equal(t, 1, created.EstimatedRequestCount)
+	require.Len(t, created.Items, 1)
+	require.Equal(t, []int64{1}, created.Items[0].MemberAccountIDs)
+	require.Len(t, taskRepo.updates, 1)
+	require.Equal(t, OpenAI5hAutoWakeReasonTaskCreated, taskRepo.updates[0].Reason)
+	require.Equal(t, 1, taskRepo.updates[0].CandidatePoolCount)
+	require.Equal(t, int64(77), *taskRepo.updates[0].TaskID)
+	require.Equal(t, OpenAI5hWakeTaskStatusPending, taskRepo.updates[0].TaskStatus)
+	require.Len(t, taskRepo.events, 1)
+	require.Equal(t, "task_created", taskRepo.events[0].Code)
+}
+
+func TestOpenAI5hAutoWakeCheckDoesNotCreateEmptyTask(t *testing.T) {
+	now := time.Now().UTC()
+	active := trustedOpenAI5hWakeAccount(2, "active-pool", now.Add(4*time.Hour))
+	accountRepo := &openAI5hAutoWakeAccountRepoStub{accountsByGroup: map[int64][]Account{9: {active}}}
+	taskRepo := &openAI5hAutoWakeTaskRepoStub{group: &OpenAI5hAutoWakeGroup{
+		ID: 9, Enabled: true, Status: StatusActive,
+	}}
+	wake := &OpenAI5hWakeService{repo: taskRepo, accountRepo: accountRepo}
+
+	err := wake.CheckGroupNow(context.Background(), 9)
+
+	require.NoError(t, err)
+	require.Empty(t, taskRepo.createCalls)
+	require.Len(t, taskRepo.updates, 1)
+	require.Equal(t, OpenAI5hAutoWakeReasonNoCandidate, taskRepo.updates[0].Reason)
+	require.Zero(t, taskRepo.updates[0].CandidatePoolCount)
+}
+
+func TestOpenAI5hAutoWakeCheckStopsWhenGroupIsNoLongerEligible(t *testing.T) {
+	accountRepo := &openAI5hAutoWakeAccountRepoStub{accountsByGroup: map[int64][]Account{
+		9: {*newOpenAI5hWakeAccount(1, "candidate-pool")},
+	}}
+	taskRepo := &openAI5hAutoWakeTaskRepoStub{group: &OpenAI5hAutoWakeGroup{
+		ID: 9, Enabled: false, Status: StatusActive,
+	}}
+	wake := &OpenAI5hWakeService{repo: taskRepo, accountRepo: accountRepo}
+
+	err := wake.CheckGroupNow(context.Background(), 9)
+
+	require.NoError(t, err)
+	require.Empty(t, accountRepo.calls)
+	require.Empty(t, taskRepo.createCalls)
+	require.Empty(t, taskRepo.updates)
+}
+
+func TestOpenAI5hAutoWakeCheckSkipsActiveTasks(t *testing.T) {
+	tests := []struct {
+		name       string
+		manual     *OpenAI5hWakeTask
+		auto       *OpenAI5hWakeTask
+		wantReason string
+		wantTaskID *int64
+	}{
+		{
+			name: "manual task", manual: &OpenAI5hWakeTask{ID: 10, Status: OpenAI5hWakeTaskStatusRunning},
+			wantReason: OpenAI5hAutoWakeReasonSkippedManualActive,
+		},
+		{
+			name: "same group automatic task", auto: &OpenAI5hWakeTask{ID: 11, Status: OpenAI5hWakeTaskStatusPending},
+			wantReason: OpenAI5hAutoWakeReasonSkippedAutoActive, wantTaskID: int64Pointer(11),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			accountRepo := &openAI5hAutoWakeAccountRepoStub{}
+			taskRepo := &openAI5hAutoWakeTaskRepoStub{
+				group:  &OpenAI5hAutoWakeGroup{ID: 9, Enabled: true, Status: StatusActive},
+				manual: tt.manual, active: tt.auto,
+			}
+			wake := &OpenAI5hWakeService{repo: taskRepo, accountRepo: accountRepo}
+
+			err := wake.CheckGroupNow(context.Background(), 9)
+
+			require.NoError(t, err)
+			require.Empty(t, accountRepo.calls)
+			require.Empty(t, taskRepo.createCalls)
+			require.Len(t, taskRepo.updates, 1)
+			require.Equal(t, tt.wantReason, taskRepo.updates[0].Reason)
+			require.Equal(t, tt.wantTaskID, taskRepo.updates[0].TaskID)
+		})
+	}
+}
+
+func TestOpenAI5hAutoWakeCheckHandlesCreationRacesAndErrors(t *testing.T) {
+	candidate := *newOpenAI5hWakeAccount(1, "candidate-pool")
+
+	t.Run("manual task wins creation race", func(t *testing.T) {
+		accountRepo := &openAI5hAutoWakeAccountRepoStub{accountsByGroup: map[int64][]Account{9: {candidate}}}
+		taskRepo := &openAI5hAutoWakeTaskRepoStub{
+			group: &OpenAI5hAutoWakeGroup{ID: 9, Enabled: true, Status: StatusActive},
+			createFn: func(OpenAI5hWakeCreateParams) (*OpenAI5hWakeTask, bool, error) {
+				return nil, false, ErrOpenAI5hWakeManualTaskActive
+			},
+		}
+		wake := &OpenAI5hWakeService{repo: taskRepo, accountRepo: accountRepo}
+
+		err := wake.CheckGroupNow(context.Background(), 9)
+
+		require.NoError(t, err)
+		require.Len(t, taskRepo.updates, 1)
+		require.Equal(t, OpenAI5hAutoWakeReasonSkippedManualActive, taskRepo.updates[0].Reason)
+		require.Equal(t, 1, taskRepo.updates[0].CandidatePoolCount)
+	})
+
+	t.Run("same group task wins creation race", func(t *testing.T) {
+		accountRepo := &openAI5hAutoWakeAccountRepoStub{accountsByGroup: map[int64][]Account{9: {candidate}}}
+		taskRepo := &openAI5hAutoWakeTaskRepoStub{
+			group: &OpenAI5hAutoWakeGroup{ID: 9, Enabled: true, Status: StatusActive},
+			createFn: func(params OpenAI5hWakeCreateParams) (*OpenAI5hWakeTask, bool, error) {
+				return &OpenAI5hWakeTask{
+					ID: 12, TriggerType: params.TriggerType, GroupID: params.GroupID,
+					Status: OpenAI5hWakeTaskStatusRunning,
+				}, false, nil
+			},
+		}
+		wake := &OpenAI5hWakeService{repo: taskRepo, accountRepo: accountRepo}
+
+		err := wake.CheckGroupNow(context.Background(), 9)
+
+		require.NoError(t, err)
+		require.Len(t, taskRepo.updates, 1)
+		require.Equal(t, OpenAI5hAutoWakeReasonSkippedAutoActive, taskRepo.updates[0].Reason)
+		require.Equal(t, int64(12), *taskRepo.updates[0].TaskID)
+	})
+
+	t.Run("account query failure records short reason code", func(t *testing.T) {
+		accountRepo := &openAI5hAutoWakeAccountRepoStub{err: errors.New("query failed")}
+		taskRepo := &openAI5hAutoWakeTaskRepoStub{group: &OpenAI5hAutoWakeGroup{
+			ID: 9, Enabled: true, Status: StatusActive,
+		}}
+		wake := &OpenAI5hWakeService{repo: taskRepo, accountRepo: accountRepo}
+
+		err := wake.CheckGroupNow(context.Background(), 9)
+
+		require.EqualError(t, err, "query failed")
+		require.Len(t, taskRepo.updates, 1)
+		require.Equal(t, OpenAI5hAutoWakeReasonCheckError, taskRepo.updates[0].Reason)
+		require.Empty(t, taskRepo.updates[0].TaskStatus)
+	})
+}
+
+func TestOpenAI5hAutoWakePeriodicScanChecksEveryEligibleGroup(t *testing.T) {
+	require.Equal(t, 5*time.Minute, openAI5hAutoWakeScanInterval)
+	accountRepo := &openAI5hAutoWakeAccountRepoStub{accountsByGroup: map[int64][]Account{}}
+	taskRepo := &openAI5hAutoWakeTaskRepoStub{
+		group:  &OpenAI5hAutoWakeGroup{Enabled: true, Status: StatusActive},
+		groups: []OpenAI5hAutoWakeGroup{{ID: 4, Enabled: true, Status: StatusActive}, {ID: 8, Enabled: true, Status: StatusActive}},
+	}
+	// Resolve the requested group dynamically, as the SQL repository does.
+	taskRepo.group = nil
+	wake := &OpenAI5hWakeService{repo: &autoWakeGroupLookupRepo{openAI5hAutoWakeTaskRepoStub: taskRepo}, accountRepo: accountRepo}
+
+	err := wake.RunAutoWakeScan(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, accountRepo.calls, 2)
+	require.Equal(t, int64(4), accountRepo.calls[0].groupID)
+	require.Equal(t, int64(8), accountRepo.calls[1].groupID)
+}
+
+func TestOpenAI5hAutoWakeTriggerGroupCheckRunsImmediatelyAndStops(t *testing.T) {
+	baseRepo := &openAI5hAutoWakeTaskRepoStub{group: &OpenAI5hAutoWakeGroup{
+		ID: 15, Enabled: true, Status: StatusActive,
+	}}
+	repo := &openAI5hAutoWakeRuntimeRepo{
+		openAI5hAutoWakeTaskRepoStub: baseRepo,
+		checked:                      make(chan OpenAI5hAutoWakeCheckUpdate, 1),
+	}
+	wake := NewOpenAI5hWakeService(
+		repo,
+		&openAI5hAutoWakeAccountRepoStub{accountsByGroup: map[int64][]Account{}},
+		nil, nil, nil, nil, nil, nil,
+	)
+	wake.Start()
+	t.Cleanup(wake.Stop)
+
+	wake.TriggerGroupCheck(15)
+
+	select {
+	case update := <-repo.checked:
+		require.Equal(t, int64(15), update.GroupID)
+		require.Equal(t, OpenAI5hAutoWakeReasonNoCandidate, update.Reason)
+	case <-time.After(2 * time.Second):
+		t.Fatal("immediate OpenAI 5h group check was not processed")
+	}
+	wake.Stop()
+}
+
+type autoWakeGroupLookupRepo struct {
+	*openAI5hAutoWakeTaskRepoStub
+}
+
+func (r *autoWakeGroupLookupRepo) GetAutoWakeGroup(_ context.Context, groupID int64) (*OpenAI5hAutoWakeGroup, error) {
+	return &OpenAI5hAutoWakeGroup{ID: groupID, Enabled: true, Status: StatusActive}, nil
+}
+
+type openAI5hAutoWakeRuntimeRepo struct {
+	*openAI5hAutoWakeTaskRepoStub
+	checked chan OpenAI5hAutoWakeCheckUpdate
+}
+
+func (*openAI5hAutoWakeRuntimeRepo) ClaimTask(context.Context, string, time.Time, time.Time) (*OpenAI5hWakeTask, error) {
+	return nil, nil
+}
+
+func (*openAI5hAutoWakeRuntimeRepo) DeleteTerminalBefore(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
+
+func (r *openAI5hAutoWakeRuntimeRepo) UpdateAutoWakeGroupCheck(
+	_ context.Context,
+	update OpenAI5hAutoWakeCheckUpdate,
+) (bool, error) {
+	select {
+	case r.checked <- update:
+	default:
+	}
+	return true, nil
+}
+
+func int64Pointer(value int64) *int64 {
+	return &value
+}

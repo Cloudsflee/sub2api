@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -39,6 +40,9 @@ const (
 	openAI5hWakeClaimPoll             = 2 * time.Second
 	openAI5hWakeRetention             = 30 * 24 * time.Hour
 	openAI5hWakeCleanupInterval       = 24 * time.Hour
+	openAI5hAutoWakeScanInterval      = 5 * time.Minute
+	openAI5hAutoWakeLeaderLockTTL     = 15 * time.Minute
+	openAI5hAutoWakeLeaderLockKey     = "openai_5h_group_auto_wake_scan"
 	openAI5hWakeEventTimeout          = 3 * time.Second
 	openAI5hWakeEventMessageMax       = 2000
 	openAI5hWakeDiagnosticMax         = 600
@@ -138,12 +142,21 @@ type OpenAI5hWakeService struct {
 	auditService    *AuditLogService
 	agentIdentityWS agentIdentityWSConnectionInvalidator
 	agentIdentityMu sync.Mutex
+	lockCache       LeaderLockCache
+	db              *sql.DB
 
-	owner     string
-	startOnce sync.Once
-	notify    chan struct{}
-	runningMu sync.Mutex
-	running   map[int64]context.CancelFunc
+	owner         string
+	startOnce     sync.Once
+	stopOnce      sync.Once
+	parentCtx     context.Context
+	stop          context.CancelFunc
+	loopWG        sync.WaitGroup
+	taskWG        sync.WaitGroup
+	notify        chan struct{}
+	groupNotify   chan int64
+	upstreamSlots chan struct{}
+	runningMu     sync.Mutex
+	running       map[int64]context.CancelFunc
 }
 
 func NewOpenAI5hWakeService(
@@ -156,6 +169,7 @@ func NewOpenAI5hWakeService(
 	auditService *AuditLogService,
 	openAIGateway *OpenAIGatewayService,
 ) *OpenAI5hWakeService {
+	parentCtx, stop := context.WithCancel(context.Background())
 	service := &OpenAI5hWakeService{
 		repo:          repo,
 		accountRepo:   accountRepo,
@@ -165,7 +179,11 @@ func NewOpenAI5hWakeService(
 		tlsProfiles:   tlsProfiles,
 		auditService:  auditService,
 		owner:         uuid.NewString(),
+		parentCtx:     parentCtx,
+		stop:          stop,
 		notify:        make(chan struct{}, 1),
+		groupNotify:   make(chan int64, 1024),
+		upstreamSlots: make(chan struct{}, openAI5hWakeConcurrency),
 		running:       make(map[int64]context.CancelFunc),
 	}
 	if openAIGateway != nil {
@@ -183,8 +201,12 @@ func ProvideOpenAI5hWakeService(
 	tlsProfiles *TLSFingerprintProfileService,
 	auditService *AuditLogService,
 	openAIGateway *OpenAIGatewayService,
+	lockCache LeaderLockCache,
+	db *sql.DB,
 ) *OpenAI5hWakeService {
 	service := NewOpenAI5hWakeService(repo, accountRepo, quotaService, tokenProvider, httpUpstream, tlsProfiles, auditService, openAIGateway)
+	service.lockCache = lockCache
+	service.db = db
 	service.Start()
 	return service
 }
@@ -193,7 +215,41 @@ func (s *OpenAI5hWakeService) Start() {
 	if s == nil || s.repo == nil {
 		return
 	}
-	s.startOnce.Do(func() { go s.runWorker() })
+	s.startOnce.Do(func() {
+		s.loopWG.Add(2)
+		go func() {
+			defer s.loopWG.Done()
+			s.runWorker()
+		}()
+		go func() {
+			defer s.loopWG.Done()
+			s.runAutoWakeScheduler()
+		}()
+	})
+}
+
+func (s *OpenAI5hWakeService) Stop() {
+	if s == nil {
+		return
+	}
+	s.stopOnce.Do(func() {
+		if s.stop != nil {
+			s.stop()
+		}
+		s.loopWG.Wait()
+		s.taskWG.Wait()
+	})
+}
+
+func (s *OpenAI5hWakeService) TriggerGroupCheck(groupID int64) {
+	if s == nil || groupID <= 0 || s.groupNotify == nil {
+		return
+	}
+	select {
+	case s.groupNotify <- groupID:
+	default:
+		slog.Warn("openai_5h_auto_wake_check_queue_full", "group_id", groupID)
+	}
 }
 
 func (s *OpenAI5hWakeService) Preview(ctx context.Context) (*OpenAI5hWakePreview, error) {
@@ -221,6 +277,7 @@ func (s *OpenAI5hWakeService) CreateTask(ctx context.Context, requestedByUserID 
 		})
 	}
 	task, created, err := s.repo.CreateOrGetActive(ctx, OpenAI5hWakeCreateParams{
+		TriggerType:           OpenAI5hWakeTriggerManual,
 		EligibleAccountCount:  plan.preview.EligibleAccounts,
 		ActiveWindowCount:     plan.preview.ActiveWindows,
 		EstimatedRequestCount: plan.preview.EstimatedRequests,
@@ -323,11 +380,210 @@ func (s *OpenAI5hWakeService) signalWorker() {
 	}
 }
 
+func (s *OpenAI5hWakeService) runAutoWakeScheduler() {
+	ticker := time.NewTicker(openAI5hAutoWakeScanInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.serviceContext().Done():
+			return
+		case groupID := <-s.groupNotify:
+			ctx, cancel := context.WithTimeout(s.serviceContext(), openAI5hWakeClaimTimeout)
+			err := s.CheckGroupNow(ctx, groupID)
+			cancel()
+			if err != nil && !errors.Is(err, context.Canceled) {
+				slog.Warn("openai_5h_auto_wake_group_check_failed", "group_id", groupID, "error", err)
+			}
+		case <-ticker.C:
+			if err := s.RunAutoWakeScan(s.serviceContext()); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Warn("openai_5h_auto_wake_scan_failed", "error", err)
+			}
+		}
+	}
+}
+
+func (s *OpenAI5hWakeService) RunAutoWakeScan(ctx context.Context) error {
+	if s == nil || s.repo == nil {
+		return nil
+	}
+	release, acquired := tryAcquireSingletonLeaderLock(
+		ctx, s.lockCache, s.db, openAI5hAutoWakeLeaderLockKey, s.owner, openAI5hAutoWakeLeaderLockTTL,
+	)
+	if !acquired {
+		return nil
+	}
+	defer release()
+
+	scopedRepo, ok := s.repo.(OpenAI5hWakeScopedTaskRepository)
+	if !ok {
+		return nil
+	}
+	groups, err := scopedRepo.ListAutoWakeGroups(ctx)
+	if err != nil {
+		return fmt.Errorf("list OpenAI 5h auto-wake groups: %w", err)
+	}
+	for i := range groups {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := s.CheckGroupNow(ctx, groups[i].ID); err != nil {
+			slog.Warn("openai_5h_auto_wake_group_check_failed", "group_id", groups[i].ID, "error", err)
+		}
+	}
+	return nil
+}
+
+func (s *OpenAI5hWakeService) CheckGroupNow(ctx context.Context, groupID int64) error {
+	if s == nil || s.repo == nil || groupID <= 0 {
+		return nil
+	}
+	scopedRepo, ok := s.repo.(OpenAI5hWakeScopedTaskRepository)
+	if !ok {
+		return nil
+	}
+	group, err := scopedRepo.GetAutoWakeGroup(ctx, groupID)
+	if err != nil || group == nil {
+		return err
+	}
+	if !group.Enabled || group.Status != StatusActive {
+		return nil
+	}
+	checkedAt := time.Now().UTC()
+
+	manual, err := scopedRepo.GetActiveManualTask(ctx)
+	if err != nil {
+		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, err)
+	}
+	if manual != nil {
+		return s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
+			GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: 0,
+			Reason: OpenAI5hAutoWakeReasonSkippedManualActive,
+		})
+	}
+	active, err := scopedRepo.GetActiveGroupTask(ctx, groupID)
+	if err != nil {
+		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, err)
+	}
+	if active != nil {
+		return s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
+			GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: 0,
+			Reason: OpenAI5hAutoWakeReasonSkippedAutoActive,
+			TaskID: &active.ID, TaskStatus: active.Status,
+		})
+	}
+
+	plan, err := s.buildPlanForGroup(ctx, checkedAt, groupID)
+	if err != nil {
+		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, err)
+	}
+	candidates := openAI5hAutoWakeCandidateGroups(plan.groups, checkedAt)
+	if len(candidates) == 0 {
+		return s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
+			GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: 0,
+			Reason: OpenAI5hAutoWakeReasonNoCandidate,
+		})
+	}
+
+	seeds := make([]OpenAI5hWakeTaskItemSeed, 0, len(candidates))
+	eligibleAccounts := 0
+	for _, candidate := range candidates {
+		ids := make([]int64, 0, len(candidate.accounts))
+		for _, account := range candidate.accounts {
+			ids = append(ids, account.ID)
+		}
+		eligibleAccounts += len(ids)
+		seeds = append(seeds, OpenAI5hWakeTaskItemSeed{
+			IdentityHash: candidate.identityHash, MemberAccountIDs: ids,
+		})
+	}
+	task, created, err := s.repo.CreateOrGetActive(ctx, OpenAI5hWakeCreateParams{
+		TriggerType:           OpenAI5hWakeTriggerGroupAuto,
+		GroupID:               &groupID,
+		EligibleAccountCount:  eligibleAccounts,
+		ActiveWindowCount:     plan.preview.ActiveWindows,
+		EstimatedRequestCount: len(candidates),
+		Items:                 seeds,
+	})
+	if errors.Is(err, ErrOpenAI5hWakeManualTaskActive) {
+		return s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
+			GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: len(candidates),
+			Reason: OpenAI5hAutoWakeReasonSkippedManualActive,
+		})
+	}
+	if errors.Is(err, ErrOpenAI5hWakeGroupNotEligible) {
+		return nil
+	}
+	if err != nil {
+		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, err)
+	}
+	if task == nil {
+		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, errOpenAI5hWakeRepositoryContract)
+	}
+	reason := OpenAI5hAutoWakeReasonSkippedAutoActive
+	if created {
+		reason = OpenAI5hAutoWakeReasonTaskCreated
+		s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelInfo, "task_created", fmt.Sprintf(
+			"trigger=group_auto group_id=%d accounts=%d pools=%d estimated_requests=%d",
+			groupID, task.EligibleAccountCount, task.TotalItems, task.EstimatedRequestCount,
+		))
+		slog.Info("openai_5h_auto_wake_task_created", "group_id", groupID, "task_id", task.ID, "pools", task.TotalItems)
+	}
+	if err := s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
+		GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: len(candidates),
+		Reason: reason, TaskID: &task.ID, TaskStatus: task.Status,
+	}); err != nil {
+		return err
+	}
+	s.signalWorker()
+	return nil
+}
+
+func (s *OpenAI5hWakeService) recordAutoWakeCheckError(ctx context.Context, groupID int64, checkedAt time.Time, cause error) error {
+	scopedRepo, ok := s.repo.(OpenAI5hWakeScopedTaskRepository)
+	if !ok {
+		return cause
+	}
+	updateErr := s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
+		GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: 0,
+		Reason: OpenAI5hAutoWakeReasonCheckError,
+	})
+	if updateErr != nil {
+		return fmt.Errorf("record OpenAI 5h auto-wake check error: %w", updateErr)
+	}
+	return cause
+}
+
+func (s *OpenAI5hWakeService) updateAutoWakeGroupCheck(ctx context.Context, repo OpenAI5hWakeScopedTaskRepository, update OpenAI5hAutoWakeCheckUpdate) error {
+	updated, err := repo.UpdateAutoWakeGroupCheck(ctx, update)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return nil
+	}
+	return nil
+}
+
 func (s *OpenAI5hWakeService) buildPlan(ctx context.Context, now time.Time) (*openAI5hWakePlan, error) {
 	accounts, err := listOpenAI5hWakeAccounts(ctx, s.accountRepo)
 	if err != nil {
 		return nil, err
 	}
+	return buildOpenAI5hWakePlan(accounts, now), nil
+}
+
+func (s *OpenAI5hWakeService) buildPlanForGroup(ctx context.Context, now time.Time, groupID int64) (*openAI5hWakePlan, error) {
+	if s.accountRepo == nil {
+		return nil, errors.New("OpenAI 5h wake account repository is unavailable")
+	}
+	accounts, err := s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, groupID, PlatformOpenAI)
+	if err != nil {
+		return nil, err
+	}
+	return buildOpenAI5hWakePlan(accounts, now), nil
+}
+
+func buildOpenAI5hWakePlan(accounts []Account, now time.Time) *openAI5hWakePlan {
 	plan := &openAI5hWakePlan{}
 	plan.preview.TotalOpenAIAccounts = len(accounts)
 	eligible := make([]*Account, 0, len(accounts))
@@ -352,7 +608,18 @@ func (s *OpenAI5hWakeService) buildPlan(ctx context.Context, now time.Time) (*op
 		}
 	}
 	plan.preview.EstimatedRequests = plan.preview.UniqueQuotaPools - plan.preview.ActiveWindows
-	return plan, nil
+	return plan
+}
+
+func openAI5hAutoWakeCandidateGroups(groups []openAI5hWakeQuotaGroup, now time.Time) []openAI5hWakeQuotaGroup {
+	candidates := make([]openAI5hWakeQuotaGroup, 0, len(groups))
+	for _, group := range groups {
+		if _, _, active := activeWakeSnapshot(group.accounts, now); active {
+			continue
+		}
+		candidates = append(candidates, group)
+	}
+	return candidates
 }
 
 // openAI5hWakeAllStatusRepository is deliberately optional.  Most account
@@ -548,9 +815,12 @@ func (s *OpenAI5hWakeService) runWorker() {
 	defer cleanupTicker.Stop()
 	s.cleanupTasks()
 	for {
+		if s.serviceContext().Err() != nil {
+			return
+		}
 		claimStarted := time.Now()
 		now := claimStarted.UTC()
-		claimCtx, claimCancel := context.WithTimeout(context.Background(), openAI5hWakeClaimTimeout)
+		claimCtx, claimCancel := context.WithTimeout(s.serviceContext(), openAI5hWakeClaimTimeout)
 		task, err := s.repo.ClaimTask(claimCtx, s.owner, now, now.Add(openAI5hWakeLeaseDuration))
 		claimCancel()
 		if err != nil {
@@ -565,10 +835,25 @@ func (s *OpenAI5hWakeService) runWorker() {
 			s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelInfo, "task_claimed", fmt.Sprintf(
 				"processed=%d total=%d", task.ProcessedItems, task.TotalItems,
 			))
-			s.processTask(task)
+			if task.TriggerType == OpenAI5hWakeTriggerGroupAuto {
+				statusCtx, statusCancel := context.WithTimeout(s.serviceContext(), 3*time.Second)
+				if scopedRepo, ok := s.repo.(OpenAI5hWakeScopedTaskRepository); ok {
+					if statusErr := scopedRepo.UpdateAutoWakeTaskStatus(statusCtx, task.ID, task.Status); statusErr != nil {
+						slog.Warn("openai_5h_auto_wake_status_update_failed", "task_id", task.ID, "status", task.Status, "error", statusErr)
+					}
+				}
+				statusCancel()
+			}
+			s.taskWG.Add(1)
+			go func(claimed *OpenAI5hWakeTask) {
+				defer s.taskWG.Done()
+				s.processTask(claimed)
+			}(task)
 			continue
 		}
 		select {
+		case <-s.serviceContext().Done():
+			return
 		case <-s.notify:
 		case <-claimTicker.C:
 		case <-cleanupTicker.C:
@@ -586,7 +871,7 @@ func setOpenAI5hWakeLocalLeaseDeadline(task *OpenAI5hWakeTask, claimStarted time
 }
 
 func (s *OpenAI5hWakeService) cleanupTasks() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(s.serviceContext(), 30*time.Second)
 	defer cancel()
 	deleted, err := s.repo.DeleteTerminalBefore(ctx, time.Now().UTC().Add(-openAI5hWakeRetention))
 	if err != nil {
@@ -596,11 +881,18 @@ func (s *OpenAI5hWakeService) cleanupTasks() {
 	}
 }
 
+func (s *OpenAI5hWakeService) serviceContext() context.Context {
+	if s != nil && s.parentCtx != nil {
+		return s.parentCtx
+	}
+	return context.Background()
+}
+
 func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 	if task == nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(s.serviceContext())
 	s.runningMu.Lock()
 	// Tests and alternate wiring may construct the service as a struct literal
 	// instead of going through NewOpenAI5hWakeService. Keep task cancellation
@@ -704,8 +996,29 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 			go func() {
 				defer workers.Done()
 				for ctx.Err() == nil {
-					item, claimErr := s.repo.ClaimNextItem(ctx, task.ID, s.owner)
+					if !s.acquireOpenAI5hWakeUpstreamSlot(ctx) {
+						return
+					}
+					claimNow := time.Now().UTC()
+					var item *OpenAI5hWakeTaskItem
+					var claimErr error
+					if leaseRepo, leaseOK := s.repo.(OpenAI5hWakeLeaseTaskRepository); leaseOK {
+						item, claimErr = leaseRepo.ClaimNextItemWithLease(
+							ctx, task.ID, s.owner, claimNow, claimNow.Add(openAI5hWakeLeaseDuration),
+						)
+					} else {
+						item, claimErr = s.repo.ClaimNextItem(ctx, task.ID, s.owner)
+					}
 					if claimErr != nil {
+						s.releaseOpenAI5hWakeUpstreamSlot()
+						if errors.Is(claimErr, ErrOpenAI5hWakePoolLeaseContended) {
+							select {
+							case <-ctx.Done():
+								return
+							case <-time.After(openAI5hWakeClaimPoll):
+								continue
+							}
+						}
 						if ctx.Err() == nil {
 							if setFatal(claimErr) {
 								s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelError, "item_claim_failed", wakeEventErrorMessage(claimErr))
@@ -714,6 +1027,7 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 						return
 					}
 					if item == nil {
+						s.releaseOpenAI5hWakeUpstreamSlot()
 						return
 					}
 					s.recordTaskEvent(task.ID, &item.ID, OpenAI5hWakeEventLevelInfo, "item_started", fmt.Sprintf(
@@ -722,6 +1036,7 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 					itemCtx, itemCancel := context.WithTimeout(ctx, openAI5hWakeItemBudget(item))
 					result := s.processItem(itemCtx, item)
 					itemCancel()
+					s.releaseOpenAI5hWakeUpstreamSlot()
 					// Cancellation can arrive immediately after the upstream has
 					// confirmed a new window. Preserve that durable success so the
 					// side effect is not reported as an unaccounted cancellation.
@@ -806,6 +1121,15 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 		slog.Error("openai_5h_wake_finalize_failed", "task_id", task.ID, "error", err)
 		return
 	}
+	if finalTask.TriggerType == OpenAI5hWakeTriggerGroupAuto {
+		statusCtx, statusCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if scopedRepo, ok := s.repo.(OpenAI5hWakeScopedTaskRepository); ok {
+			if statusErr := scopedRepo.UpdateAutoWakeTaskStatus(statusCtx, finalTask.ID, finalTask.Status); statusErr != nil {
+				slog.Warn("openai_5h_auto_wake_status_update_failed", "task_id", finalTask.ID, "status", finalTask.Status, "error", statusErr)
+			}
+		}
+		statusCancel()
+	}
 	s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelInfo, "task_finished", fmt.Sprintf(
 		"status=%s woken=%d skipped_active=%d failed=%d cancelled=%d",
 		finalTask.Status, finalTask.WokenCount, finalTask.SkippedActiveCount, finalTask.FailedCount, finalTask.CancelledCount,
@@ -820,6 +1144,28 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 		"cancelled", finalTask.CancelledCount,
 		"alignment_span_seconds", finalTask.AlignmentSpanSeconds,
 	)
+}
+
+func (s *OpenAI5hWakeService) acquireOpenAI5hWakeUpstreamSlot(ctx context.Context) bool {
+	if s == nil || s.upstreamSlots == nil {
+		return true
+	}
+	select {
+	case s.upstreamSlots <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (s *OpenAI5hWakeService) releaseOpenAI5hWakeUpstreamSlot() {
+	if s == nil || s.upstreamSlots == nil {
+		return
+	}
+	select {
+	case <-s.upstreamSlots:
+	default:
+	}
 }
 
 func (s *OpenAI5hWakeService) monitorTask(

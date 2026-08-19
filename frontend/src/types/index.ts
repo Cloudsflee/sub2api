@@ -608,6 +608,12 @@ export interface Group {
 
 export interface AdminGroup extends Group {
   public_status_enabled: boolean
+  openai_5h_auto_wake_enabled: boolean
+  openai_5h_auto_wake_last_checked_at: string | null
+  openai_5h_auto_wake_last_candidate_pool_count: number | null
+  openai_5h_auto_wake_last_reason: string
+  openai_5h_auto_wake_last_task_id: number | null
+  openai_5h_auto_wake_last_task_status: string
   model_pricing: import('@/api/admin/channels').ChannelModelPricing[]
   // 分组利润控制（openai/anthropic/gemini/grok/antigravity 分组可启用；margin/buffer 为小数存储）。
   // 仅管理员可见：与 rate_multiplier 相乘即可反推上游成本上限，不得下放到 Group。
@@ -810,6 +816,7 @@ export interface CreateGroupRequest {
   models_list_config?: ModelsListConfig
   allow_messages_dispatch?: boolean
   allow_live?: boolean
+  openai_5h_auto_wake_enabled?: boolean
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
   model_routing?: Record<string, number[]> | null
@@ -873,6 +880,7 @@ export interface UpdateGroupRequest {
   models_list_config?: ModelsListConfig
   allow_messages_dispatch?: boolean
   allow_live?: boolean
+  openai_5h_auto_wake_enabled?: boolean
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
   model_routing?: Record<string, number[]> | null

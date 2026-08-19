@@ -13,6 +13,10 @@ const (
 	Label = "open_ai5h_wake_task"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldTriggerType holds the string denoting the trigger_type field in the database.
+	FieldTriggerType = "trigger_type"
+	// FieldGroupID holds the string denoting the group_id field in the database.
+	FieldGroupID = "group_id"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
 	// FieldEligibleAccountCount holds the string denoting the eligible_account_count field in the database.
@@ -64,6 +68,8 @@ const (
 // Columns holds all SQL columns for openai5hwaketask fields.
 var Columns = []string{
 	FieldID,
+	FieldTriggerType,
+	FieldGroupID,
 	FieldStatus,
 	FieldEligibleAccountCount,
 	FieldActiveWindowCount,
@@ -99,6 +105,10 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultTriggerType holds the default value on creation for the "trigger_type" field.
+	DefaultTriggerType string
+	// TriggerTypeValidator is a validator for the "trigger_type" field. It is called by the builders before save.
+	TriggerTypeValidator func(string) error
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
 	// StatusValidator is a validator for the "status" field. It is called by the builders before save.
@@ -139,6 +149,16 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByTriggerType orders the results by the trigger_type field.
+func ByTriggerType(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTriggerType, opts...).ToFunc()
+}
+
+// ByGroupID orders the results by the group_id field.
+func ByGroupID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldGroupID, opts...).ToFunc()
 }
 
 // ByStatus orders the results by the status field.

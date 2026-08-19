@@ -123,6 +123,18 @@ type Group struct {
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch,omitempty"`
 	// 是否允许此 OpenAI 分组访问 Live 接口
 	AllowLive bool `json:"allow_live,omitempty"`
+	// 是否为此 OpenAI 分组自动唤醒 5h 配额窗口
+	Openai5hAutoWakeEnabled bool `json:"openai_5h_auto_wake_enabled,omitempty"`
+	// Openai5hAutoWakeLastCheckedAt holds the value of the "openai_5h_auto_wake_last_checked_at" field.
+	Openai5hAutoWakeLastCheckedAt *time.Time `json:"openai_5h_auto_wake_last_checked_at,omitempty"`
+	// Openai5hAutoWakeLastCandidatePoolCount holds the value of the "openai_5h_auto_wake_last_candidate_pool_count" field.
+	Openai5hAutoWakeLastCandidatePoolCount *int `json:"openai_5h_auto_wake_last_candidate_pool_count,omitempty"`
+	// Openai5hAutoWakeLastReason holds the value of the "openai_5h_auto_wake_last_reason" field.
+	Openai5hAutoWakeLastReason *string `json:"openai_5h_auto_wake_last_reason,omitempty"`
+	// Openai5hAutoWakeLastTaskID holds the value of the "openai_5h_auto_wake_last_task_id" field.
+	Openai5hAutoWakeLastTaskID *int64 `json:"openai_5h_auto_wake_last_task_id,omitempty"`
+	// Openai5hAutoWakeLastTaskStatus holds the value of the "openai_5h_auto_wake_last_task_status" field.
+	Openai5hAutoWakeLastTaskStatus *string `json:"openai_5h_auto_wake_last_task_status,omitempty"`
 	// 仅允许非 apikey 类型账号关联到此分组
 	RequireOauthOnly bool `json:"require_oauth_only,omitempty"`
 	// 调度时仅允许 privacy 已成功设置的账号
@@ -253,15 +265,15 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case group.FieldVideoModelPrices, group.FieldModelPricing, group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig, group.FieldModelsListConfig, group.FieldReasoningEffortMappings:
 			values[i] = new([]byte)
-		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldPublicStatusEnabled, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldAllowLive, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
+		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldPublicStatusEnabled, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldAllowLive, group.FieldOpenai5hAutoWakeEnabled, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
 			values[i] = new(sql.NullBool)
 		case group.FieldRateMultiplier, group.FieldPeakRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldSearchPricePer1k, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour, group.FieldProfitMinMargin, group.FieldProfitSafetyBuffer:
 			values[i] = new(sql.NullFloat64)
-		case group.FieldID, group.FieldDefaultValidityDays, group.FieldFallbackGroupID, group.FieldFallbackGroupIDOnInvalidRequest, group.FieldSortOrder, group.FieldRpmLimit:
+		case group.FieldID, group.FieldDefaultValidityDays, group.FieldFallbackGroupID, group.FieldFallbackGroupIDOnInvalidRequest, group.FieldSortOrder, group.FieldOpenai5hAutoWakeLastCandidatePoolCount, group.FieldOpenai5hAutoWakeLastTaskID, group.FieldRpmLimit:
 			values[i] = new(sql.NullInt64)
-		case group.FieldName, group.FieldDescription, group.FieldPeakStart, group.FieldPeakEnd, group.FieldStatus, group.FieldDuplicateOperationID, group.FieldPlatform, group.FieldSubscriptionType, group.FieldDefaultMappedModel, group.FieldMaxReasoningEffort:
+		case group.FieldName, group.FieldDescription, group.FieldPeakStart, group.FieldPeakEnd, group.FieldStatus, group.FieldDuplicateOperationID, group.FieldPlatform, group.FieldSubscriptionType, group.FieldOpenai5hAutoWakeLastReason, group.FieldOpenai5hAutoWakeLastTaskStatus, group.FieldDefaultMappedModel, group.FieldMaxReasoningEffort:
 			values[i] = new(sql.NullString)
-		case group.FieldCreatedAt, group.FieldUpdatedAt, group.FieldDeletedAt:
+		case group.FieldCreatedAt, group.FieldUpdatedAt, group.FieldDeletedAt, group.FieldOpenai5hAutoWakeLastCheckedAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -623,6 +635,47 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.AllowLive = value.Bool
 			}
+		case group.FieldOpenai5hAutoWakeEnabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field openai_5h_auto_wake_enabled", values[i])
+			} else if value.Valid {
+				_m.Openai5hAutoWakeEnabled = value.Bool
+			}
+		case group.FieldOpenai5hAutoWakeLastCheckedAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field openai_5h_auto_wake_last_checked_at", values[i])
+			} else if value.Valid {
+				_m.Openai5hAutoWakeLastCheckedAt = new(time.Time)
+				*_m.Openai5hAutoWakeLastCheckedAt = value.Time
+			}
+		case group.FieldOpenai5hAutoWakeLastCandidatePoolCount:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field openai_5h_auto_wake_last_candidate_pool_count", values[i])
+			} else if value.Valid {
+				_m.Openai5hAutoWakeLastCandidatePoolCount = new(int)
+				*_m.Openai5hAutoWakeLastCandidatePoolCount = int(value.Int64)
+			}
+		case group.FieldOpenai5hAutoWakeLastReason:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field openai_5h_auto_wake_last_reason", values[i])
+			} else if value.Valid {
+				_m.Openai5hAutoWakeLastReason = new(string)
+				*_m.Openai5hAutoWakeLastReason = value.String
+			}
+		case group.FieldOpenai5hAutoWakeLastTaskID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field openai_5h_auto_wake_last_task_id", values[i])
+			} else if value.Valid {
+				_m.Openai5hAutoWakeLastTaskID = new(int64)
+				*_m.Openai5hAutoWakeLastTaskID = value.Int64
+			}
+		case group.FieldOpenai5hAutoWakeLastTaskStatus:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field openai_5h_auto_wake_last_task_status", values[i])
+			} else if value.Valid {
+				_m.Openai5hAutoWakeLastTaskStatus = new(string)
+				*_m.Openai5hAutoWakeLastTaskStatus = value.String
+			}
 		case group.FieldRequireOauthOnly:
 			if value, ok := values[i].(*sql.NullBool); !ok {
 				return fmt.Errorf("unexpected type %T for field require_oauth_only", values[i])
@@ -964,6 +1017,34 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("allow_live=")
 	builder.WriteString(fmt.Sprintf("%v", _m.AllowLive))
+	builder.WriteString(", ")
+	builder.WriteString("openai_5h_auto_wake_enabled=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Openai5hAutoWakeEnabled))
+	builder.WriteString(", ")
+	if v := _m.Openai5hAutoWakeLastCheckedAt; v != nil {
+		builder.WriteString("openai_5h_auto_wake_last_checked_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
+	builder.WriteString(", ")
+	if v := _m.Openai5hAutoWakeLastCandidatePoolCount; v != nil {
+		builder.WriteString("openai_5h_auto_wake_last_candidate_pool_count=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.Openai5hAutoWakeLastReason; v != nil {
+		builder.WriteString("openai_5h_auto_wake_last_reason=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.Openai5hAutoWakeLastTaskID; v != nil {
+		builder.WriteString("openai_5h_auto_wake_last_task_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.Openai5hAutoWakeLastTaskStatus; v != nil {
+		builder.WriteString("openai_5h_auto_wake_last_task_status=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	builder.WriteString("require_oauth_only=")
 	builder.WriteString(fmt.Sprintf("%v", _m.RequireOauthOnly))

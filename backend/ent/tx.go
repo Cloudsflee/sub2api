@@ -52,6 +52,8 @@ type Tx struct {
 	IdempotencyRecord *IdempotencyRecordClient
 	// IdentityAdoptionDecision is the client for interacting with the IdentityAdoptionDecision builders.
 	IdentityAdoptionDecision *IdentityAdoptionDecisionClient
+	// OpenAI5hWakePoolLease is the client for interacting with the OpenAI5hWakePoolLease builders.
+	OpenAI5hWakePoolLease *OpenAI5hWakePoolLeaseClient
 	// OpenAI5hWakeTask is the client for interacting with the OpenAI5hWakeTask builders.
 	OpenAI5hWakeTask *OpenAI5hWakeTaskClient
 	// OpenAI5hWakeTaskItem is the client for interacting with the OpenAI5hWakeTaskItem builders.
@@ -246,6 +248,7 @@ func (tx *Tx) init() {
 	tx.Group = NewGroupClient(tx.config)
 	tx.IdempotencyRecord = NewIdempotencyRecordClient(tx.config)
 	tx.IdentityAdoptionDecision = NewIdentityAdoptionDecisionClient(tx.config)
+	tx.OpenAI5hWakePoolLease = NewOpenAI5hWakePoolLeaseClient(tx.config)
 	tx.OpenAI5hWakeTask = NewOpenAI5hWakeTaskClient(tx.config)
 	tx.OpenAI5hWakeTaskItem = NewOpenAI5hWakeTaskItemClient(tx.config)
 	tx.PaymentAuditLog = NewPaymentAuditLogClient(tx.config)

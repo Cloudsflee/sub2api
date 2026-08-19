@@ -838,6 +838,33 @@ export default {
         privacySetOnlyEnabled: 'Enabled — accounts with unset Privacy will be excluded',
         disabled: 'Disabled'
       },
+      openAI5hAutoWake: {
+        title: 'OpenAI 5h auto wake',
+        enabled: 'Enabled',
+        disabled: 'Disabled',
+        paused: 'Paused',
+        lastChecked: 'Last checked',
+        neverChecked: 'Not checked yet',
+        candidatePools: 'Candidate quota pools',
+        lastTask: 'Last task',
+        reason: 'Last result',
+        notAvailable: 'Not available',
+        reasons: {
+          no_candidate: 'No candidate quota pool',
+          task_created: 'Task created',
+          skipped_manual_active: 'Skipped while a manual task is active',
+          skipped_auto_active: 'Skipped while this group task is active',
+          check_error: 'Check failed'
+        },
+        statuses: {
+          pending: 'Pending',
+          running: 'Running',
+          succeeded: 'Succeeded',
+          partial_succeeded: 'Partially succeeded',
+          failed: 'Failed',
+          cancelled: 'Cancelled'
+        }
+      },
       form: {
         name: 'Name',
         description: 'Description',
