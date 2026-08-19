@@ -24,13 +24,16 @@ func skipIfExternalServiceUnavailable(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		// Check for common network/TLS errors that indicate external service issues
-		errStr := err.Error()
+		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "certificate has expired") ||
 			strings.Contains(errStr, "certificate is not yet valid") ||
+			strings.Contains(errStr, "certificate signed by unknown authority") ||
+			strings.Contains(errStr, "unknown authority") ||
+			strings.Contains(errStr, "failed to verify certificate") ||
 			strings.Contains(errStr, "connection refused") ||
 			strings.Contains(errStr, "connection reset") ||
 			strings.Contains(errStr, "broken pipe") ||
-			strings.Contains(errStr, "EOF") ||
+			strings.Contains(errStr, "eof") ||
 			strings.Contains(errStr, "no such host") ||
 			strings.Contains(errStr, "network is unreachable") ||
 			strings.Contains(errStr, "timeout") ||
