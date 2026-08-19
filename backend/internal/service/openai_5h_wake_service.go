@@ -477,6 +477,28 @@ func (s *OpenAI5hWakeService) CheckGroupNow(ctx context.Context, groupID int64) 
 		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, err)
 	}
 	candidates := openAI5hAutoWakeCandidateGroups(plan.groups, checkedAt)
+	if windowRepo, supportsWindowHistory := s.repo.(OpenAI5hWakeWindowRepository); supportsWindowHistory && len(candidates) > 0 {
+		identityHashes := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			identityHashes = append(identityHashes, candidate.identityHash)
+		}
+		activeResets, historyErr := windowRepo.ListActiveWakePoolResets(ctx, identityHashes, checkedAt)
+		if historyErr != nil {
+			return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, historyErr)
+		}
+		if len(activeResets) > 0 {
+			filtered := make([]openAI5hWakeQuotaGroup, 0, len(candidates))
+			for _, candidate := range candidates {
+				resetAt, active := activeResets[candidate.identityHash]
+				if active && resetAt.After(checkedAt) {
+					plan.preview.ActiveWindows++
+					continue
+				}
+				filtered = append(filtered, candidate)
+			}
+			candidates = filtered
+		}
+	}
 	if len(candidates) == 0 {
 		return s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
 			GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: 0,
@@ -1567,6 +1589,16 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 		result.SuccessfulAccountID = &successID
 		return result
 	}
+	if resetAt, historyErr := s.lookupActiveWakePoolReset(ctx, item.IdentityHash, now); historyErr != nil {
+		result.ErrorCode = "history_check_failed"
+		return result
+	} else if resetAt != nil {
+		result.Status = OpenAI5hWakeItemStatusSkippedActive
+		result.ResetAt = resetAt
+		successID := candidates[0].ID
+		result.SuccessfulAccountID = &successID
+		return result
+	}
 
 	type acceptedWakeRequest struct {
 		accountID int64
@@ -1641,6 +1673,20 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 				"usage_check_failed", "usage_check", 0, lastErrorCode,
 				wakeEventErrorMessage(queryErr),
 			)
+		}
+		if historicalReset, historyErr := s.lookupActiveWakePoolReset(attemptCtx, item.IdentityHash, time.Now().UTC()); historyErr != nil {
+			lastErrorCode = "history_check_failed"
+			recordAttemptFailure("history_check", 0, lastErrorCode, wakeEventErrorMessage(historyErr))
+			attemptCancel()
+			result.ErrorCode = lastErrorCode
+			return result
+		} else if historicalReset != nil {
+			attemptCancel()
+			result.Status = OpenAI5hWakeItemStatusSkippedActive
+			result.ResetAt = historicalReset
+			successID := candidates[0].ID
+			result.SuccessfulAccountID = &successID
+			return result
 		}
 		usedPercent, hasUsedPercent := openAIWakeUsedPercent(usageUpdates)
 		if queryErr == nil && resetAt != nil && resetAt.After(time.Now()) && hasUsedPercent && usedPercent > 0 {
@@ -1744,6 +1790,7 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 		if wakeResult.statusCode == http.StatusUnauthorized {
 			lastErrorCode = "unauthorized"
 			wakeError = lastErrorCode
+			s.handlePermanentWakeAuthFailure(attemptCtx, requestAccount, wakeResult.upstreamErrorCode)
 			recordRequestFailure()
 			recordAttemptFailure(wakePhase, wakeResult.statusCode, lastErrorCode, wakeResult.diagnostic, wakeResult.contentType)
 			attemptCancel()
@@ -1843,6 +1890,58 @@ func (s *OpenAI5hWakeService) processItem(ctx context.Context, item *OpenAI5hWak
 	}
 	result.ErrorCode = wakeErrorCode(ctx, lastErrorCode)
 	return result
+}
+
+func (s *OpenAI5hWakeService) handlePermanentWakeAuthFailure(ctx context.Context, account *Account, errorCode string) {
+	if s == nil || s.accountRepo == nil || account == nil {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(errorCode)) {
+	case "token_invalidated", "token_revoked":
+	default:
+		return
+	}
+	repo, ok := s.accountRepo.(OpenAI5hWakeCredentialRepository)
+	if !ok {
+		return
+	}
+	message := "OpenAI 5h wake authentication token was revoked"
+	updated, err := repo.SetOpenAI5hWakeCredentialErrorIfUnchanged(ctx, account.ID, account.Credentials, message)
+	if err != nil {
+		slog.Warn("openai_5h_wake_credential_error_persist_failed", "account_id", account.ID, "error", err)
+		return
+	}
+	if updated {
+		slog.Warn("openai_5h_wake_account_disabled", "account_id", account.ID, "error_code", strings.ToLower(strings.TrimSpace(errorCode)))
+	}
+}
+
+// lookupActiveWakePoolReset rechecks durable task history after a pool lease
+// becomes available. A competing task releases its lease as soon as it records
+// a successful wake, so a waiter must consult the persisted reset window before
+// issuing another upstream request.
+func (s *OpenAI5hWakeService) lookupActiveWakePoolReset(
+	ctx context.Context,
+	identityHash string,
+	now time.Time,
+) (*time.Time, error) {
+	if s == nil || s.repo == nil || strings.TrimSpace(identityHash) == "" {
+		return nil, nil
+	}
+	windowRepo, ok := s.repo.(OpenAI5hWakeWindowRepository)
+	if !ok {
+		return nil, nil
+	}
+	resets, err := windowRepo.ListActiveWakePoolResets(ctx, []string{identityHash}, now)
+	if err != nil {
+		return nil, err
+	}
+	resetAt, ok := resets[identityHash]
+	if !ok || !resetAt.After(now) {
+		return nil, nil
+	}
+	resetAt = resetAt.UTC()
+	return &resetAt, nil
 }
 
 func openAI5hWakeItemBudget(item *OpenAI5hWakeTaskItem) time.Duration {
@@ -2006,8 +2105,11 @@ type openAI5hWakeHTTPResult struct {
 	contentType string
 	phase       string
 	diagnostic  string
-	updates     map[string]any
-	resetAt     *time.Time
+	// upstreamErrorCode is parsed from the bounded response body and is used
+	// only for credential-state handling; the body itself is never retained.
+	upstreamErrorCode string
+	updates           map[string]any
+	resetAt           *time.Time
 	// requestAccount is the durable account snapshot paired with the exact
 	// authentication token and request headers sent upstream. Any response
 	// snapshot must use this identity for its repository CAS.
@@ -2200,6 +2302,7 @@ func (s *OpenAI5hWakeService) sendMinimumWakeRequest(ctx context.Context, accoun
 			result.err = bodyErr
 			return result
 		}
+		result.upstreamErrorCode = strings.ToLower(strings.TrimSpace(extractUpstreamErrorCode(body)))
 		if requestAccount.IsOpenAIAgentIdentity() && !recovered && resp.StatusCode >= 400 && result.resetAt == nil {
 			if isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
 				recovered = true

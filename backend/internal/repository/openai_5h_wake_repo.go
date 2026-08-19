@@ -318,6 +318,41 @@ func (r *openAI5hWakeRepository) GetActiveGroupTask(ctx context.Context, groupID
 	return r.getActiveTask(ctx, service.OpenAI5hWakeTriggerGroupAuto, &groupID)
 }
 
+func (r *openAI5hWakeRepository) ListActiveWakePoolResets(
+	ctx context.Context,
+	identityHashes []string,
+	now time.Time,
+) (map[string]time.Time, error) {
+	active := make(map[string]time.Time)
+	if len(identityHashes) == 0 {
+		return active, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT identity_hash, MAX(reset_at) AS reset_at
+FROM openai_5h_wake_task_items
+WHERE identity_hash = ANY($1)
+  AND status IN ('woken', 'skipped_active')
+  AND reset_at IS NOT NULL
+  AND reset_at > $2
+GROUP BY identity_hash`, pq.Array(identityHashes), now)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var identityHash string
+		var resetAt time.Time
+		if err := rows.Scan(&identityHash, &resetAt); err != nil {
+			return nil, err
+		}
+		active[identityHash] = resetAt.UTC()
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return active, nil
+}
+
 func (r *openAI5hWakeRepository) ListAutoWakeGroups(ctx context.Context) ([]service.OpenAI5hAutoWakeGroup, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, openai_5h_auto_wake_enabled, status

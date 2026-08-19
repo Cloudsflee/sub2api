@@ -171,6 +171,52 @@ func TestAccountRepository_SetGrokOAuthErrorIfCredentialsUnchanged_AppliedWrites
 	require.Contains(t, normalized, "SELECT $8, updated.id, NULL, NULL FROM updated")
 }
 
+func TestAccountRepository_SetOpenAI5hWakeCredentialErrorIfUnchangedUsesAtomicCAS(t *testing.T) {
+	tests := []struct {
+		name     string
+		affected int64
+		applied  bool
+	}{
+		{name: "credential changed", affected: 0, applied: false},
+		{name: "credential still current", affected: 1, applied: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exec := &recordingSQLExecutor{result: rowsAffectedResult(tt.affected)}
+			repo := newAccountRepositoryWithSQL(nil, exec, nil)
+			credentials := map[string]any{
+				"access_token":   "observed-access",
+				"refresh_token":  "observed-refresh",
+				"_token_version": int64(12),
+			}
+
+			applied, err := repo.SetOpenAI5hWakeCredentialErrorIfUnchanged(
+				context.Background(), 42, credentials, "OpenAI 5h wake authentication token was revoked",
+			)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.applied, applied)
+			require.Len(t, exec.execQueries, 1, "the CAS update and scheduler outbox insert must be one statement")
+			normalized := normalizeSQLWhitespace(exec.execQueries[0])
+			require.Contains(t, normalized, "WITH updated AS")
+			require.Contains(t, normalized, "a.platform = $4")
+			require.Contains(t, normalized, "a.type = $5")
+			require.Contains(t, normalized, "a.status = $6")
+			require.Contains(t, normalized, "a.credentials = $7::jsonb")
+			require.Contains(t, normalized, "schedulable = FALSE")
+			require.Contains(t, normalized, "INSERT INTO scheduler_outbox")
+			require.Contains(t, normalized, "SELECT $8, updated.id, NULL, NULL FROM updated")
+			require.Len(t, exec.execArgs[0], 8)
+			require.Equal(t, service.PlatformOpenAI, exec.execArgs[0][3])
+			require.Equal(t, service.AccountTypeOAuth, exec.execArgs[0][4])
+			require.Equal(t, service.StatusActive, exec.execArgs[0][5])
+			require.Contains(t, exec.execArgs[0][6], `"_token_version":12`)
+			require.Equal(t, service.SchedulerOutboxEventAccountChanged, exec.execArgs[0][7])
+		})
+	}
+}
+
 func TestAccountRepository_SetGrokOAuthRefreshErrorIfCredentialsUnchanged_UsesAttemptCredentialsAndProxy(t *testing.T) {
 	exec := &recordingSQLExecutor{result: rowsAffectedResult(0)}
 	repo := newAccountRepositoryWithSQL(nil, exec, nil)

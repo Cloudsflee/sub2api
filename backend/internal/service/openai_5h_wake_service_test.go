@@ -189,6 +189,9 @@ type openAI5hWakeWorkerRepo struct {
 	task            *OpenAI5hWakeTask
 	items           []*OpenAI5hWakeTaskItem
 	events          []*OpenAI5hWakeTaskEvent
+	activeResets    map[string]time.Time
+	activeResetsErr error
+	activeResetsFn  func(context.Context, []string, time.Time) (map[string]time.Time, error)
 	completeErr     error
 	cancelRequested bool
 	cancelErr       error
@@ -197,6 +200,28 @@ type openAI5hWakeWorkerRepo struct {
 	appendEventFn   func(OpenAI5hWakeTaskEventParams)
 	finalizeCalls   int
 	createCalls     int
+}
+
+func (r *openAI5hWakeWorkerRepo) ListActiveWakePoolResets(
+	ctx context.Context,
+	identityHashes []string,
+	now time.Time,
+) (map[string]time.Time, error) {
+	r.mu.Lock()
+	fn := r.activeResetsFn
+	err := r.activeResetsErr
+	resets := make(map[string]time.Time, len(r.activeResets))
+	for identityHash, resetAt := range r.activeResets {
+		resets[identityHash] = resetAt
+	}
+	r.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, identityHashes, now)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return resets, nil
 }
 
 type nilTaskOpenAI5hWakeRepo struct {
@@ -1808,6 +1833,143 @@ func TestOpenAI5hWakePreservesAuthErrorWhenErrorResponseHasRateLimitHeaders(t *t
 
 	require.Equal(t, OpenAI5hWakeItemStatusFailed, result.Status)
 	require.Equal(t, "unauthorized", result.ErrorCode)
+}
+
+type openAI5hWakeCredentialRepoStub struct {
+	*openAI5hWakeAccountRepoStub
+	calls []struct {
+		id          int64
+		credentials map[string]any
+		message     string
+	}
+}
+
+func (r *openAI5hWakeCredentialRepoStub) SetOpenAI5hWakeCredentialErrorIfUnchanged(
+	_ context.Context,
+	id int64,
+	credentials map[string]any,
+	message string,
+) (bool, error) {
+	r.calls = append(r.calls, struct {
+		id          int64
+		credentials map[string]any
+		message     string
+	}{id: id, credentials: credentials, message: message})
+	return true, nil
+}
+
+func TestOpenAI5hWakeDisablesTokenInvalidatedAccount(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	baseRepo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{account.ID: account}}
+	repo := &openAI5hWakeCredentialRepoStub{openAI5hWakeAccountRepoStub: baseRepo}
+	upstream := &openAI5hWakeHTTPStub{responses: []openAI5hWakeStubResponse{{
+		status: http.StatusUnauthorized,
+		body:   `{"error":{"code":"token_invalidated","message":"token is invalid"}}`,
+	}}}
+	wake := &OpenAI5hWakeService{
+		accountRepo:   repo,
+		tokenProvider: NewOpenAITokenProvider(repo, nil, nil),
+		httpUpstream:  upstream,
+	}
+	group := buildOpenAI5hWakeQuotaGroups([]*Account{account})[0]
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, IdentityHash: group.identityHash, MemberAccountIDs: []int64{account.ID},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusFailed, result.Status)
+	require.Equal(t, "unauthorized", result.ErrorCode)
+	require.Len(t, repo.calls, 1)
+	require.Equal(t, account.ID, repo.calls[0].id)
+	require.Equal(t, "OpenAI 5h wake authentication token was revoked", repo.calls[0].message)
+}
+
+func TestOpenAI5hWakeProcessItemSkipsDurableActiveWindowBeforeUpstream(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	accountRepo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{account.ID: account}}
+	identityHash := openAI5hWakeIdentityHash(account)
+	eventRepo := &openAI5hWakeWorkerRepo{
+		activeResets: map[string]time.Time{identityHash: time.Now().UTC().Add(4 * time.Hour)},
+	}
+	upstream := &openAI5hWakeHTTPStub{}
+	wake := &OpenAI5hWakeService{
+		repo:          eventRepo,
+		accountRepo:   accountRepo,
+		tokenProvider: NewOpenAITokenProvider(accountRepo, nil, nil),
+		httpUpstream:  upstream,
+	}
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, TaskID: 7, IdentityHash: identityHash, MemberAccountIDs: []int64{account.ID},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusSkippedActive, result.Status)
+	require.NotNil(t, result.ResetAt)
+	require.Equal(t, account.ID, *result.SuccessfulAccountID)
+	require.Empty(t, result.ErrorCode)
+	require.Empty(t, upstream.requests, "a durable reset window must prevent a duplicate wake request")
+}
+
+func TestOpenAI5hWakeProcessItemStopsWhenDurableHistoryLookupFails(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	accountRepo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{account.ID: account}}
+	eventRepo := &openAI5hWakeWorkerRepo{activeResetsErr: errors.New("history unavailable")}
+	upstream := &openAI5hWakeHTTPStub{}
+	wake := &OpenAI5hWakeService{
+		repo:          eventRepo,
+		accountRepo:   accountRepo,
+		tokenProvider: NewOpenAITokenProvider(accountRepo, nil, nil),
+		httpUpstream:  upstream,
+	}
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, TaskID: 7, IdentityHash: openAI5hWakeIdentityHash(account), MemberAccountIDs: []int64{account.ID},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusFailed, result.Status)
+	require.Equal(t, "history_check_failed", result.ErrorCode)
+	require.Empty(t, upstream.requests, "history errors must fail closed before the wake request")
+}
+
+func TestOpenAI5hWakeProcessItemRechecksDurableHistoryAfterProbe(t *testing.T) {
+	account := newOpenAI5hWakeAccount(1, "pool")
+	accountRepo := &openAI5hWakeAccountRepoStub{accounts: map[int64]*Account{account.ID: account}}
+	identityHash := openAI5hWakeIdentityHash(account)
+	var historyCalls atomic.Int32
+	eventRepo := &openAI5hWakeWorkerRepo{}
+	eventRepo.activeResetsFn = func(_ context.Context, _ []string, _ time.Time) (map[string]time.Time, error) {
+		if historyCalls.Add(1) < 2 {
+			return nil, nil
+		}
+		return map[string]time.Time{identityHash: time.Now().UTC().Add(4 * time.Hour)}, nil
+	}
+	usageCalls := atomic.Int32{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		usageCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"rate_limit":null}`)
+	}))
+	defer server.Close()
+	tokenProvider := NewOpenAITokenProvider(accountRepo, nil, nil)
+	quota := NewOpenAIQuotaService(accountRepo, nil, tokenProvider, newQuotaRedirectingFactory(server))
+	upstream := &openAI5hWakeHTTPStub{}
+	wake := &OpenAI5hWakeService{
+		repo:          eventRepo,
+		accountRepo:   accountRepo,
+		quotaService:  quota,
+		tokenProvider: tokenProvider,
+		httpUpstream:  upstream,
+	}
+
+	result := wake.processItem(context.Background(), &OpenAI5hWakeTaskItem{
+		ID: 1, TaskID: 7, IdentityHash: identityHash, MemberAccountIDs: []int64{account.ID},
+	})
+
+	require.Equal(t, OpenAI5hWakeItemStatusSkippedActive, result.Status)
+	require.NotNil(t, result.ResetAt)
+	require.GreaterOrEqual(t, historyCalls.Load(), int32(2))
+	require.Equal(t, int32(1), usageCalls.Load())
+	require.Empty(t, upstream.requests, "a competing task completing during the probe must suppress the wake request")
 }
 
 func TestOpenAI5hWakeProcessItemReportsTimeoutWithoutMutatingAccountHealth(t *testing.T) {

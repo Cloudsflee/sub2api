@@ -681,6 +681,12 @@ func TestOpenAI5hWakeMigrationEnforcesDurabilityConstraints(t *testing.T) {
 	require.Contains(t, autoWakeSQL, "identity_hash VARCHAR(64) NOT NULL UNIQUE")
 	require.Contains(t, autoWakeSQL, "task_id BIGINT NOT NULL REFERENCES openai_5h_wake_tasks(id) ON DELETE CASCADE")
 	require.Contains(t, autoWakeSQL, "item_id BIGINT NOT NULL REFERENCES openai_5h_wake_task_items(id) ON DELETE CASCADE")
+
+	activeHistoryMigration, err := os.ReadFile("../../migrations/229_openai_5h_wake_active_pool_history_idx.sql")
+	require.NoError(t, err)
+	activeHistorySQL := string(activeHistoryMigration)
+	require.Contains(t, activeHistorySQL, "openai_5h_wake_task_items_active_pool_history_idx")
+	require.Contains(t, activeHistorySQL, "status IN ('woken', 'skipped_active')")
 }
 
 func TestOpenAI5hWakeGetLatestTaskOnlyReturnsManualTasks(t *testing.T) {
@@ -699,6 +705,27 @@ func TestOpenAI5hWakeGetLatestTaskOnlyReturnsManualTasks(t *testing.T) {
 	require.NotNil(t, task)
 	require.Equal(t, int64(31), task.ID)
 	require.Equal(t, service.OpenAI5hWakeTriggerManual, task.TriggerType)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpenAI5hWakeListsRecentlyConfirmedPoolResets(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo, ok := NewOpenAI5hWakeTaskRepository(db).(*openAI5hWakeRepository)
+	require.True(t, ok)
+	now := time.Now().UTC().Truncate(time.Second)
+	resetAt := now.Add(2 * time.Hour)
+
+	mock.ExpectQuery(`(?s)FROM openai_5h_wake_task_items.*status IN \('woken', 'skipped_active'\).*reset_at > \$2.*GROUP BY identity_hash`).
+		WithArgs(pq.Array([]string{"pool-a", "pool-b"}), now).
+		WillReturnRows(sqlmock.NewRows([]string{"identity_hash", "reset_at"}).
+			AddRow("pool-a", resetAt))
+
+	resets, err := repo.ListActiveWakePoolResets(context.Background(), []string{"pool-a", "pool-b"}, now)
+	require.NoError(t, err)
+	require.Equal(t, resetAt, resets["pool-a"])
+	require.NotContains(t, resets, "pool-b")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

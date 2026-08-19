@@ -36,14 +36,15 @@ func (r *openAI5hAutoWakeAccountRepoStub) ListSchedulableByGroupIDAndPlatform(
 
 type openAI5hAutoWakeTaskRepoStub struct {
 	OpenAI5hWakeTaskRepository
-	group       *OpenAI5hAutoWakeGroup
-	groups      []OpenAI5hAutoWakeGroup
-	manual      *OpenAI5hWakeTask
-	active      *OpenAI5hWakeTask
-	createFn    func(OpenAI5hWakeCreateParams) (*OpenAI5hWakeTask, bool, error)
-	createCalls []OpenAI5hWakeCreateParams
-	updates     []OpenAI5hAutoWakeCheckUpdate
-	events      []OpenAI5hWakeTaskEventParams
+	group        *OpenAI5hAutoWakeGroup
+	groups       []OpenAI5hAutoWakeGroup
+	manual       *OpenAI5hWakeTask
+	active       *OpenAI5hWakeTask
+	activeResets map[string]time.Time
+	createFn     func(OpenAI5hWakeCreateParams) (*OpenAI5hWakeTask, bool, error)
+	createCalls  []OpenAI5hWakeCreateParams
+	updates      []OpenAI5hAutoWakeCheckUpdate
+	events       []OpenAI5hWakeTaskEventParams
 }
 
 func (r *openAI5hAutoWakeTaskRepoStub) CreateOrGetActive(
@@ -77,6 +78,14 @@ func (r *openAI5hAutoWakeTaskRepoStub) GetActiveManualTask(context.Context) (*Op
 
 func (r *openAI5hAutoWakeTaskRepoStub) GetActiveGroupTask(context.Context, int64) (*OpenAI5hWakeTask, error) {
 	return r.active, nil
+}
+
+func (r *openAI5hAutoWakeTaskRepoStub) ListActiveWakePoolResets(
+	context.Context,
+	[]string,
+	time.Time,
+) (map[string]time.Time, error) {
+	return r.activeResets, nil
 }
 
 func (r *openAI5hAutoWakeTaskRepoStub) ListAutoWakeGroups(context.Context) ([]OpenAI5hAutoWakeGroup, error) {
@@ -164,6 +173,27 @@ func TestOpenAI5hAutoWakeCheckDoesNotCreateEmptyTask(t *testing.T) {
 	require.Len(t, taskRepo.updates, 1)
 	require.Equal(t, OpenAI5hAutoWakeReasonNoCandidate, taskRepo.updates[0].Reason)
 	require.Zero(t, taskRepo.updates[0].CandidatePoolCount)
+}
+
+func TestOpenAI5hAutoWakeCheckHonorsRecentTaskReset(t *testing.T) {
+	now := time.Now().UTC()
+	candidate := *newOpenAI5hWakeAccount(1, "recently-woken-pool")
+	identityHash := openAI5hWakeIdentityHash(&candidate)
+	accountRepo := &openAI5hAutoWakeAccountRepoStub{accountsByGroup: map[int64][]Account{
+		9: {candidate},
+	}}
+	taskRepo := &openAI5hAutoWakeTaskRepoStub{
+		group:        &OpenAI5hAutoWakeGroup{ID: 9, Enabled: true, Status: StatusActive},
+		activeResets: map[string]time.Time{identityHash: now.Add(4 * time.Hour)},
+	}
+	wake := &OpenAI5hWakeService{repo: taskRepo, accountRepo: accountRepo}
+
+	err := wake.CheckGroupNow(context.Background(), 9)
+
+	require.NoError(t, err)
+	require.Empty(t, taskRepo.createCalls)
+	require.Len(t, taskRepo.updates, 1)
+	require.Equal(t, OpenAI5hAutoWakeReasonNoCandidate, taskRepo.updates[0].Reason)
 }
 
 func TestOpenAI5hAutoWakeCheckStopsWhenGroupIsNoLongerEligible(t *testing.T) {

@@ -225,6 +225,21 @@ type OpenAI5hWakeScopedTaskRepository interface {
 	UpdateAutoWakeTaskStatus(context.Context, int64, string) error
 }
 
+// OpenAI5hWakeWindowRepository is an optional extension used by the
+// group-level scheduler. It lets the scheduler honor a recently confirmed
+// reset window even when the account snapshot cache still reports a zero
+// usage percentage.
+type OpenAI5hWakeWindowRepository interface {
+	ListActiveWakePoolResets(context.Context, []string, time.Time) (map[string]time.Time, error)
+}
+
+// OpenAI5hWakeCredentialRepository is an optional CAS mutation used when the
+// wake endpoint reports a permanently invalid OAuth credential. Keeping it
+// optional preserves compatibility with lightweight repository test doubles.
+type OpenAI5hWakeCredentialRepository interface {
+	SetOpenAI5hWakeCredentialErrorIfUnchanged(context.Context, int64, map[string]any, string) (bool, error)
+}
+
 type OpenAI5hWakeLeaseTaskRepository interface {
 	ClaimNextItemWithLease(context.Context, int64, string, time.Time, time.Time) (*OpenAI5hWakeTaskItem, error)
 }
