@@ -2390,6 +2390,20 @@ func (r *accountRepository) ListSchedulableByGroupIDAndPlatform(ctx context.Cont
 	})
 }
 
+// ListOpenAI5hWakeAccountsByGroupID keeps transient runtime windows visible to
+// the durable 5h wake scheduler. The service still applies the normal
+// rate-limit/cooldown checks before creating task items; this query only makes
+// sure a future reset deadline is not lost while an account is temporarily
+// filtered from ordinary traffic scheduling.
+func (r *accountRepository) ListOpenAI5hWakeAccountsByGroupID(ctx context.Context, groupID int64) ([]service.Account, error) {
+	return r.queryAccountsByGroup(ctx, groupID, accountGroupQueryOptions{
+		status:               service.StatusActive,
+		schedulable:          true,
+		ignoreTransientState: true,
+		platforms:            []string{service.PlatformOpenAI},
+	})
+}
+
 func (r *accountRepository) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]service.Account, error) {
 	if len(platforms) == 0 {
 		return nil, nil

@@ -109,7 +109,11 @@ type openAI5hWakeQuotaGroup struct {
 
 type openAI5hWakePlan struct {
 	preview OpenAI5hWakePreview
-	groups  []openAI5hWakeQuotaGroup
+	// groups contains pools whose members are eligible for a wake request now.
+	// scheduleGroups also retains pools temporarily blocked by runtime state so
+	// their trusted reset deadline remains visible to the durable scheduler.
+	groups         []openAI5hWakeQuotaGroup
+	scheduleGroups []openAI5hWakeQuotaGroup
 }
 
 // openAI5hWakeIdentityFingerprint captures every account attribute that can
@@ -578,9 +582,14 @@ func (s *OpenAI5hWakeService) checkGroupNow(ctx context.Context, groupID int64) 
 	// any wake candidates. A pool is eligible only after its trusted reset time
 	// plus the small confirmation grace has elapsed.
 	activeResets := map[string]time.Time{}
-	if windowRepo, supportsWindowHistory := s.repo.(OpenAI5hWakeWindowRepository); supportsWindowHistory && len(plan.groups) > 0 {
-		identityHashes := make([]string, 0, len(plan.groups))
-		for _, candidate := range plan.groups {
+	scheduleGroups := plan.scheduleGroups
+	if len(scheduleGroups) == 0 {
+		// Keep compatibility with plans assembled by older test doubles.
+		scheduleGroups = plan.groups
+	}
+	if windowRepo, supportsWindowHistory := s.repo.(OpenAI5hWakeWindowRepository); supportsWindowHistory && len(scheduleGroups) > 0 {
+		identityHashes := make([]string, 0, len(scheduleGroups))
+		for _, candidate := range scheduleGroups {
 			identityHashes = append(identityHashes, candidate.identityHash)
 		}
 		// Include resets that just elapsed so the reset grace remains effective
@@ -591,8 +600,26 @@ func (s *OpenAI5hWakeService) checkGroupNow(ctx context.Context, groupID int64) 
 			return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, retryAt, err)
 		}
 	}
-	candidates, nextCheckAt := openAI5hAutoWakeDueCandidates(plan.groups, activeResets, checkedAt)
+	// Runtime-blocked pools participate in deadline calculation, but only pools
+	// with at least one currently eligible account may become task items.
+	scheduledCandidates, nextCheckAt := openAI5hAutoWakeDueCandidates(scheduleGroups, activeResets, checkedAt)
+	eligibleByIdentity := make(map[string]openAI5hWakeQuotaGroup, len(plan.groups))
+	for _, candidate := range plan.groups {
+		eligibleByIdentity[candidate.identityHash] = candidate
+	}
+	candidates := make([]openAI5hWakeQuotaGroup, 0, len(scheduledCandidates))
+	for _, candidate := range scheduledCandidates {
+		if eligible, ok := eligibleByIdentity[candidate.identityHash]; ok {
+			// Use the strict group here so a temporarily blocked backup member
+			// does not become a task item merely because another member made the
+			// shared identity pool due.
+			candidates = append(candidates, eligible)
+		}
+	}
 	if len(candidates) == 0 {
+		if nextCheckAt == nil {
+			nextCheckAt = openAI5hWakeTransientRetryDeadline(scheduleGroups, checkedAt)
+		}
 		if nextCheckAt == nil {
 			fallback := checkedAt.Add(openAI5hAutoWakeNoDataInterval)
 			nextCheckAt = &fallback
@@ -700,11 +727,29 @@ func (s *OpenAI5hWakeService) buildPlanForGroup(ctx context.Context, now time.Ti
 	if s.accountRepo == nil {
 		return nil, errors.New("OpenAI 5h wake account repository is unavailable")
 	}
-	accounts, err := s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, groupID, PlatformOpenAI)
+	var (
+		accounts []Account
+		err      error
+	)
+	if scheduleRepo, ok := s.accountRepo.(openAI5hWakeScheduleAccountRepository); ok {
+		// The scheduler needs to see accounts covered by a transient runtime
+		// window; the plan below still keeps those accounts out of task items.
+		accounts, err = scheduleRepo.ListOpenAI5hWakeAccountsByGroupID(ctx, groupID)
+	} else {
+		// Compatibility path for alternate repositories and focused test doubles.
+		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, groupID, PlatformOpenAI)
+	}
 	if err != nil {
 		return nil, err
 	}
-	return buildOpenAI5hWakePlan(accounts, now), nil
+	return buildOpenAI5hWakeAutoPlan(accounts, now), nil
+}
+
+// openAI5hWakeScheduleAccountRepository is intentionally optional so adding
+// transient-state visibility does not widen AccountRepository or invalidate
+// existing repository/test implementations.
+type openAI5hWakeScheduleAccountRepository interface {
+	ListOpenAI5hWakeAccountsByGroupID(context.Context, int64) ([]Account, error)
 }
 
 func buildOpenAI5hWakePlan(accounts []Account, now time.Time) *openAI5hWakePlan {
@@ -732,7 +777,69 @@ func buildOpenAI5hWakePlan(accounts []Account, now time.Time) *openAI5hWakePlan 
 		}
 	}
 	plan.preview.EstimatedRequests = plan.preview.UniqueQuotaPools - plan.preview.ActiveWindows
+	plan.scheduleGroups = plan.groups
 	return plan
+}
+
+// buildOpenAI5hWakeAutoPlan keeps transiently blocked accounts in a separate
+// schedule view. The normal plan remains intentionally strict so manual and
+// automatic tasks never include an account that is currently rate-limited,
+// cooling down, or otherwise unavailable.
+func buildOpenAI5hWakeAutoPlan(accounts []Account, now time.Time) *openAI5hWakePlan {
+	plan := buildOpenAI5hWakePlan(accounts, now)
+	scheduled := make([]*Account, 0, len(accounts))
+	for i := range accounts {
+		account := &accounts[i]
+		reason := classifyOpenAI5hWakeExclusion(account, now)
+		if reason != "" && !isOpenAI5hWakeTransientExclusion(reason) {
+			continue
+		}
+		if len(openAI5hWakeIdentityParts(account)) == 0 {
+			continue
+		}
+		scheduled = append(scheduled, account)
+	}
+	plan.scheduleGroups = buildOpenAI5hWakeQuotaGroups(scheduled)
+	return plan
+}
+
+func isOpenAI5hWakeTransientExclusion(reason string) bool {
+	switch reason {
+	case "rate_limited", "cooling_down":
+		return true
+	default:
+		return false
+	}
+}
+
+// openAI5hWakeTransientRetryDeadline supplies a bounded retry point when a
+// pool's trusted 5h snapshot has already elapsed but its runtime cooldown has
+// not. Without this fallback, filtering that pool from task candidates would
+// otherwise produce a six-hour no-data deadline.
+func openAI5hWakeTransientRetryDeadline(groups []openAI5hWakeQuotaGroup, now time.Time) *time.Time {
+	var next *time.Time
+	for _, group := range groups {
+		for _, account := range group.accounts {
+			if !isOpenAI5hWakeTransientExclusion(classifyOpenAI5hWakeExclusion(account, now)) {
+				continue
+			}
+			for _, candidate := range []*time.Time{
+				account.RateLimitResetAt,
+				account.OverloadUntil,
+				account.TempUnschedulableUntil,
+			} {
+				if candidate == nil || !candidate.After(now) {
+					continue
+				}
+				deadline := candidate.UTC().Add(openAI5hAutoWakeResetGrace)
+				if next == nil || deadline.Before(*next) {
+					value := deadline
+					next = &value
+				}
+			}
+		}
+	}
+	return next
 }
 
 // openAI5hAutoWakeDueCandidates separates pools that can be checked now from

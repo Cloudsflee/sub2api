@@ -34,6 +34,21 @@ func (r *openAI5hAutoWakeAccountRepoStub) ListSchedulableByGroupIDAndPlatform(
 	return append([]Account(nil), r.accountsByGroup[groupID]...), nil
 }
 
+type openAI5hAutoWakeTransientAccountRepoStub struct {
+	*openAI5hAutoWakeAccountRepoStub
+	accountsByGroup map[int64][]Account
+}
+
+func (r *openAI5hAutoWakeTransientAccountRepoStub) ListOpenAI5hWakeAccountsByGroupID(
+	_ context.Context,
+	groupID int64,
+) ([]Account, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return append([]Account(nil), r.accountsByGroup[groupID]...), nil
+}
+
 type openAI5hAutoWakeTaskRepoStub struct {
 	OpenAI5hWakeTaskRepository
 	group        *OpenAI5hAutoWakeGroup
@@ -195,6 +210,66 @@ func TestOpenAI5hAutoWakeCheckWithoutAccountsUsesSixHourFallback(t *testing.T) {
 	require.Len(t, taskRepo.updates, 1)
 	require.Equal(t, OpenAI5hAutoWakeReasonNoCandidate, taskRepo.updates[0].Reason)
 	require.Equal(t, openAI5hAutoWakeNoDataInterval, taskRepo.updates[0].NextCheckAt.Sub(taskRepo.updates[0].CheckedAt))
+}
+
+func TestOpenAI5hAutoWakePlanRetainsRateLimitedPoolForScheduling(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	resetAt := now.Add(4 * time.Hour)
+	deferred := trustedOpenAI5hWakeAccount(1, "rate-limited-pool", resetAt)
+	deferred.RateLimitResetAt = &resetAt
+
+	plan := buildOpenAI5hWakeAutoPlan([]Account{deferred}, now)
+
+	require.Empty(t, plan.groups, "a rate-limited account must not become a wake task item")
+	require.Len(t, plan.scheduleGroups, 1, "the same account must remain visible to deadline calculation")
+	_, next := openAI5hAutoWakeDueCandidates(plan.scheduleGroups, nil, now)
+	require.NotNil(t, next)
+	require.Equal(t, resetAt.Add(openAI5hAutoWakeResetGrace), *next)
+}
+
+func TestOpenAI5hAutoWakeCheckSchedulesTransientPoolWithoutCreatingTask(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	resetAt := now.Add(4 * time.Hour)
+	deferred := trustedOpenAI5hWakeAccount(1, "rate-limited-pool", resetAt)
+	deferred.RateLimitResetAt = &resetAt
+	baseRepo := &openAI5hAutoWakeAccountRepoStub{}
+	accountRepo := &openAI5hAutoWakeTransientAccountRepoStub{
+		openAI5hAutoWakeAccountRepoStub: baseRepo,
+		accountsByGroup:                 map[int64][]Account{9: {deferred}},
+	}
+	taskRepo := &openAI5hAutoWakeTaskRepoStub{group: &OpenAI5hAutoWakeGroup{
+		ID: 9, Enabled: true, Status: StatusActive,
+	}}
+	wake := &OpenAI5hWakeService{repo: taskRepo, accountRepo: accountRepo}
+
+	require.NoError(t, wake.CheckGroupNow(context.Background(), 9))
+	require.Empty(t, taskRepo.createCalls)
+	require.Len(t, taskRepo.updates, 1)
+	require.Equal(t, OpenAI5hAutoWakeReasonNoCandidate, taskRepo.updates[0].Reason)
+	require.WithinDuration(t, resetAt.Add(openAI5hAutoWakeResetGrace), *taskRepo.updates[0].NextCheckAt, time.Second)
+}
+
+func TestOpenAI5hAutoWakeUsesOnlyEligibleMembersForSharedTransientPoolTask(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	identity := "shared-transient-pool"
+	eligible := *newOpenAI5hWakeAccount(1, identity)
+	deferred := trustedOpenAI5hWakeAccount(2, identity, now.Add(-time.Hour))
+	futureRateLimit := now.Add(2 * time.Hour)
+	deferred.RateLimitResetAt = &futureRateLimit
+	baseRepo := &openAI5hAutoWakeAccountRepoStub{}
+	accountRepo := &openAI5hAutoWakeTransientAccountRepoStub{
+		openAI5hAutoWakeAccountRepoStub: baseRepo,
+		accountsByGroup:                 map[int64][]Account{9: {eligible, deferred}},
+	}
+	taskRepo := &openAI5hAutoWakeTaskRepoStub{group: &OpenAI5hAutoWakeGroup{
+		ID: 9, Enabled: true, Status: StatusActive,
+	}}
+	wake := &OpenAI5hWakeService{repo: taskRepo, accountRepo: accountRepo}
+
+	require.NoError(t, wake.CheckGroupNow(context.Background(), 9))
+	require.Len(t, taskRepo.createCalls, 1)
+	require.Len(t, taskRepo.createCalls[0].Items, 1)
+	require.Equal(t, []int64{eligible.ID}, taskRepo.createCalls[0].Items[0].MemberAccountIDs)
 }
 
 func TestOpenAI5hAutoWakeCheckHonorsRecentTaskReset(t *testing.T) {
