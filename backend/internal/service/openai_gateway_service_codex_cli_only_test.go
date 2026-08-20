@@ -290,6 +290,24 @@ func TestIsOpenAITransientProcessingError(t *testing.T) {
 	require.True(t, isOpenAITransientProcessingError(
 		http.StatusBadRequest,
 		"",
+		[]byte(`{"error":{"message":"Our servers are currently overloaded. Please try again later."}}`),
+	))
+
+	require.True(t, isOpenAITransientProcessingError(
+		http.StatusServiceUnavailable,
+		"Server is overloaded. Please try again later.",
+		nil,
+	))
+
+	require.True(t, isOpenAITransientProcessingError(
+		http.StatusBadGateway,
+		"",
+		[]byte(`{"error":{"message":"Our servers are currently overloaded. Please try again later."}}`),
+	))
+
+	require.True(t, isOpenAITransientProcessingError(
+		http.StatusBadRequest,
+		"",
 		[]byte(`{"error":{"message":"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID req_123 in your message."}}`),
 	))
 
@@ -483,7 +501,7 @@ func TestOpenAIGatewayService_Forward_ModelCapacityErrorTriggersAccountFailover(
 	require.False(t, c.Writer.Written(), "service 层应返回 failover 错误给上层重试/换号，而不是直接向客户端写响应")
 }
 
-func TestOpenAIGatewayService_Forward_ServerOverloadedMessageTriggersAccountFailover(t *testing.T) {
+func TestOpenAIGatewayService_Forward_ServerOverloadedMessageRemainsRequestScoped(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -530,9 +548,10 @@ func TestOpenAIGatewayService_Forward_ServerOverloadedMessageTriggersAccountFail
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
-	require.False(t, failoverErr.RetryableOnSameAccount)
-	require.True(t, failoverErr.IsOpenAIModelCapacityError())
-	require.Equal(t, NextAccountRetry, failoverErr.NextAccountAction)
+	require.True(t, failoverErr.RetryableOnSameAccount)
+	require.True(t, failoverErr.RequestScopedTransient)
+	require.False(t, failoverErr.IsOpenAIModelCapacityError())
+	require.Equal(t, NextAccountLegacyRetry, failoverErr.NextAccountAction)
 	require.Contains(t, string(failoverErr.ResponseBody), "Our servers are currently overloaded")
-	require.False(t, c.Writer.Written(), "service 层应返回 failover 错误给上层重试/换号，而不是直接向客户端写响应")
+	require.False(t, c.Writer.Written(), "service 层应返回 failover 错误给上层做同账号重试，而不是直接向客户端写响应")
 }

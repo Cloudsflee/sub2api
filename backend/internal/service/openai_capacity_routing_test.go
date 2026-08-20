@@ -19,8 +19,8 @@ func TestIsOpenAIModelCapacityError(t *testing.T) {
 	payload := []byte(`{"error":{"message":"Selected model is at capacity. Please try a different model.","type":"invalid_request_error"}}`)
 	require.True(t, isOpenAIModelCapacityError("", payload))
 	require.True(t, isOpenAIModelCapacityError("Selected model is at capacity. Please try a different model.", nil))
-	require.True(t, isOpenAIModelCapacityError("Our servers are currently overloaded. Please try again later.", nil))
-	require.True(t, isOpenAIModelCapacityError("", []byte(`{"response":{"error":{"message":"Our servers are currently overloaded. Please try again later."}}}`)))
+	require.False(t, isOpenAIModelCapacityError("Our servers are currently overloaded. Please try again later.", nil))
+	require.False(t, isOpenAIModelCapacityError("", []byte(`{"response":{"error":{"message":"Our servers are currently overloaded. Please try again later."}}}`)))
 	require.False(t, isOpenAIModelCapacityError("server is overloaded", []byte(`{"error":{"code":"server_is_overloaded"}}`)))
 	require.False(t, isOpenAIModelCapacityError("You have exhausted your capacity on this model.", nil))
 }
@@ -59,7 +59,7 @@ func TestNewOpenAIStreamFailoverError_ModelCapacityDisablesSameAccountRetry(t *t
 	require.True(t, err.IsOpenAIModelCapacityError())
 }
 
-func TestNewOpenAIUpstreamFailoverError_ServerOverloadDisablesSameAccountRetry(t *testing.T) {
+func TestNewOpenAIUpstreamFailoverError_ServerOverloadRemainsRequestScoped(t *testing.T) {
 	err := newOpenAIUpstreamFailoverError(
 		http.StatusBadRequest,
 		http.Header{},
@@ -67,12 +67,12 @@ func TestNewOpenAIUpstreamFailoverError_ServerOverloadDisablesSameAccountRetry(t
 		"Our servers are currently overloaded. Please try again later.",
 		true,
 	)
-	require.False(t, err.RetryableOnSameAccount)
-	require.True(t, err.IsOpenAIModelCapacityError())
-	require.Equal(t, NextAccountRetry, err.NextAccountAction)
+	require.True(t, err.RetryableOnSameAccount)
+	require.True(t, err.RequestScopedTransient)
+	require.False(t, err.IsOpenAIModelCapacityError())
 }
 
-func TestOpenAIStreamingPassthrough_ServerOverloadAfterOutputRecordsCooldown(t *testing.T) {
+func TestOpenAIStreamingPassthrough_ServerOverloadAfterOutputDoesNotCoolAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{
 		cfg:                 &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}},
@@ -105,12 +105,7 @@ func TestOpenAIStreamingPassthrough_ServerOverloadAfterOutputRecordsCooldown(t *
 		require.Contains(t, recorder.Body.String(), "partial")
 		require.Contains(t, recorder.Body.String(), "Our servers are currently overloaded")
 
-		blocked := svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.6-sol")
-		if attempt == 1 {
-			require.False(t, blocked)
-		} else {
-			require.True(t, blocked)
-		}
+		require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.6-sol"))
 	}
 }
 

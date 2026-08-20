@@ -20,14 +20,13 @@ const (
 
 const openAIModelCapacityFailureReason = GatewayFailureReason("openai_model_capacity")
 
-// isOpenAIModelCapacityError deliberately matches the explicit OpenAI capacity
-// and server-overload responses only. Other transient 400/503 responses keep
-// their existing retry and cooldown behavior.
+// isOpenAIModelCapacityError matches failures tied to the selected model.
+// Generic server-overload responses are request-scoped capacity shedding and
+// must not cool down an otherwise healthy account/model pair.
 func isOpenAIModelCapacityError(message string, payload []byte) bool {
 	match := func(value string) bool {
 		value = strings.ToLower(strings.TrimSpace(value))
-		return strings.Contains(value, "selected model is at capacity") ||
-			strings.Contains(value, "our servers are currently overloaded. please try again later.")
+		return strings.Contains(value, "selected model is at capacity")
 	}
 	if match(message) {
 		return true
