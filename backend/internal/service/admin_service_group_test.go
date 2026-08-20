@@ -306,13 +306,13 @@ func TestAdminService_ListGroups_PassesSortParams(t *testing.T) {
 	}, repo.listWithFiltersParams)
 }
 
-func TestAdminService_CreateGroup_PreservesPublicStatusSetting(t *testing.T) {
+func TestAdminService_CreateGroup_PreservesPublicStatusSettingForOpenAI(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}
 	svc := &adminServiceImpl{groupRepo: repo}
 
 	group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
 		Name:                "public-status-create",
-		Platform:            PlatformAnthropic,
+		Platform:            PlatformOpenAI,
 		RateMultiplier:      1,
 		PublicStatusEnabled: true,
 	})
@@ -323,11 +323,11 @@ func TestAdminService_CreateGroup_PreservesPublicStatusSetting(t *testing.T) {
 	require.True(t, repo.created.PublicStatusEnabled)
 }
 
-func TestAdminService_UpdateGroup_PublicStatusIsOptional(t *testing.T) {
+func TestAdminService_UpdateGroup_PublicStatusIsOptionalForOpenAI(t *testing.T) {
 	existing := &Group{
 		ID:                  1,
 		Name:                "public-status-update",
-		Platform:            PlatformAnthropic,
+		Platform:            PlatformOpenAI,
 		RateMultiplier:      1,
 		Status:              StatusActive,
 		PublicStatusEnabled: true,
