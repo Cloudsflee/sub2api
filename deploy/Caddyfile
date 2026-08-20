@@ -8,8 +8,10 @@
 	}
 }
 
-# 修改为你的域名
-api.sub2api.com {
+# IMPORTANT: api.sub2api.com is an external third-party site and is not a
+# deployment target for this repository. Set SUB2API_PUBLIC_DOMAIN to a domain
+# controlled by the operator before starting Caddy.
+{$SUB2API_PUBLIC_DOMAIN} {
 	# This baseline assumes clients connect directly to Caddy. When Caddy is
 	# behind a CDN, configure explicit trusted proxy CIDRs and {client_ip} as
 	# documented in EDGE_SECURITY.md; {remote_host} would otherwise be the CDN.
