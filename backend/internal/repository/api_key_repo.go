@@ -1007,6 +1007,7 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		AllowMessagesDispatch:                  g.AllowMessagesDispatch,
 		AllowLive:                              g.AllowLive,
 		OpenAI5hAutoWakeEnabled:                g.Openai5hAutoWakeEnabled,
+		OpenAI5hAutoWakeNextCheckAt:            g.Openai5hAutoWakeNextCheckAt,
 		OpenAI5hAutoWakeLastCheckedAt:          g.Openai5hAutoWakeLastCheckedAt,
 		OpenAI5hAutoWakeLastCandidatePoolCount: g.Openai5hAutoWakeLastCandidatePoolCount,
 		OpenAI5hAutoWakeLastReason:             derefString(g.Openai5hAutoWakeLastReason),

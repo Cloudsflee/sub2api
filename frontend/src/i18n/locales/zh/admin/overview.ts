@@ -876,8 +876,8 @@ export default {
           '公开分组费率 0.8，您可以创建一个费率 0.7 的专属分组，手动分配给 VIP 用户，让他们享受更优惠的价格。'
       },
       publicStatus: {
-        label: '公开账号状态',
-        hint: '在固定状态页公开此分组的脱敏账号状态与用量。分组停用后仍会展示，删除或关闭后移除。',
+        label: '公开账号入口',
+        hint: '同时控制此 OpenAI 分组的公开账号导入和账号状态页展示。',
         enabled: '已公开',
         disabled: '未公开',
         copy: '复制公开状态页地址',
@@ -930,7 +930,9 @@ export default {
         disabled: '已关闭',
         paused: '已暂停',
         lastChecked: '最近检查',
+        nextCheck: '下次计划检查',
         neverChecked: '尚未检查',
+        notScheduled: '未安排',
         candidatePools: '候选额度池',
         lastTask: '最近任务',
         reason: '最近结果',

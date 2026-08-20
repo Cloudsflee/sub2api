@@ -62,12 +62,20 @@ func TestCreateGroupOpenAI5hAutoWakeDefaultsOffAndIsOpenAIOnly(t *testing.T) {
 
 			group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
 				Name: "wake-group", Platform: tt.platform, RateMultiplier: 1,
-				OpenAI5hAutoWakeEnabled: tt.requested,
+				OpenAI5hAutoWakeEnabled: tt.requested, PublicStatusEnabled: true,
 			})
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantEnabled, group.OpenAI5hAutoWakeEnabled)
 			require.Equal(t, tt.wantEnabled, repo.created.OpenAI5hAutoWakeEnabled)
+			require.Equal(t, tt.platform == PlatformOpenAI, group.PublicStatusEnabled)
+			require.Equal(t, tt.platform == PlatformOpenAI, repo.created.PublicStatusEnabled)
+			if tt.wantEnabled {
+				require.NotNil(t, group.OpenAI5hAutoWakeNextCheckAt)
+				require.WithinDuration(t, time.Now().UTC(), *group.OpenAI5hAutoWakeNextCheckAt, time.Second)
+			} else {
+				require.Nil(t, group.OpenAI5hAutoWakeNextCheckAt)
+			}
 			require.Equal(t, tt.wantChecks, checker.groupIDs)
 		})
 	}
@@ -75,13 +83,15 @@ func TestCreateGroupOpenAI5hAutoWakeDefaultsOffAndIsOpenAIOnly(t *testing.T) {
 
 func TestUpdateGroupOpenAI5hAutoWakeCoercionAndImmediateCheck(t *testing.T) {
 	checkedAt := time.Now().UTC().Add(-time.Minute)
+	previousNextCheckAt := time.Now().UTC().Add(4 * time.Hour)
 	candidateCount := 2
 	taskID := int64(91)
 	baseGroup := func() *Group {
 		return &Group{
 			ID: 7, Name: "wake-group", Platform: PlatformOpenAI, Status: StatusActive,
-			RateMultiplier: 1, SubscriptionType: SubscriptionTypeStandard,
+			RateMultiplier: 1, SubscriptionType: SubscriptionTypeStandard, PublicStatusEnabled: true,
 			OpenAI5hAutoWakeLastCheckedAt:          &checkedAt,
+			OpenAI5hAutoWakeNextCheckAt:            &previousNextCheckAt,
 			OpenAI5hAutoWakeLastCandidatePoolCount: &candidateCount,
 			OpenAI5hAutoWakeLastReason:             OpenAI5hAutoWakeReasonTaskCreated,
 			OpenAI5hAutoWakeLastTaskID:             &taskID,
@@ -100,6 +110,8 @@ func TestUpdateGroupOpenAI5hAutoWakeCoercionAndImmediateCheck(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, group.OpenAI5hAutoWakeEnabled)
 		require.Equal(t, []int64{7}, checker.groupIDs)
+		require.NotNil(t, repo.updated.OpenAI5hAutoWakeNextCheckAt)
+		require.WithinDuration(t, time.Now().UTC(), *repo.updated.OpenAI5hAutoWakeNextCheckAt, time.Second)
 		require.Equal(t, &checkedAt, repo.updated.OpenAI5hAutoWakeLastCheckedAt)
 		require.Equal(t, &taskID, repo.updated.OpenAI5hAutoWakeLastTaskID)
 	})
@@ -115,6 +127,9 @@ func TestUpdateGroupOpenAI5hAutoWakeCoercionAndImmediateCheck(t *testing.T) {
 
 		require.NoError(t, err)
 		require.True(t, group.OpenAI5hAutoWakeEnabled)
+		require.True(t, group.PublicStatusEnabled)
+		require.Nil(t, group.OpenAI5hAutoWakeNextCheckAt)
+		require.Nil(t, repo.updated.OpenAI5hAutoWakeNextCheckAt)
 		require.Empty(t, checker.groupIDs)
 	})
 
@@ -132,6 +147,10 @@ func TestUpdateGroupOpenAI5hAutoWakeCoercionAndImmediateCheck(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, updated.OpenAI5hAutoWakeEnabled)
 		require.False(t, repo.updated.OpenAI5hAutoWakeEnabled)
+		require.Nil(t, updated.OpenAI5hAutoWakeNextCheckAt)
+		require.Nil(t, repo.updated.OpenAI5hAutoWakeNextCheckAt)
+		require.False(t, updated.PublicStatusEnabled)
+		require.False(t, repo.updated.PublicStatusEnabled)
 		require.Empty(t, checker.groupIDs)
 	})
 }

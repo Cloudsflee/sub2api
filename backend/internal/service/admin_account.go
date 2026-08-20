@@ -550,6 +550,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 			return nil, err
 		}
 	}
+	// A newly-created OpenAI account can change the eligibility of every bound
+	// quota pool. Queue checks only after the binding write has succeeded.
+	s.triggerOpenAI5hGroupChecks(account, groupIDs)
 
 	// OAuth 账号：创建后异步设置隐私。
 	// 使用 Ensure（幂等）而非 Force：新建账号 Extra 为空时效果相同，但更安全。
@@ -585,6 +588,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		return nil, err
 	}
 	previousOpenAI5hWakeIdentity := openAI5hWakeIdentityFingerprintFor(account)
+	previousGroupIDs := append([]int64(nil), account.GroupIDs...)
+	previousPlatform := account.Platform
 	previousOpenAI5hWakeMarker, hadOpenAI5hWakeMarker := account.Extra[openAI5hWakeSnapshotIdentityKey]
 	var normalizedExtra map[string]any
 	if input.Extra != nil {
@@ -916,7 +921,50 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
+	if previousPlatform == PlatformOpenAI || (updated != nil && updated.Platform == PlatformOpenAI) {
+		groupIDs := append([]int64(nil), previousGroupIDs...)
+		if updated != nil {
+			groupIDs = append(groupIDs, updated.GroupIDs...)
+		}
+		if input.GroupIDs != nil {
+			groupIDs = append(groupIDs, (*input.GroupIDs)...)
+		}
+		if updated != nil && updated.Platform == PlatformOpenAI {
+			s.triggerOpenAI5hGroupChecks(updated, groupIDs)
+		} else if previousPlatform == PlatformOpenAI {
+			// Platform changes away from OpenAI are uncommon but must wake the
+			// old groups so their candidate snapshots are recalculated.
+			s.triggerOpenAI5hGroupChecksForIDs(groupIDs)
+		}
+	}
 	return updated, nil
+}
+
+// triggerOpenAI5hGroupChecks queues a lightweight immediate check for each
+// distinct group affected by an OpenAI account write. The scheduler performs
+// the authoritative active/platform/feature checks before loading accounts.
+func (s *adminServiceImpl) triggerOpenAI5hGroupChecks(account *Account, groupIDs []int64) {
+	if s == nil || s.openAI5hAutoWakeChecker == nil || account == nil || account.Platform != PlatformOpenAI {
+		return
+	}
+	s.triggerOpenAI5hGroupChecksForIDs(groupIDs)
+}
+
+func (s *adminServiceImpl) triggerOpenAI5hGroupChecksForIDs(groupIDs []int64) {
+	if s == nil || s.openAI5hAutoWakeChecker == nil {
+		return
+	}
+	seen := make(map[int64]struct{}, len(groupIDs))
+	for _, groupID := range groupIDs {
+		if groupID <= 0 {
+			continue
+		}
+		if _, exists := seen[groupID]; exists {
+			continue
+		}
+		seen[groupID] = struct{}{}
+		s.openAI5hAutoWakeChecker.TriggerGroupCheck(groupID)
+	}
 }
 
 // UpdateAccountExtra 仅对 Extra JSONB 做 key 级合并，避免覆盖其它运行态键
@@ -1202,6 +1250,21 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		result.Success++
 		result.SuccessIDs = append(result.SuccessIDs, accountID)
 		result.Results = append(result.Results, entry)
+		if s.openAI5hAutoWakeChecker != nil {
+			account := targetsByID[accountID]
+			if account == nil {
+				// A narrow bulk edit may not have needed the prefetch above;
+				// resolve the account only when the immediate-check hook is in use.
+				account, _ = s.accountRepo.GetByID(ctx, accountID)
+			}
+			if account != nil && account.Platform == PlatformOpenAI {
+				groupIDs := append([]int64(nil), account.GroupIDs...)
+				if input.GroupIDs != nil {
+					groupIDs = append(groupIDs, (*input.GroupIDs)...)
+				}
+				s.triggerOpenAI5hGroupChecks(account, groupIDs)
+			}
+		}
 	}
 
 	return result, nil

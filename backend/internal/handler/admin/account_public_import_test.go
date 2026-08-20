@@ -13,17 +13,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestListPublicAccountImportGroupsFiltersAllowlist(t *testing.T) {
+const retiredPublicAccountImportGroupIDsEnv = "PUBLIC_ACCOUNT_IMPORT_GROUP_IDS"
+
+func TestListPublicAccountImportGroupsUsesPublicStatusFlagAndIgnoresLegacyAllowlist(t *testing.T) {
 	t.Setenv(publicAccountImportEnabledEnv, "true")
-	t.Setenv(publicAccountImportGroupIDsEnv, "5,9,12")
+	t.Setenv(retiredPublicAccountImportGroupIDsEnv, "5")
 
 	svc := newStubAdminService()
 	svc.groups = []service.Group{
-		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
-		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
-		{ID: 12, Name: "inactive", Platform: service.PlatformOpenAI, Status: service.StatusDisabled},
-		{ID: 13, Name: "not-allowed", Platform: service.PlatformOpenAI, Status: service.StatusActive},
-		{ID: 14, Name: "wrong-platform", Platform: service.PlatformAnthropic, Status: service.StatusActive},
+		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
+		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
+		{ID: 12, Name: "inactive", Platform: service.PlatformOpenAI, Status: service.StatusDisabled, PublicStatusEnabled: true},
+		{ID: 13, Name: "private", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 14, Name: "wrong-platform", Platform: service.PlatformAnthropic, Status: service.StatusActive, PublicStatusEnabled: true},
+		{ID: 15, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
 	}
 	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -46,15 +49,16 @@ func TestListPublicAccountImportGroupsFiltersAllowlist(t *testing.T) {
 
 func TestListPublicAccountImportGroupsAutoSyncsActiveOpenAIGroups(t *testing.T) {
 	t.Setenv(publicAccountImportEnabledEnv, "true")
-	t.Setenv(publicAccountImportGroupIDsEnv, "*")
+	t.Setenv(retiredPublicAccountImportGroupIDsEnv, "not-an-id")
 
 	svc := newStubAdminService()
 	svc.groups = []service.Group{
-		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
 		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
-		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
-		{ID: 12, Name: "inactive", Platform: service.PlatformOpenAI, Status: service.StatusDisabled},
-		{ID: 14, Name: "wrong-platform", Platform: service.PlatformAnthropic, Status: service.StatusActive},
+		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
+		{ID: 12, Name: "inactive", Platform: service.PlatformOpenAI, Status: service.StatusDisabled, PublicStatusEnabled: true},
+		{ID: 13, Name: "private", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 14, Name: "wrong-platform", Platform: service.PlatformAnthropic, Status: service.StatusActive, PublicStatusEnabled: true},
 	}
 	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -65,14 +69,14 @@ func TestListPublicAccountImportGroupsAutoSyncsActiveOpenAIGroups(t *testing.T) 
 
 func TestPublicImportCodexSessionsBindsMultipleAllowedGroups(t *testing.T) {
 	t.Setenv(publicAccountImportEnabledEnv, "true")
-	t.Setenv(publicAccountImportGroupIDsEnv, "5,9")
+	t.Setenv(retiredPublicAccountImportGroupIDsEnv, "5,9")
 
 	svc := newStubAdminService()
 	svc.accounts = nil
 	svc.groups = []service.Group{
-		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
 		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
-		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
 	}
 	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -111,7 +115,7 @@ func TestPublicImportCodexSessionsBindsMultipleAllowedGroups(t *testing.T) {
 
 func TestPublicImportCodexSessionsMergesGroupsWithoutOverwritingExistingAccount(t *testing.T) {
 	t.Setenv(publicAccountImportEnabledEnv, "true")
-	t.Setenv(publicAccountImportGroupIDsEnv, "5,9")
+	t.Setenv(retiredPublicAccountImportGroupIDsEnv, "5,9")
 
 	value := buildCodexAccessOnlyImportValue(t, "workspace-existing-public", "user-existing-public")
 	item, err := normalizeCodexImportEntry(codexImportEntry{Index: 1, Value: value})
@@ -134,9 +138,9 @@ func TestPublicImportCodexSessionsMergesGroupsWithoutOverwritingExistingAccount(
 		GroupIDs:    []int64{9, 6},
 	}})
 	svc.groups = []service.Group{
-		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
 		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
-		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
 	}
 	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -191,7 +195,7 @@ func TestPublicImportCodexSessionsMergesGroupsWithoutOverwritingExistingAccount(
 
 func TestPublicImportCodexSessionsSkipsExistingAccountWithAllGroupsBound(t *testing.T) {
 	t.Setenv(publicAccountImportEnabledEnv, "true")
-	t.Setenv(publicAccountImportGroupIDsEnv, "5")
+	t.Setenv(retiredPublicAccountImportGroupIDsEnv, "5")
 
 	value := buildCodexAccessOnlyImportValue(t, "workspace-bound-public", "user-bound-public")
 	item, err := normalizeCodexImportEntry(codexImportEntry{Index: 1, Value: value})
@@ -206,7 +210,7 @@ func TestPublicImportCodexSessionsSkipsExistingAccountWithAllGroupsBound(t *test
 		GroupIDs:    []int64{5, 6},
 	}})
 	svc.groups = []service.Group{
-		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
 		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
 	}
 	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
@@ -290,17 +294,17 @@ func TestImportCodexSessionsMergeExistingGroupsRequiresMatchingCredentials(t *te
 }
 
 func TestResolvePublicAccountImportGroupsAddsAllAndSetsPriority(t *testing.T) {
-	t.Setenv(publicAccountImportGroupIDsEnv, "*")
+	t.Setenv(retiredPublicAccountImportGroupIDsEnv, "ignored")
 
 	svc := newStubAdminService()
 	svc.groups = []service.Group{
-		{ID: 2, Name: "PLUS", Platform: service.PlatformOpenAI, Status: service.StatusActive},
-		{ID: 4, Name: "FREE", Platform: service.PlatformOpenAI, Status: service.StatusActive},
-		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 2, Name: "PLUS", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
+		{ID: 4, Name: "FREE", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
+		{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
 		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
-		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive},
-		{ID: 10, Name: "k12-ourselves", Platform: service.PlatformOpenAI, Status: service.StatusActive},
-		{ID: 11, Name: "OTHER", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 9, Name: "BUGTEAM", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
+		{ID: 10, Name: "k12-ourselves", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
+		{ID: 11, Name: "OTHER", Platform: service.PlatformOpenAI, Status: service.StatusActive, PublicStatusEnabled: true},
 	}
 	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -330,12 +334,15 @@ func TestResolvePublicAccountImportGroupsAddsAllAndSetsPriority(t *testing.T) {
 	}
 }
 
-func TestPublicImportCodexSessionsRejectsGroupOutsideAllowlist(t *testing.T) {
+func TestPublicImportCodexSessionsRejectsGroupWithoutPublicStatus(t *testing.T) {
 	t.Setenv(publicAccountImportEnabledEnv, "true")
-	t.Setenv(publicAccountImportGroupIDsEnv, "5")
+	t.Setenv(retiredPublicAccountImportGroupIDsEnv, "9")
 
 	svc := newStubAdminService()
-	svc.groups = []service.Group{{ID: 5, Name: "K12", Platform: service.PlatformOpenAI, Status: service.StatusActive}}
+	svc.groups = []service.Group{
+		{ID: 6, Name: "ALL", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+		{ID: 9, Name: "private", Platform: service.PlatformOpenAI, Status: service.StatusActive},
+	}
 	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	body, err := json.Marshal(PublicAccountImportRequest{Contents: []string{"{}"}, GroupIDs: []int64{9}})

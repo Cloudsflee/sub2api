@@ -687,6 +687,82 @@ func TestOpenAI5hWakeMigrationEnforcesDurabilityConstraints(t *testing.T) {
 	activeHistorySQL := string(activeHistoryMigration)
 	require.Contains(t, activeHistorySQL, "openai_5h_wake_task_items_active_pool_history_idx")
 	require.Contains(t, activeHistorySQL, "status IN ('woken', 'skipped_active')")
+
+	dueScheduleMigration, err := os.ReadFile("../../migrations/230_openai_5h_auto_wake_due_schedule.sql")
+	require.NoError(t, err)
+	dueScheduleSQL := string(dueScheduleMigration)
+	require.Contains(t, dueScheduleSQL, "openai_5h_auto_wake_next_check_at TIMESTAMPTZ")
+	require.Contains(t, dueScheduleSQL, "groups_openai_5h_auto_wake_due_idx")
+	require.Contains(t, dueScheduleSQL, "openai_5h_auto_wake_enabled = TRUE")
+	require.Contains(t, dueScheduleSQL, "public_status_enabled = FALSE")
+}
+
+func TestOpenAI5hWakeListDueGroupsUsesPersistedDeadline(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := NewOpenAI5hWakeTaskRepository(db)
+	wakeRepo, ok := repo.(*openAI5hWakeRepository)
+	require.True(t, ok)
+	now := time.Now().UTC().Truncate(time.Second)
+	next := now.Add(-time.Minute)
+
+	mock.ExpectQuery(`(?s)SELECT id, openai_5h_auto_wake_enabled, status, openai_5h_auto_wake_next_check_at.*openai_5h_auto_wake_next_check_at IS NULL OR openai_5h_auto_wake_next_check_at <= \$1.*ORDER BY openai_5h_auto_wake_next_check_at NULLS FIRST`).
+		WithArgs(now).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "openai_5h_auto_wake_enabled", "status", "openai_5h_auto_wake_next_check_at"}).
+			AddRow(int64(7), true, service.StatusActive, next))
+
+	groups, err := wakeRepo.ListDueAutoWakeGroups(context.Background(), now)
+	if err != nil {
+		t.Fatalf("ListDueAutoWakeGroups() error = %v", err)
+	}
+	require.Len(t, groups, 1)
+	require.Equal(t, int64(7), groups[0].ID)
+	require.Equal(t, next, *groups[0].NextCheckAt)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpenAI5hWakeNextDeadlineDoesNotLoadAccountRows(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := NewOpenAI5hWakeTaskRepository(db)
+	wakeRepo, ok := repo.(*openAI5hWakeRepository)
+	require.True(t, ok)
+	next := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+
+	mock.ExpectQuery(`(?s)SELECT CASE.*openai_5h_auto_wake_next_check_at IS NULL.*MIN\(openai_5h_auto_wake_next_check_at\).*FROM groups`).
+		WillReturnRows(sqlmock.NewRows([]string{"case"}).AddRow(next))
+
+	got, err := wakeRepo.GetNextAutoWakeCheckAt(context.Background())
+	if err != nil {
+		t.Fatalf("GetNextAutoWakeCheckAt() error = %v", err)
+	}
+	require.Equal(t, next, *got)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpenAI5hWakeGetAutoWakeGroupMapsNextDeadline(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := NewOpenAI5hWakeTaskRepository(db)
+	wakeRepo, ok := repo.(*openAI5hWakeRepository)
+	require.True(t, ok)
+	next := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+
+	mock.ExpectQuery(`(?s)SELECT id, openai_5h_auto_wake_enabled, status, openai_5h_auto_wake_next_check_at.*WHERE id = \$1`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "openai_5h_auto_wake_enabled", "status", "openai_5h_auto_wake_next_check_at"}).
+			AddRow(int64(7), true, service.StatusActive, next))
+
+	group, err := wakeRepo.GetAutoWakeGroup(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("GetAutoWakeGroup() error = %v", err)
+	}
+	require.NotNil(t, group)
+	require.Equal(t, next, *group.NextCheckAt)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestOpenAI5hWakeGetLatestTaskOnlyReturnsManualTasks(t *testing.T) {
@@ -745,6 +821,27 @@ func TestOpenAI5hWakeUpdateAutoWakeGroupCheckPreservesLastTaskWithoutNewTask(t *
 		GroupID: 7, CheckedAt: checkedAt, Reason: service.OpenAI5hAutoWakeReasonNoCandidate,
 	})
 
+	require.NoError(t, err)
+	require.True(t, updated)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestOpenAI5hWakeUpdateAutoWakeGroupCheckPersistsNextDeadline(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo, ok := NewOpenAI5hWakeTaskRepository(db).(*openAI5hWakeRepository)
+	require.True(t, ok)
+	checkedAt := time.Now().UTC().Truncate(time.Second)
+	next := checkedAt.Add(15 * time.Minute)
+
+	mock.ExpectExec(`(?s)UPDATE groups.*openai_5h_auto_wake_next_check_at = \$7.*status = 'active'.*openai_5h_auto_wake_enabled = TRUE`).
+		WithArgs(int64(7), checkedAt, 0, service.OpenAI5hAutoWakeReasonCheckError, nil, "", next).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	updated, err := repo.UpdateAutoWakeGroupCheck(context.Background(), service.OpenAI5hAutoWakeCheckUpdate{
+		GroupID: 7, CheckedAt: checkedAt, Reason: service.OpenAI5hAutoWakeReasonCheckError, NextCheckAt: &next,
+	})
 	require.NoError(t, err)
 	require.True(t, updated)
 	require.NoError(t, mock.ExpectationsWereMet())

@@ -172,9 +172,10 @@ type OpenAI5hWakeCreateParams struct {
 }
 
 type OpenAI5hAutoWakeGroup struct {
-	ID      int64
-	Enabled bool
-	Status  string
+	ID          int64
+	Enabled     bool
+	Status      string
+	NextCheckAt *time.Time
 }
 
 type OpenAI5hAutoWakeCheckUpdate struct {
@@ -184,6 +185,13 @@ type OpenAI5hAutoWakeCheckUpdate struct {
 	Reason             string
 	TaskID             *int64
 	TaskStatus         string
+	// NextCheckAt is persisted with the check result. A nil value keeps the
+	// previous schedule for compatibility with older repository doubles; the
+	// scheduler always supplies an explicit future timestamp.
+	NextCheckAt *time.Time
+	// ClearNextCheck removes a schedule when a group is disabled or no longer
+	// qualifies for automatic wake.
+	ClearNextCheck bool
 }
 
 type OpenAI5hWakeCompleteItemParams struct {
@@ -223,6 +231,19 @@ type OpenAI5hWakeScopedTaskRepository interface {
 	GetAutoWakeGroup(context.Context, int64) (*OpenAI5hAutoWakeGroup, error)
 	UpdateAutoWakeGroupCheck(context.Context, OpenAI5hAutoWakeCheckUpdate) (bool, error)
 	UpdateAutoWakeTaskStatus(context.Context, int64, string) error
+}
+
+// OpenAI5hWakeDueScheduleRepository is an optional durable scheduling
+// extension. Keeping it separate from OpenAI5hWakeScopedTaskRepository lets
+// existing manual-task repositories and focused test doubles remain source
+// compatible while newer workers use due-time scans.
+type OpenAI5hWakeDueScheduleRepository interface {
+	// ListDueAutoWakeGroups returns only eligible groups whose persisted check
+	// time is due (or NULL, which is treated as immediately due).
+	ListDueAutoWakeGroups(context.Context, time.Time) ([]OpenAI5hAutoWakeGroup, error)
+	// GetNextAutoWakeCheckAt returns the earliest persisted due time. A nil
+	// result means there are no eligible automatic-wake groups.
+	GetNextAutoWakeCheckAt(context.Context) (*time.Time, error)
 }
 
 // OpenAI5hWakeWindowRepository is an optional extension used by the

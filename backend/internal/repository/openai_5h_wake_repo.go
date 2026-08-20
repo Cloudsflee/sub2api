@@ -328,7 +328,7 @@ func (r *openAI5hWakeRepository) ListActiveWakePoolResets(
 		return active, nil
 	}
 	rows, err := r.db.QueryContext(ctx, `
-SELECT identity_hash, MAX(reset_at) AS reset_at
+SELECT identity_hash, MIN(reset_at) AS reset_at
 FROM openai_5h_wake_task_items
 WHERE identity_hash = ANY($1)
   AND status IN ('woken', 'skipped_active')
@@ -355,7 +355,7 @@ GROUP BY identity_hash`, pq.Array(identityHashes), now)
 
 func (r *openAI5hWakeRepository) ListAutoWakeGroups(ctx context.Context) ([]service.OpenAI5hAutoWakeGroup, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, openai_5h_auto_wake_enabled, status
+SELECT id, openai_5h_auto_wake_enabled, status, openai_5h_auto_wake_next_check_at
 FROM groups
 WHERE deleted_at IS NULL AND platform = 'openai' AND status = 'active'
   AND openai_5h_auto_wake_enabled = TRUE
@@ -367,32 +367,111 @@ ORDER BY id ASC`)
 	groups := make([]service.OpenAI5hAutoWakeGroup, 0)
 	for rows.Next() {
 		var group service.OpenAI5hAutoWakeGroup
-		if err := rows.Scan(&group.ID, &group.Enabled, &group.Status); err != nil {
+		var next sql.NullTime
+		if err := rows.Scan(&group.ID, &group.Enabled, &group.Status, &next); err != nil {
 			return nil, err
 		}
+		group.NextCheckAt = nullTimePtr(next)
 		groups = append(groups, group)
 	}
 	return groups, rows.Err()
 }
 
+// ListDueAutoWakeGroups is the durable scheduler query. It deliberately
+// returns only rows whose persisted deadline has arrived; account rows are
+// loaded later, after this cheap indexed query has selected the work.
+func (r *openAI5hWakeRepository) ListDueAutoWakeGroups(ctx context.Context, now time.Time) ([]service.OpenAI5hAutoWakeGroup, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, openai_5h_auto_wake_enabled, status, openai_5h_auto_wake_next_check_at
+FROM groups
+WHERE deleted_at IS NULL AND platform = 'openai' AND status = 'active'
+  AND openai_5h_auto_wake_enabled = TRUE
+  AND (openai_5h_auto_wake_next_check_at IS NULL OR openai_5h_auto_wake_next_check_at <= $1)
+ORDER BY openai_5h_auto_wake_next_check_at NULLS FIRST, id ASC`, now)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	groups := make([]service.OpenAI5hAutoWakeGroup, 0)
+	for rows.Next() {
+		var group service.OpenAI5hAutoWakeGroup
+		var next sql.NullTime
+		if err := rows.Scan(&group.ID, &group.Enabled, &group.Status, &next); err != nil {
+			return nil, err
+		}
+		group.NextCheckAt = nullTimePtr(next)
+		groups = append(groups, group)
+	}
+	return groups, rows.Err()
+}
+
+func (r *openAI5hWakeRepository) GetNextAutoWakeCheckAt(ctx context.Context) (*time.Time, error) {
+	var next sql.NullTime
+	err := r.db.QueryRowContext(ctx, `
+SELECT CASE
+         WHEN EXISTS (
+           SELECT 1 FROM groups
+           WHERE deleted_at IS NULL AND platform = 'openai' AND status = 'active'
+             AND openai_5h_auto_wake_enabled = TRUE
+             AND openai_5h_auto_wake_next_check_at IS NULL
+         ) THEN NOW()
+         ELSE MIN(openai_5h_auto_wake_next_check_at)
+       END
+FROM groups
+WHERE deleted_at IS NULL AND platform = 'openai' AND status = 'active'
+  AND openai_5h_auto_wake_enabled = TRUE`).Scan(&next)
+	if err != nil {
+		return nil, err
+	}
+	return nullTimePtr(next), nil
+}
+
 func (r *openAI5hWakeRepository) GetAutoWakeGroup(ctx context.Context, groupID int64) (*service.OpenAI5hAutoWakeGroup, error) {
 	var group service.OpenAI5hAutoWakeGroup
+	var next sql.NullTime
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, openai_5h_auto_wake_enabled, status
+SELECT id, openai_5h_auto_wake_enabled, status, openai_5h_auto_wake_next_check_at
 FROM groups
 WHERE id = $1 AND deleted_at IS NULL AND platform = 'openai'
   AND status = 'active' AND openai_5h_auto_wake_enabled = TRUE`, groupID).
-		Scan(&group.ID, &group.Enabled, &group.Status)
+		Scan(&group.ID, &group.Enabled, &group.Status, &next)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	group.NextCheckAt = nullTimePtr(next)
 	return &group, nil
 }
 
 func (r *openAI5hWakeRepository) UpdateAutoWakeGroupCheck(ctx context.Context, update service.OpenAI5hAutoWakeCheckUpdate) (bool, error) {
+	if update.NextCheckAt != nil || update.ClearNextCheck {
+		var next any
+		if !update.ClearNextCheck && update.NextCheckAt != nil {
+			next = update.NextCheckAt.UTC()
+		}
+		result, err := r.db.ExecContext(ctx, `
+UPDATE groups
+SET openai_5h_auto_wake_last_checked_at = $2,
+    openai_5h_auto_wake_last_candidate_pool_count = $3,
+    openai_5h_auto_wake_last_reason = NULLIF($4, ''),
+    openai_5h_auto_wake_last_task_id = COALESCE($5, openai_5h_auto_wake_last_task_id),
+    openai_5h_auto_wake_last_task_status = CASE
+        WHEN $5::bigint IS NULL THEN openai_5h_auto_wake_last_task_status
+        ELSE NULLIF($6, '')
+    END,
+    openai_5h_auto_wake_next_check_at = $7,
+    updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL AND platform = 'openai'
+  AND status = 'active' AND openai_5h_auto_wake_enabled = TRUE`,
+			update.GroupID, update.CheckedAt, update.CandidatePoolCount, update.Reason, update.TaskID, update.TaskStatus, next)
+		if err != nil {
+			return false, err
+		}
+		affected, err := result.RowsAffected()
+		return affected == 1, err
+	}
 	result, err := r.db.ExecContext(ctx, `
 UPDATE groups
 SET openai_5h_auto_wake_last_checked_at = $2,

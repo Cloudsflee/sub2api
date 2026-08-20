@@ -300,6 +300,11 @@ func Openai5hAutoWakeEnabled(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeEnabled, v))
 }
 
+// Openai5hAutoWakeNextCheckAt applies equality check predicate on the "openai_5h_auto_wake_next_check_at" field. It's identical to Openai5hAutoWakeNextCheckAtEQ.
+func Openai5hAutoWakeNextCheckAt(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeNextCheckAt, v))
+}
+
 // Openai5hAutoWakeLastCheckedAt applies equality check predicate on the "openai_5h_auto_wake_last_checked_at" field. It's identical to Openai5hAutoWakeLastCheckedAtEQ.
 func Openai5hAutoWakeLastCheckedAt(v time.Time) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeLastCheckedAt, v))
@@ -2323,6 +2328,56 @@ func Openai5hAutoWakeEnabledEQ(v bool) predicate.Group {
 // Openai5hAutoWakeEnabledNEQ applies the NEQ predicate on the "openai_5h_auto_wake_enabled" field.
 func Openai5hAutoWakeEnabledNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldOpenai5hAutoWakeEnabled, v))
+}
+
+// Openai5hAutoWakeNextCheckAtEQ applies the EQ predicate on the "openai_5h_auto_wake_next_check_at" field.
+func Openai5hAutoWakeNextCheckAtEQ(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenai5hAutoWakeNextCheckAt, v))
+}
+
+// Openai5hAutoWakeNextCheckAtNEQ applies the NEQ predicate on the "openai_5h_auto_wake_next_check_at" field.
+func Openai5hAutoWakeNextCheckAtNEQ(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldOpenai5hAutoWakeNextCheckAt, v))
+}
+
+// Openai5hAutoWakeNextCheckAtIn applies the In predicate on the "openai_5h_auto_wake_next_check_at" field.
+func Openai5hAutoWakeNextCheckAtIn(vs ...time.Time) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldOpenai5hAutoWakeNextCheckAt, vs...))
+}
+
+// Openai5hAutoWakeNextCheckAtNotIn applies the NotIn predicate on the "openai_5h_auto_wake_next_check_at" field.
+func Openai5hAutoWakeNextCheckAtNotIn(vs ...time.Time) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldOpenai5hAutoWakeNextCheckAt, vs...))
+}
+
+// Openai5hAutoWakeNextCheckAtGT applies the GT predicate on the "openai_5h_auto_wake_next_check_at" field.
+func Openai5hAutoWakeNextCheckAtGT(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldOpenai5hAutoWakeNextCheckAt, v))
+}
+
+// Openai5hAutoWakeNextCheckAtGTE applies the GTE predicate on the "openai_5h_auto_wake_next_check_at" field.
+func Openai5hAutoWakeNextCheckAtGTE(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldOpenai5hAutoWakeNextCheckAt, v))
+}
+
+// Openai5hAutoWakeNextCheckAtLT applies the LT predicate on the "openai_5h_auto_wake_next_check_at" field.
+func Openai5hAutoWakeNextCheckAtLT(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldOpenai5hAutoWakeNextCheckAt, v))
+}
+
+// Openai5hAutoWakeNextCheckAtLTE applies the LTE predicate on the "openai_5h_auto_wake_next_check_at" field.
+func Openai5hAutoWakeNextCheckAtLTE(v time.Time) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldOpenai5hAutoWakeNextCheckAt, v))
+}
+
+// Openai5hAutoWakeNextCheckAtIsNil applies the IsNil predicate on the "openai_5h_auto_wake_next_check_at" field.
+func Openai5hAutoWakeNextCheckAtIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldOpenai5hAutoWakeNextCheckAt))
+}
+
+// Openai5hAutoWakeNextCheckAtNotNil applies the NotNil predicate on the "openai_5h_auto_wake_next_check_at" field.
+func Openai5hAutoWakeNextCheckAtNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldOpenai5hAutoWakeNextCheckAt))
 }
 
 // Openai5hAutoWakeLastCheckedAtEQ applies the EQ predicate on the "openai_5h_auto_wake_last_checked_at" field.

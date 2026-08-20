@@ -38,9 +38,11 @@ type openAI5hAutoWakeTaskRepoStub struct {
 	OpenAI5hWakeTaskRepository
 	group        *OpenAI5hAutoWakeGroup
 	groups       []OpenAI5hAutoWakeGroup
+	listCalls    int
 	manual       *OpenAI5hWakeTask
 	active       *OpenAI5hWakeTask
 	activeResets map[string]time.Time
+	resetQueries []time.Time
 	createFn     func(OpenAI5hWakeCreateParams) (*OpenAI5hWakeTask, bool, error)
 	createCalls  []OpenAI5hWakeCreateParams
 	updates      []OpenAI5hAutoWakeCheckUpdate
@@ -81,14 +83,16 @@ func (r *openAI5hAutoWakeTaskRepoStub) GetActiveGroupTask(context.Context, int64
 }
 
 func (r *openAI5hAutoWakeTaskRepoStub) ListActiveWakePoolResets(
-	context.Context,
-	[]string,
-	time.Time,
+	_ context.Context,
+	_ []string,
+	now time.Time,
 ) (map[string]time.Time, error) {
+	r.resetQueries = append(r.resetQueries, now)
 	return r.activeResets, nil
 }
 
 func (r *openAI5hAutoWakeTaskRepoStub) ListAutoWakeGroups(context.Context) ([]OpenAI5hAutoWakeGroup, error) {
+	r.listCalls++
 	return append([]OpenAI5hAutoWakeGroup(nil), r.groups...), nil
 }
 
@@ -153,6 +157,7 @@ func TestOpenAI5hAutoWakeCheckUsesOnlyGroupCandidatesAndExcludesTrustedWindows(t
 	require.Equal(t, 1, taskRepo.updates[0].CandidatePoolCount)
 	require.Equal(t, int64(77), *taskRepo.updates[0].TaskID)
 	require.Equal(t, OpenAI5hWakeTaskStatusPending, taskRepo.updates[0].TaskStatus)
+	require.Equal(t, openAI5hAutoWakeRetryInterval, taskRepo.updates[0].NextCheckAt.Sub(taskRepo.updates[0].CheckedAt))
 	require.Len(t, taskRepo.events, 1)
 	require.Equal(t, "task_created", taskRepo.events[0].Code)
 }
@@ -173,6 +178,23 @@ func TestOpenAI5hAutoWakeCheckDoesNotCreateEmptyTask(t *testing.T) {
 	require.Len(t, taskRepo.updates, 1)
 	require.Equal(t, OpenAI5hAutoWakeReasonNoCandidate, taskRepo.updates[0].Reason)
 	require.Zero(t, taskRepo.updates[0].CandidatePoolCount)
+	require.Equal(t, now.Add(4*time.Hour).Truncate(time.Second).Add(openAI5hAutoWakeResetGrace), *taskRepo.updates[0].NextCheckAt)
+}
+
+func TestOpenAI5hAutoWakeCheckWithoutAccountsUsesSixHourFallback(t *testing.T) {
+	accountRepo := &openAI5hAutoWakeAccountRepoStub{accountsByGroup: map[int64][]Account{}}
+	taskRepo := &openAI5hAutoWakeTaskRepoStub{group: &OpenAI5hAutoWakeGroup{
+		ID: 9, Enabled: true, Status: StatusActive,
+	}}
+	wake := &OpenAI5hWakeService{repo: taskRepo, accountRepo: accountRepo}
+
+	err := wake.CheckGroupNow(context.Background(), 9)
+
+	require.NoError(t, err)
+	require.Empty(t, taskRepo.createCalls)
+	require.Len(t, taskRepo.updates, 1)
+	require.Equal(t, OpenAI5hAutoWakeReasonNoCandidate, taskRepo.updates[0].Reason)
+	require.Equal(t, openAI5hAutoWakeNoDataInterval, taskRepo.updates[0].NextCheckAt.Sub(taskRepo.updates[0].CheckedAt))
 }
 
 func TestOpenAI5hAutoWakeCheckHonorsRecentTaskReset(t *testing.T) {
@@ -194,6 +216,8 @@ func TestOpenAI5hAutoWakeCheckHonorsRecentTaskReset(t *testing.T) {
 	require.Empty(t, taskRepo.createCalls)
 	require.Len(t, taskRepo.updates, 1)
 	require.Equal(t, OpenAI5hAutoWakeReasonNoCandidate, taskRepo.updates[0].Reason)
+	require.Equal(t, taskRepo.activeResets[identityHash].Add(openAI5hAutoWakeResetGrace), *taskRepo.updates[0].NextCheckAt)
+	require.Equal(t, taskRepo.updates[0].CheckedAt.Add(-openAI5hAutoWakeResetGrace), taskRepo.resetQueries[0])
 }
 
 func TestOpenAI5hAutoWakeCheckStopsWhenGroupIsNoLongerEligible(t *testing.T) {
@@ -248,6 +272,7 @@ func TestOpenAI5hAutoWakeCheckSkipsActiveTasks(t *testing.T) {
 			require.Len(t, taskRepo.updates, 1)
 			require.Equal(t, tt.wantReason, taskRepo.updates[0].Reason)
 			require.Equal(t, tt.wantTaskID, taskRepo.updates[0].TaskID)
+			require.Equal(t, openAI5hAutoWakeRetryInterval, taskRepo.updates[0].NextCheckAt.Sub(taskRepo.updates[0].CheckedAt))
 		})
 	}
 }
@@ -271,6 +296,7 @@ func TestOpenAI5hAutoWakeCheckHandlesCreationRacesAndErrors(t *testing.T) {
 		require.Len(t, taskRepo.updates, 1)
 		require.Equal(t, OpenAI5hAutoWakeReasonSkippedManualActive, taskRepo.updates[0].Reason)
 		require.Equal(t, 1, taskRepo.updates[0].CandidatePoolCount)
+		require.Equal(t, openAI5hAutoWakeRetryInterval, taskRepo.updates[0].NextCheckAt.Sub(taskRepo.updates[0].CheckedAt))
 	})
 
 	t.Run("same group task wins creation race", func(t *testing.T) {
@@ -292,6 +318,7 @@ func TestOpenAI5hAutoWakeCheckHandlesCreationRacesAndErrors(t *testing.T) {
 		require.Len(t, taskRepo.updates, 1)
 		require.Equal(t, OpenAI5hAutoWakeReasonSkippedAutoActive, taskRepo.updates[0].Reason)
 		require.Equal(t, int64(12), *taskRepo.updates[0].TaskID)
+		require.Equal(t, openAI5hAutoWakeRetryInterval, taskRepo.updates[0].NextCheckAt.Sub(taskRepo.updates[0].CheckedAt))
 	})
 
 	t.Run("account query failure records short reason code", func(t *testing.T) {
@@ -307,26 +334,154 @@ func TestOpenAI5hAutoWakeCheckHandlesCreationRacesAndErrors(t *testing.T) {
 		require.Len(t, taskRepo.updates, 1)
 		require.Equal(t, OpenAI5hAutoWakeReasonCheckError, taskRepo.updates[0].Reason)
 		require.Empty(t, taskRepo.updates[0].TaskStatus)
+		require.Equal(t, openAI5hAutoWakeRetryInterval, taskRepo.updates[0].NextCheckAt.Sub(taskRepo.updates[0].CheckedAt))
 	})
 }
 
-func TestOpenAI5hAutoWakePeriodicScanChecksEveryEligibleGroup(t *testing.T) {
-	require.Equal(t, 5*time.Minute, openAI5hAutoWakeScanInterval)
+func TestOpenAI5hAutoWakeDueCandidatesUseEarliestTrustedPoolDeadline(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	due := *newOpenAI5hWakeAccount(1, "due-pool")
+	firstReset := now.Add(time.Hour)
+	first := trustedOpenAI5hWakeAccount(2, "first-pool", firstReset)
+	secondReset := now.Add(2 * time.Hour)
+	second := trustedOpenAI5hWakeAccount(3, "second-pool", secondReset)
+	groups := buildOpenAI5hWakeQuotaGroups([]*Account{&due, &first, &second})
+
+	candidates, next := openAI5hAutoWakeDueCandidates(groups, nil, now)
+
+	require.Len(t, candidates, 1)
+	require.Equal(t, due.ID, candidates[0].accounts[0].ID)
+	require.NotNil(t, next)
+	require.Equal(t, firstReset.Add(openAI5hAutoWakeResetGrace), *next)
+
+	historyReset := now.Add(30 * time.Minute)
+	candidates, next = openAI5hAutoWakeDueCandidates(groups, map[string]time.Time{
+		openAI5hWakeIdentityHash(&first): historyReset,
+	}, now)
+	require.Len(t, candidates, 1)
+	require.NotNil(t, next)
+	require.Equal(t, historyReset.Add(openAI5hAutoWakeResetGrace), *next)
+
+	stale := trustedOpenAI5hWakeAccount(4, "shared-pool", now.Add(-time.Hour))
+	futureReset := now.Add(time.Hour)
+	future := trustedOpenAI5hWakeAccount(5, "shared-pool", futureReset)
+	sharedGroups := buildOpenAI5hWakeQuotaGroups([]*Account{&stale, &future})
+	candidates, next = openAI5hAutoWakeDueCandidates(sharedGroups, nil, now)
+	require.Empty(t, candidates, "an expired member snapshot must not override the pool's current reset")
+	require.NotNil(t, next)
+	require.Equal(t, futureReset.Add(openAI5hAutoWakeResetGrace), *next)
+}
+
+func TestOpenAI5hAutoWakeDueCandidatesHonorResetGrace(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	withinGraceReset := now.Add(-10 * time.Second)
+	withinGrace := trustedOpenAI5hWakeAccount(1, "snapshot-within-grace", withinGraceReset)
+	dueReset := now.Add(-openAI5hAutoWakeResetGrace)
+	due := trustedOpenAI5hWakeAccount(2, "snapshot-due", dueReset)
+	groups := buildOpenAI5hWakeQuotaGroups([]*Account{&withinGrace, &due})
+
+	candidates, next := openAI5hAutoWakeDueCandidates(groups, nil, now)
+
+	require.Len(t, candidates, 1)
+	require.Equal(t, due.ID, candidates[0].accounts[0].ID)
+	require.NotNil(t, next)
+	require.Equal(t, withinGraceReset.Add(openAI5hAutoWakeResetGrace), *next)
+
+	historyAccount := *newOpenAI5hWakeAccount(3, "history-within-grace")
+	historyGroups := buildOpenAI5hWakeQuotaGroups([]*Account{&historyAccount})
+	historyReset := now.Add(-5 * time.Second)
+	candidates, next = openAI5hAutoWakeDueCandidates(historyGroups, map[string]time.Time{
+		openAI5hWakeIdentityHash(&historyAccount): historyReset,
+	}, now)
+	require.Empty(t, candidates)
+	require.NotNil(t, next)
+	require.Equal(t, historyReset.Add(openAI5hAutoWakeResetGrace), *next)
+}
+
+func TestOpenAI5hAutoWakeDueScanDoesNotLoadAccountsForFutureGroups(t *testing.T) {
+	require.Equal(t, 30*time.Minute, openAI5hAutoWakeCalibrationInterval)
 	accountRepo := &openAI5hAutoWakeAccountRepoStub{accountsByGroup: map[int64][]Account{}}
 	taskRepo := &openAI5hAutoWakeTaskRepoStub{
 		group:  &OpenAI5hAutoWakeGroup{Enabled: true, Status: StatusActive},
 		groups: []OpenAI5hAutoWakeGroup{{ID: 4, Enabled: true, Status: StatusActive}, {ID: 8, Enabled: true, Status: StatusActive}},
 	}
-	// Resolve the requested group dynamically, as the SQL repository does.
-	taskRepo.group = nil
-	wake := &OpenAI5hWakeService{repo: &autoWakeGroupLookupRepo{openAI5hAutoWakeTaskRepoStub: taskRepo}, accountRepo: accountRepo}
+	dueRepo := &openAI5hDueScheduleRepo{
+		autoWakeGroupLookupRepo: &autoWakeGroupLookupRepo{openAI5hAutoWakeTaskRepoStub: taskRepo},
+		dueGroups:               []OpenAI5hAutoWakeGroup{{ID: 4, Enabled: true, Status: StatusActive}},
+	}
+	wake := &OpenAI5hWakeService{repo: dueRepo, accountRepo: accountRepo}
 
 	err := wake.RunAutoWakeScan(context.Background())
 
 	require.NoError(t, err)
-	require.Len(t, accountRepo.calls, 2)
+	require.Len(t, accountRepo.calls, 1)
 	require.Equal(t, int64(4), accountRepo.calls[0].groupID)
-	require.Equal(t, int64(8), accountRepo.calls[1].groupID)
+	require.Equal(t, 1, dueRepo.dueCalls)
+	require.Zero(t, taskRepo.listCalls, "durable scheduling must not enumerate every eligible group")
+	require.Len(t, taskRepo.updates, 1)
+	require.Equal(t, int64(4), taskRepo.updates[0].GroupID)
+}
+
+func TestOpenAI5hAutoWakeRestartCalibrationReadsPersistedDeadlineOnly(t *testing.T) {
+	next := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	accountRepo := &openAI5hAutoWakeAccountRepoStub{}
+	base := &openAI5hAutoWakeTaskRepoStub{}
+	repo := &openAI5hDueScheduleRepo{
+		autoWakeGroupLookupRepo: &autoWakeGroupLookupRepo{openAI5hAutoWakeTaskRepoStub: base},
+		nextCheckAt:             &next,
+	}
+	wake := &OpenAI5hWakeService{repo: repo, accountRepo: accountRepo}
+
+	got, supported, err := wake.nextAutoWakeDeadline()
+
+	require.NoError(t, err)
+	require.True(t, supported)
+	require.Equal(t, &next, got)
+	require.Equal(t, 1, repo.nextCalls)
+	require.Empty(t, accountRepo.calls, "deadline calibration must not hydrate account rows")
+}
+
+func TestOpenAI5hAutoWakeDueScanHonorsLeaderAndPropagatesQueryFailure(t *testing.T) {
+	accountRepo := &openAI5hAutoWakeAccountRepoStub{accountsByGroup: map[int64][]Account{}}
+	base := &openAI5hAutoWakeTaskRepoStub{}
+	repo := &openAI5hDueScheduleRepo{
+		autoWakeGroupLookupRepo: &autoWakeGroupLookupRepo{openAI5hAutoWakeTaskRepoStub: base},
+		dueGroups:               []OpenAI5hAutoWakeGroup{{ID: 4, Enabled: true, Status: StatusActive}},
+	}
+	cache := &fakeLeaderLockCache{}
+	_, acquired := tryAcquireSingletonLeaderLock(context.Background(), cache, nil, openAI5hAutoWakeLeaderLockKey, "peer", time.Minute)
+	require.True(t, acquired)
+	wake := &OpenAI5hWakeService{repo: repo, accountRepo: accountRepo, lockCache: cache, owner: "worker"}
+
+	require.NoError(t, wake.RunAutoWakeScan(context.Background()))
+	require.Zero(t, repo.dueCalls)
+	require.Empty(t, accountRepo.calls)
+	require.NoError(t, cache.ReleaseLeaderLock(context.Background(), openAI5hAutoWakeLeaderLockKey, "peer"))
+
+	repo.dueErr = errors.New("due query failed")
+	err := wake.RunAutoWakeScan(context.Background())
+	require.EqualError(t, err, "list OpenAI 5h auto-wake groups: due query failed")
+	require.Equal(t, 1, repo.dueCalls)
+	require.Empty(t, accountRepo.calls)
+}
+
+func TestOpenAI5hAutoWakeExplicitCheckRunsWhilePeerOwnsScanLeader(t *testing.T) {
+	accountRepo := &openAI5hAutoWakeAccountRepoStub{accountsByGroup: map[int64][]Account{}}
+	repo := &openAI5hAutoWakeTaskRepoStub{group: &OpenAI5hAutoWakeGroup{
+		ID: 4, Enabled: true, Status: StatusActive,
+	}}
+	cache := &fakeLeaderLockCache{}
+	_, acquired := tryAcquireSingletonLeaderLock(context.Background(), cache, nil, openAI5hAutoWakeLeaderLockKey, "peer", time.Minute)
+	require.True(t, acquired)
+	t.Cleanup(func() {
+		require.NoError(t, cache.ReleaseLeaderLock(context.Background(), openAI5hAutoWakeLeaderLockKey, "peer"))
+	})
+	wake := &OpenAI5hWakeService{repo: repo, accountRepo: accountRepo, lockCache: cache, owner: "worker"}
+
+	require.NoError(t, wake.CheckGroupNow(context.Background(), 4))
+	require.Len(t, accountRepo.calls, 1)
+	require.Len(t, repo.updates, 1)
+	require.Equal(t, int64(4), repo.updates[0].GroupID)
 }
 
 func TestOpenAI5hAutoWakeTriggerGroupCheckRunsImmediatelyAndStops(t *testing.T) {
@@ -363,6 +518,30 @@ type autoWakeGroupLookupRepo struct {
 
 func (r *autoWakeGroupLookupRepo) GetAutoWakeGroup(_ context.Context, groupID int64) (*OpenAI5hAutoWakeGroup, error) {
 	return &OpenAI5hAutoWakeGroup{ID: groupID, Enabled: true, Status: StatusActive}, nil
+}
+
+type openAI5hDueScheduleRepo struct {
+	*autoWakeGroupLookupRepo
+	dueGroups   []OpenAI5hAutoWakeGroup
+	dueErr      error
+	dueCalls    int
+	nextCheckAt *time.Time
+	nextErr     error
+	nextCalls   int
+}
+
+func (r *openAI5hDueScheduleRepo) ListDueAutoWakeGroups(context.Context, time.Time) ([]OpenAI5hAutoWakeGroup, error) {
+	r.dueCalls++
+	return append([]OpenAI5hAutoWakeGroup(nil), r.dueGroups...), r.dueErr
+}
+
+func (r *openAI5hDueScheduleRepo) GetNextAutoWakeCheckAt(context.Context) (*time.Time, error) {
+	r.nextCalls++
+	if r.nextCheckAt == nil {
+		return nil, r.nextErr
+	}
+	next := *r.nextCheckAt
+	return &next, r.nextErr
 }
 
 type openAI5hAutoWakeRuntimeRepo struct {

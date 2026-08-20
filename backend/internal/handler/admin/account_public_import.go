@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -16,7 +15,6 @@ import (
 
 const (
 	publicAccountImportEnabledEnv         = "PUBLIC_ACCOUNT_IMPORT_ENABLED"
-	publicAccountImportGroupIDsEnv        = "PUBLIC_ACCOUNT_IMPORT_GROUP_IDS"
 	publicAccountImportMaxRequestBytes    = 3 << 20
 	publicAccountImportMaxFileBytes       = 512 << 10
 	publicAccountImportMaxContentBytes    = 2 << 20
@@ -148,58 +146,24 @@ func publicAccountImportEnabled() bool {
 	}
 }
 
-func publicAccountImportAllowedGroupIDs() (map[int64]struct{}, error) {
-	raw := strings.TrimSpace(os.Getenv(publicAccountImportGroupIDsEnv))
-	if raw == "" || raw == "*" {
-		return nil, nil
-	}
-
-	allowed := make(map[int64]struct{})
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		id, err := strconv.ParseInt(part, 10, 64)
-		if err != nil || id <= 0 {
-			return nil, fmt.Errorf("invalid public account import group id: %s", part)
-		}
-		allowed[id] = struct{}{}
-	}
-	if len(allowed) == 0 {
-		return nil, errors.New("public account import group allowlist is empty")
-	}
-	return allowed, nil
-}
-
 func (h *AccountHandler) listPublicAccountImportGroups(ctx context.Context) ([]PublicAccountImportGroup, error) {
-	allowed, err := publicAccountImportAllowedGroupIDs()
-	if err != nil {
-		return nil, err
-	}
-
-	groups, err := h.listActiveOpenAIAccountGroups(ctx)
+	groups, err := h.listPublicOpenAIAccountGroups(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	result := make([]PublicAccountImportGroup, 0, len(groups))
 	for _, group := range groups {
-		if isPublicAccountImportAllGroup(group.Name) {
-			continue
-		}
-		if allowed != nil {
-			if _, ok := allowed[group.ID]; !ok {
-				continue
-			}
-		}
 		result = append(result, PublicAccountImportGroup{ID: group.ID, Name: group.Name})
 	}
 	return result, nil
 }
 
 func (h *AccountHandler) listActiveOpenAIAccountGroups(ctx context.Context) ([]service.Group, error) {
-	groups, _, err := h.adminService.ListGroups(ctx, 1, 1000, service.PlatformOpenAI, service.StatusActive, "", nil, "sort_order", "asc")
+	// Use the unpaged platform query so the import list and the public status
+	// repository cannot diverge once the number of groups exceeds the admin
+	// table's page-size convention.
+	groups, err := h.adminService.GetAllGroupsByPlatform(ctx, service.PlatformOpenAI)
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +173,27 @@ func (h *AccountHandler) listActiveOpenAIAccountGroups(ctx context.Context) ([]s
 		if group.Status == service.StatusActive && group.Platform == service.PlatformOpenAI {
 			result = append(result, group)
 		}
+	}
+	return result, nil
+}
+
+// listPublicOpenAIAccountGroups is the import-side view of the public group
+// contract. Keep its predicates aligned with publicAccountStatusRepository so
+// both public entry points expose exactly the same business group IDs.
+func (h *AccountHandler) listPublicOpenAIAccountGroups(ctx context.Context) ([]service.Group, error) {
+	groups, err := h.listActiveOpenAIAccountGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]service.Group, 0, len(groups))
+	for _, group := range groups {
+		if group.Status != service.StatusActive ||
+			group.Platform != service.PlatformOpenAI ||
+			!group.PublicStatusEnabled ||
+			isPublicAccountImportAllGroup(group.Name) {
+			continue
+		}
+		result = append(result, group)
 	}
 	return result, nil
 }
@@ -227,10 +212,6 @@ func (h *AccountHandler) resolvePublicAccountImportGroups(ctx context.Context, g
 	}
 
 	normalized := normalizeInt64IDList(groupIDs)
-	allowed, err := publicAccountImportAllowedGroupIDs()
-	if err != nil {
-		return nil, 0, errors.New("failed to validate selected groups")
-	}
 	groups, err := h.listActiveOpenAIAccountGroups(ctx)
 	if err != nil {
 		return nil, 0, errors.New("failed to validate selected groups")
@@ -245,10 +226,8 @@ func (h *AccountHandler) resolvePublicAccountImportGroups(ctx context.Context, g
 			}
 			continue
 		}
-		if allowed != nil {
-			if _, ok := allowed[group.ID]; !ok {
-				continue
-			}
+		if group.Status != service.StatusActive || group.Platform != service.PlatformOpenAI || !group.PublicStatusEnabled {
+			continue
 		}
 		available[group.ID] = group
 	}

@@ -40,20 +40,26 @@ const (
 	openAI5hWakeClaimPoll             = 2 * time.Second
 	openAI5hWakeRetention             = 30 * 24 * time.Hour
 	openAI5hWakeCleanupInterval       = 24 * time.Hour
-	openAI5hAutoWakeScanInterval      = 5 * time.Minute
-	openAI5hAutoWakeLeaderLockTTL     = 15 * time.Minute
-	openAI5hAutoWakeLeaderLockKey     = "openai_5h_group_auto_wake_scan"
-	openAI5hWakeEventTimeout          = 3 * time.Second
-	openAI5hWakeEventMessageMax       = 2000
-	openAI5hWakeDiagnosticMax         = 600
-	openAI5hWakeMaxItemAttempts       = 3
-	openAI5hWakeResponseBodyMax       = 1 << 20
-	openAI5hWakeConfirmationTimeout   = 8 * time.Second
-	openAI5hWakeConfirmationDelay     = 250 * time.Millisecond
-	openAI5hWakeConfirmationMaxDelay  = 2 * time.Second
-	openAI5hWakeInstructions          = "Reply with OK."
-	openAI5hWakeInput                 = "hi"
-	openAI5hWakeAuditPath             = "/api/v1/admin/accounts/openai-5h-wake/tasks/:id"
+	// Kept for compatibility with older callers/tests; the automatic scheduler
+	// below no longer uses a fixed full-table ticker.
+	openAI5hAutoWakeScanInterval        = 5 * time.Minute
+	openAI5hAutoWakeCalibrationInterval = 30 * time.Minute
+	openAI5hAutoWakeRetryInterval       = 15 * time.Minute
+	openAI5hAutoWakeNoDataInterval      = 6 * time.Hour
+	openAI5hAutoWakeResetGrace          = 30 * time.Second
+	openAI5hAutoWakeLeaderLockTTL       = 15 * time.Minute
+	openAI5hAutoWakeLeaderLockKey       = "openai_5h_group_auto_wake_scan"
+	openAI5hWakeEventTimeout            = 3 * time.Second
+	openAI5hWakeEventMessageMax         = 2000
+	openAI5hWakeDiagnosticMax           = 600
+	openAI5hWakeMaxItemAttempts         = 3
+	openAI5hWakeResponseBodyMax         = 1 << 20
+	openAI5hWakeConfirmationTimeout     = 8 * time.Second
+	openAI5hWakeConfirmationDelay       = 250 * time.Millisecond
+	openAI5hWakeConfirmationMaxDelay    = 2 * time.Second
+	openAI5hWakeInstructions            = "Reply with OK."
+	openAI5hWakeInput                   = "hi"
+	openAI5hWakeAuditPath               = "/api/v1/admin/accounts/openai-5h-wake/tasks/:id"
 	// OpenAI5hWakeSnapshotIdentityExtraKey is managed by the wake worker. It is
 	// intentionally exported so repository credential persistence can invalidate
 	// the marker when a quota identity changes without importing wake internals.
@@ -381,9 +387,41 @@ func (s *OpenAI5hWakeService) signalWorker() {
 }
 
 func (s *OpenAI5hWakeService) runAutoWakeScheduler() {
-	ticker := time.NewTicker(openAI5hAutoWakeScanInterval)
-	defer ticker.Stop()
+	// The timer is driven by the earliest persisted deadline. When no deadline
+	// is imminent we wake at most every 30 minutes to recalibrate against the
+	// database, which keeps process restarts and clock drift recoverable without
+	// loading any account rows.
+	timer := time.NewTimer(time.Nanosecond)
+	defer timer.Stop()
+	legacyFallback := false
+	var scanRetryAt time.Time
 	for {
+		now := time.Now().UTC()
+		next, supported, err := s.nextAutoWakeDeadline()
+		if err != nil {
+			slog.Warn("openai_5h_auto_wake_schedule_calibration_failed", "error", err)
+		}
+		if !supported {
+			legacyFallback = true
+		}
+		target := now.Add(openAI5hAutoWakeCalibrationInterval)
+		if err != nil {
+			// A failed calibration is itself a scheduler failure. Retry the
+			// indexed query on the same bounded cadence used for a failed scan.
+			target = now.Add(openAI5hAutoWakeRetryInterval)
+		}
+		if legacyFallback {
+			target = now.Add(openAI5hAutoWakeScanInterval)
+		} else if next != nil && next.Before(target) {
+			target = *next
+		}
+		// A failed scan must not spin when its persisted deadline is still due.
+		// Keep earlier healthy deadlines, but move an already-due retry behind
+		// the bounded backoff.
+		if scanRetryAt.After(now) && target.Before(scanRetryAt) {
+			target = scanRetryAt
+		}
+		resetTimer(timer, durationUntil(target))
 		select {
 		case <-s.serviceContext().Done():
 			return
@@ -394,46 +432,95 @@ func (s *OpenAI5hWakeService) runAutoWakeScheduler() {
 			if err != nil && !errors.Is(err, context.Canceled) {
 				slog.Warn("openai_5h_auto_wake_group_check_failed", "group_id", groupID, "error", err)
 			}
-		case <-ticker.C:
-			if err := s.RunAutoWakeScan(s.serviceContext()); err != nil && !errors.Is(err, context.Canceled) {
-				slog.Warn("openai_5h_auto_wake_scan_failed", "error", err)
+		case <-timer.C:
+			// A legacy repository has no durable schedule. Preserve its old
+			// periodic behavior; production repositories take the due-only path.
+			due := legacyFallback || err != nil || (err == nil && next != nil && !next.After(time.Now().UTC()))
+			if due {
+				ran, scanErr := s.runAutoWakeScan(s.serviceContext())
+				if !ran {
+					// Another instance owns the leader lock. Keep due rows due, but
+					// avoid a tight retry loop while that instance is working.
+					scanRetryAt = time.Now().UTC().Add(openAI5hAutoWakeRetryInterval)
+				} else if scanErr != nil && !errors.Is(scanErr, context.Canceled) {
+					scanRetryAt = time.Now().UTC().Add(openAI5hAutoWakeRetryInterval)
+					slog.Warn("openai_5h_auto_wake_scan_failed", "error", scanErr)
+				} else {
+					scanRetryAt = time.Time{}
+				}
 			}
+			legacyFallback = false
 		}
 	}
 }
 
-func (s *OpenAI5hWakeService) RunAutoWakeScan(ctx context.Context) error {
+func (s *OpenAI5hWakeService) nextAutoWakeDeadline() (*time.Time, bool, error) {
 	if s == nil || s.repo == nil {
-		return nil
+		return nil, false, nil
+	}
+	dueRepo, ok := s.repo.(OpenAI5hWakeDueScheduleRepository)
+	if !ok {
+		return nil, false, nil
+	}
+	ctx, cancel := context.WithTimeout(s.serviceContext(), openAI5hWakeClaimTimeout)
+	defer cancel()
+	next, err := dueRepo.GetNextAutoWakeCheckAt(ctx)
+	return next, true, err
+}
+
+func (s *OpenAI5hWakeService) RunAutoWakeScan(ctx context.Context) error {
+	_, err := s.runAutoWakeScan(ctx)
+	return err
+}
+
+func (s *OpenAI5hWakeService) runAutoWakeScan(ctx context.Context) (bool, error) {
+	if s == nil || s.repo == nil {
+		return true, nil
 	}
 	release, acquired := tryAcquireSingletonLeaderLock(
 		ctx, s.lockCache, s.db, openAI5hAutoWakeLeaderLockKey, s.owner, openAI5hAutoWakeLeaderLockTTL,
 	)
 	if !acquired {
-		return nil
+		return false, nil
 	}
 	defer release()
 
 	scopedRepo, ok := s.repo.(OpenAI5hWakeScopedTaskRepository)
 	if !ok {
-		return nil
+		return true, nil
 	}
-	groups, err := scopedRepo.ListAutoWakeGroups(ctx)
+	var groups []OpenAI5hAutoWakeGroup
+	var err error
+	if dueRepo, dueOK := s.repo.(OpenAI5hWakeDueScheduleRepository); dueOK {
+		groups, err = dueRepo.ListDueAutoWakeGroups(ctx, time.Now().UTC())
+	} else {
+		// Compatibility path for older repository implementations and focused
+		// tests. New production repositories always implement the due query.
+		groups, err = scopedRepo.ListAutoWakeGroups(ctx)
+	}
 	if err != nil {
-		return fmt.Errorf("list OpenAI 5h auto-wake groups: %w", err)
+		return true, fmt.Errorf("list OpenAI 5h auto-wake groups: %w", err)
 	}
+	var firstErr error
 	for i := range groups {
 		if err := ctx.Err(); err != nil {
-			return err
+			return true, err
 		}
-		if err := s.CheckGroupNow(ctx, groups[i].ID); err != nil {
+		if err := s.checkGroupNow(ctx, groups[i].ID); err != nil {
 			slog.Warn("openai_5h_auto_wake_group_check_failed", "group_id", groups[i].ID, "error", err)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
-	return nil
+	return true, firstErr
 }
 
 func (s *OpenAI5hWakeService) CheckGroupNow(ctx context.Context, groupID int64) error {
+	return s.checkGroupNow(ctx, groupID)
+}
+
+func (s *OpenAI5hWakeService) checkGroupNow(ctx context.Context, groupID int64) error {
 	if s == nil || s.repo == nil || groupID <= 0 {
 		return nil
 	}
@@ -442,67 +529,77 @@ func (s *OpenAI5hWakeService) CheckGroupNow(ctx context.Context, groupID int64) 
 		return nil
 	}
 	group, err := scopedRepo.GetAutoWakeGroup(ctx, groupID)
-	if err != nil || group == nil {
+	if err != nil {
+		checkedAt := time.Now().UTC()
+		retryAt := checkedAt.Add(openAI5hAutoWakeRetryInterval)
+		if recordErr := s.recordAutoWakeCheckError(ctx, groupID, checkedAt, retryAt, err); recordErr != nil {
+			return recordErr
+		}
 		return err
+	}
+	if group == nil {
+		return nil
 	}
 	if !group.Enabled || group.Status != StatusActive {
 		return nil
 	}
 	checkedAt := time.Now().UTC()
+	retryAt := checkedAt.Add(openAI5hAutoWakeRetryInterval)
 
 	manual, err := scopedRepo.GetActiveManualTask(ctx)
 	if err != nil {
-		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, err)
+		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, retryAt, err)
 	}
 	if manual != nil {
 		return s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
 			GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: 0,
-			Reason: OpenAI5hAutoWakeReasonSkippedManualActive,
+			Reason:      OpenAI5hAutoWakeReasonSkippedManualActive,
+			NextCheckAt: &retryAt,
 		})
 	}
 	active, err := scopedRepo.GetActiveGroupTask(ctx, groupID)
 	if err != nil {
-		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, err)
+		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, retryAt, err)
 	}
 	if active != nil {
 		return s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
 			GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: 0,
 			Reason: OpenAI5hAutoWakeReasonSkippedAutoActive,
 			TaskID: &active.ID, TaskStatus: active.Status,
+			NextCheckAt: &retryAt,
 		})
 	}
 
 	plan, err := s.buildPlanForGroup(ctx, checkedAt, groupID)
 	if err != nil {
-		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, err)
+		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, retryAt, err)
 	}
-	candidates := openAI5hAutoWakeCandidateGroups(plan.groups, checkedAt)
-	if windowRepo, supportsWindowHistory := s.repo.(OpenAI5hWakeWindowRepository); supportsWindowHistory && len(candidates) > 0 {
-		identityHashes := make([]string, 0, len(candidates))
-		for _, candidate := range candidates {
+	// Consult both the account snapshot and durable task history before loading
+	// any wake candidates. A pool is eligible only after its trusted reset time
+	// plus the small confirmation grace has elapsed.
+	activeResets := map[string]time.Time{}
+	if windowRepo, supportsWindowHistory := s.repo.(OpenAI5hWakeWindowRepository); supportsWindowHistory && len(plan.groups) > 0 {
+		identityHashes := make([]string, 0, len(plan.groups))
+		for _, candidate := range plan.groups {
 			identityHashes = append(identityHashes, candidate.identityHash)
 		}
-		activeResets, historyErr := windowRepo.ListActiveWakePoolResets(ctx, identityHashes, checkedAt)
-		if historyErr != nil {
-			return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, historyErr)
-		}
-		if len(activeResets) > 0 {
-			filtered := make([]openAI5hWakeQuotaGroup, 0, len(candidates))
-			for _, candidate := range candidates {
-				resetAt, active := activeResets[candidate.identityHash]
-				if active && resetAt.After(checkedAt) {
-					plan.preview.ActiveWindows++
-					continue
-				}
-				filtered = append(filtered, candidate)
-			}
-			candidates = filtered
+		// Include resets that just elapsed so the reset grace remains effective
+		// when task history is the only trusted source for a pool.
+		historyCutoff := checkedAt.Add(-openAI5hAutoWakeResetGrace)
+		activeResets, err = windowRepo.ListActiveWakePoolResets(ctx, identityHashes, historyCutoff)
+		if err != nil {
+			return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, retryAt, err)
 		}
 	}
+	candidates, nextCheckAt := openAI5hAutoWakeDueCandidates(plan.groups, activeResets, checkedAt)
 	if len(candidates) == 0 {
+		if nextCheckAt == nil {
+			fallback := checkedAt.Add(openAI5hAutoWakeNoDataInterval)
+			nextCheckAt = &fallback
+		}
 		return s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
 			GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: 0,
-			Reason: OpenAI5hAutoWakeReasonNoCandidate,
+			Reason: OpenAI5hAutoWakeReasonNoCandidate, NextCheckAt: nextCheckAt,
 		})
 	}
 
@@ -518,6 +615,10 @@ func (s *OpenAI5hWakeService) CheckGroupNow(ctx context.Context, groupID int64) 
 			IdentityHash: candidate.identityHash, MemberAccountIDs: ids,
 		})
 	}
+	// Task creation/execution is retried on a bounded cadence. Once the task
+	// reaches a terminal state the worker signals a fresh calculation, which
+	// replaces this retry deadline with the next trusted pool deadline.
+	creationRetryAt := retryAt
 	task, created, err := s.repo.CreateOrGetActive(ctx, OpenAI5hWakeCreateParams{
 		TriggerType:           OpenAI5hWakeTriggerGroupAuto,
 		GroupID:               &groupID,
@@ -529,17 +630,17 @@ func (s *OpenAI5hWakeService) CheckGroupNow(ctx context.Context, groupID int64) 
 	if errors.Is(err, ErrOpenAI5hWakeManualTaskActive) {
 		return s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
 			GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: len(candidates),
-			Reason: OpenAI5hAutoWakeReasonSkippedManualActive,
+			Reason: OpenAI5hAutoWakeReasonSkippedManualActive, NextCheckAt: &creationRetryAt,
 		})
 	}
 	if errors.Is(err, ErrOpenAI5hWakeGroupNotEligible) {
 		return nil
 	}
 	if err != nil {
-		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, err)
+		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, retryAt, err)
 	}
 	if task == nil {
-		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, errOpenAI5hWakeRepositoryContract)
+		return s.recordAutoWakeCheckError(ctx, groupID, checkedAt, retryAt, errOpenAI5hWakeRepositoryContract)
 	}
 	reason := OpenAI5hAutoWakeReasonSkippedAutoActive
 	if created {
@@ -552,7 +653,7 @@ func (s *OpenAI5hWakeService) CheckGroupNow(ctx context.Context, groupID int64) 
 	}
 	if err := s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
 		GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: len(candidates),
-		Reason: reason, TaskID: &task.ID, TaskStatus: task.Status,
+		Reason: reason, TaskID: &task.ID, TaskStatus: task.Status, NextCheckAt: &creationRetryAt,
 	}); err != nil {
 		return err
 	}
@@ -560,14 +661,15 @@ func (s *OpenAI5hWakeService) CheckGroupNow(ctx context.Context, groupID int64) 
 	return nil
 }
 
-func (s *OpenAI5hWakeService) recordAutoWakeCheckError(ctx context.Context, groupID int64, checkedAt time.Time, cause error) error {
+func (s *OpenAI5hWakeService) recordAutoWakeCheckError(ctx context.Context, groupID int64, checkedAt, retryAt time.Time, cause error) error {
 	scopedRepo, ok := s.repo.(OpenAI5hWakeScopedTaskRepository)
 	if !ok {
 		return cause
 	}
 	updateErr := s.updateAutoWakeGroupCheck(ctx, scopedRepo, OpenAI5hAutoWakeCheckUpdate{
 		GroupID: groupID, CheckedAt: checkedAt, CandidatePoolCount: 0,
-		Reason: OpenAI5hAutoWakeReasonCheckError,
+		Reason:      OpenAI5hAutoWakeReasonCheckError,
+		NextCheckAt: &retryAt,
 	})
 	if updateErr != nil {
 		return fmt.Errorf("record OpenAI 5h auto-wake check error: %w", updateErr)
@@ -633,15 +735,39 @@ func buildOpenAI5hWakePlan(accounts []Account, now time.Time) *openAI5hWakePlan 
 	return plan
 }
 
-func openAI5hAutoWakeCandidateGroups(groups []openAI5hWakeQuotaGroup, now time.Time) []openAI5hWakeQuotaGroup {
+// openAI5hAutoWakeDueCandidates separates pools that can be checked now from
+// pools covered by a trusted reset snapshot or recent task history. The group
+// deadline is the earliest reset+grace across all pools, so a single group can
+// wake its pools in successive batches without repeatedly probing the later
+// windows.
+func openAI5hAutoWakeDueCandidates(
+	groups []openAI5hWakeQuotaGroup,
+	history map[string]time.Time,
+	now time.Time,
+) ([]openAI5hWakeQuotaGroup, *time.Time) {
 	candidates := make([]openAI5hWakeQuotaGroup, 0, len(groups))
+	var next *time.Time
 	for _, group := range groups {
-		if _, _, active := activeWakeSnapshot(group.accounts, now); active {
-			continue
+		resetAt, trusted := trustedOpenAI5hWakePoolResetAt(group.accounts, now)
+		if historical, ok := history[group.identityHash]; ok {
+			if !trusted || historical.Before(resetAt) {
+				resetAt = historical
+				trusted = true
+			}
+		}
+		if trusted {
+			dueAt := resetAt.Add(openAI5hAutoWakeResetGrace)
+			if dueAt.After(now) {
+				if next == nil || dueAt.Before(*next) {
+					candidate := dueAt
+					next = &candidate
+				}
+				continue
+			}
 		}
 		candidates = append(candidates, group)
 	}
-	return candidates
+	return candidates, next
 }
 
 // openAI5hWakeAllStatusRepository is deliberately optional.  Most account
@@ -1151,6 +1277,12 @@ func (s *OpenAI5hWakeService) processTask(task *OpenAI5hWakeTask) {
 			}
 		}
 		statusCancel()
+		// A fully successful automatic task has persisted fresh reset snapshots.
+		// Re-run the cheap group calculation immediately so the durable deadline
+		// moves to the next quota pool instead of waiting for the calibration timer.
+		if finalTask.Status == OpenAI5hWakeTaskStatusSucceeded && finalTask.GroupID != nil {
+			s.TriggerGroupCheck(*finalTask.GroupID)
+		}
 	}
 	s.recordTaskEvent(task.ID, nil, OpenAI5hWakeEventLevelInfo, "task_finished", fmt.Sprintf(
 		"status=%s woken=%d skipped_active=%d failed=%d cancelled=%d",
@@ -2599,6 +2731,27 @@ func activeWakeSnapshot(accounts []*Account, now time.Time) (*Account, time.Time
 		}
 	}
 	return source, resetAt, source != nil
+}
+
+// trustedOpenAI5hWakePoolResetAt intentionally does not require a non-zero
+// utilization percentage. A verified reset whose grace deadline is still in
+// the future is sufficient to defer the probe; older snapshots are already due
+// and must not override a newer snapshot from another member of the same pool.
+func trustedOpenAI5hWakePoolResetAt(accounts []*Account, now time.Time) (time.Time, bool) {
+	var resetAt time.Time
+	for _, account := range accounts {
+		if !hasTrustedOpenAI5hWakeSnapshot(account) {
+			continue
+		}
+		candidate, ok := openAIWakeResetAt(account.Extra)
+		if !ok || !candidate.Add(openAI5hAutoWakeResetGrace).After(now) {
+			continue
+		}
+		if resetAt.IsZero() || candidate.Before(resetAt) {
+			resetAt = candidate
+		}
+	}
+	return resetAt, !resetAt.IsZero()
 }
 
 func openAIWakeUsedPercent(extra map[string]any) (float64, bool) {

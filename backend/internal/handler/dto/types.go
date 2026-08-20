@@ -164,6 +164,7 @@ type AdminGroup struct {
 
 	PublicStatusEnabled                    bool       `json:"public_status_enabled"`
 	OpenAI5hAutoWakeEnabled                bool       `json:"openai_5h_auto_wake_enabled"`
+	OpenAI5hAutoWakeNextCheckAt            *time.Time `json:"openai_5h_auto_wake_next_check_at"`
 	OpenAI5hAutoWakeLastCheckedAt          *time.Time `json:"openai_5h_auto_wake_last_checked_at"`
 	OpenAI5hAutoWakeLastCandidatePoolCount *int       `json:"openai_5h_auto_wake_last_candidate_pool_count"`
 	OpenAI5hAutoWakeLastReason             string     `json:"openai_5h_auto_wake_last_reason"`

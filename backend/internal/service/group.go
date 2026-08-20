@@ -102,6 +102,7 @@ type Group struct {
 	AllowMessagesDispatch                  bool
 	AllowLive                              bool
 	OpenAI5hAutoWakeEnabled                bool
+	OpenAI5hAutoWakeNextCheckAt            *time.Time
 	OpenAI5hAutoWakeLastCheckedAt          *time.Time
 	OpenAI5hAutoWakeLastCandidatePoolCount *int
 	OpenAI5hAutoWakeLastReason             string

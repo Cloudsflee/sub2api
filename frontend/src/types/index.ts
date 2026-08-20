@@ -609,6 +609,7 @@ export interface Group {
 export interface AdminGroup extends Group {
   public_status_enabled: boolean
   openai_5h_auto_wake_enabled: boolean
+  openai_5h_auto_wake_next_check_at?: string | null
   openai_5h_auto_wake_last_checked_at: string | null
   openai_5h_auto_wake_last_candidate_pool_count: number | null
   openai_5h_auto_wake_last_reason: string

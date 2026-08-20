@@ -22,7 +22,12 @@ func NewPublicAccountStatusRepository(client *dbent.Client) service.PublicAccoun
 
 func (r *publicAccountStatusRepository) ListPublicStatusGroups(ctx context.Context) ([]service.PublicStatusGroupRecord, error) {
 	rows, err := r.client.Group.Query().
-		Where(dbgroup.PublicStatusEnabledEQ(true)).
+		Where(
+			dbgroup.PublicStatusEnabledEQ(true),
+			dbgroup.StatusEQ(service.StatusActive),
+			dbgroup.PlatformEQ(service.PlatformOpenAI),
+			dbgroup.Not(dbgroup.NameEqualFold("ALL")),
+		).
 		Order(dbent.Asc(dbgroup.FieldSortOrder), dbent.Asc(dbgroup.FieldID)).
 		Select(
 			dbgroup.FieldID,
@@ -56,7 +61,15 @@ func (r *publicAccountStatusRepository) ListPublicStatusGroupAccounts(ctx contex
 		return []service.PublicStatusGroupAccountRecord{}, nil
 	}
 	rows, err := r.client.AccountGroup.Query().
-		Where(accountgroup.GroupIDIn(groupIDs...)).
+		Where(
+			accountgroup.GroupIDIn(groupIDs...),
+			accountgroup.HasGroupWith(
+				dbgroup.PublicStatusEnabledEQ(true),
+				dbgroup.StatusEQ(service.StatusActive),
+				dbgroup.PlatformEQ(service.PlatformOpenAI),
+				dbgroup.Not(dbgroup.NameEqualFold("ALL")),
+			),
+		).
 		Order(dbent.Asc(accountgroup.FieldGroupID), dbent.Asc(accountgroup.FieldAccountID)).
 		WithAccount(func(query *dbent.AccountQuery) {
 			query.Select(publicStatusAccountFields()...)
@@ -80,7 +93,13 @@ func (r *publicAccountStatusRepository) ListPublicStatusGroupAccounts(ctx contex
 
 func (r *publicAccountStatusRepository) ListPublicStatusAccounts(ctx context.Context, groupID int64, offset, limit int) ([]*service.Account, int64, error) {
 	exists, err := r.client.Group.Query().
-		Where(dbgroup.IDEQ(groupID), dbgroup.PublicStatusEnabledEQ(true)).
+		Where(
+			dbgroup.IDEQ(groupID),
+			dbgroup.PublicStatusEnabledEQ(true),
+			dbgroup.StatusEQ(service.StatusActive),
+			dbgroup.PlatformEQ(service.PlatformOpenAI),
+			dbgroup.Not(dbgroup.NameEqualFold("ALL")),
+		).
 		Exist(ctx)
 	if err != nil {
 		return nil, 0, err

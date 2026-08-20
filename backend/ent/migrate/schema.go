@@ -956,6 +956,7 @@ var (
 		{Name: "allow_messages_dispatch", Type: field.TypeBool, Default: false},
 		{Name: "allow_live", Type: field.TypeBool, Default: false},
 		{Name: "openai_5h_auto_wake_enabled", Type: field.TypeBool, Default: false},
+		{Name: "openai_5h_auto_wake_next_check_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "openai_5h_auto_wake_last_checked_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "openai_5h_auto_wake_last_candidate_pool_count", Type: field.TypeInt, Nullable: true},
 		{Name: "openai_5h_auto_wake_last_reason", Type: field.TypeString, Nullable: true, Size: 64},

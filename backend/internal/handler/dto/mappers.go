@@ -148,6 +148,7 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 		Group:                                  groupFromServiceBase(g),
 		PublicStatusEnabled:                    g.PublicStatusEnabled,
 		OpenAI5hAutoWakeEnabled:                g.OpenAI5hAutoWakeEnabled,
+		OpenAI5hAutoWakeNextCheckAt:            g.OpenAI5hAutoWakeNextCheckAt,
 		OpenAI5hAutoWakeLastCheckedAt:          g.OpenAI5hAutoWakeLastCheckedAt,
 		OpenAI5hAutoWakeLastCandidatePoolCount: g.OpenAI5hAutoWakeLastCandidatePoolCount,
 		OpenAI5hAutoWakeLastReason:             g.OpenAI5hAutoWakeLastReason,

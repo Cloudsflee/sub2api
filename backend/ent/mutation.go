@@ -22166,6 +22166,7 @@ type GroupMutation struct {
 	allow_messages_dispatch                          *bool
 	allow_live                                       *bool
 	openai_5h_auto_wake_enabled                      *bool
+	openai_5h_auto_wake_next_check_at                *time.Time
 	openai_5h_auto_wake_last_checked_at              *time.Time
 	openai_5h_auto_wake_last_candidate_pool_count    *int
 	addopenai_5h_auto_wake_last_candidate_pool_count *int
@@ -25031,6 +25032,55 @@ func (m *GroupMutation) ResetOpenai5hAutoWakeEnabled() {
 	m.openai_5h_auto_wake_enabled = nil
 }
 
+// SetOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field.
+func (m *GroupMutation) SetOpenai5hAutoWakeNextCheckAt(t time.Time) {
+	m.openai_5h_auto_wake_next_check_at = &t
+}
+
+// Openai5hAutoWakeNextCheckAt returns the value of the "openai_5h_auto_wake_next_check_at" field in the mutation.
+func (m *GroupMutation) Openai5hAutoWakeNextCheckAt() (r time.Time, exists bool) {
+	v := m.openai_5h_auto_wake_next_check_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOpenai5hAutoWakeNextCheckAt returns the old "openai_5h_auto_wake_next_check_at" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldOpenai5hAutoWakeNextCheckAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOpenai5hAutoWakeNextCheckAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOpenai5hAutoWakeNextCheckAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOpenai5hAutoWakeNextCheckAt: %w", err)
+	}
+	return oldValue.Openai5hAutoWakeNextCheckAt, nil
+}
+
+// ClearOpenai5hAutoWakeNextCheckAt clears the value of the "openai_5h_auto_wake_next_check_at" field.
+func (m *GroupMutation) ClearOpenai5hAutoWakeNextCheckAt() {
+	m.openai_5h_auto_wake_next_check_at = nil
+	m.clearedFields[group.FieldOpenai5hAutoWakeNextCheckAt] = struct{}{}
+}
+
+// Openai5hAutoWakeNextCheckAtCleared returns if the "openai_5h_auto_wake_next_check_at" field was cleared in this mutation.
+func (m *GroupMutation) Openai5hAutoWakeNextCheckAtCleared() bool {
+	_, ok := m.clearedFields[group.FieldOpenai5hAutoWakeNextCheckAt]
+	return ok
+}
+
+// ResetOpenai5hAutoWakeNextCheckAt resets all changes to the "openai_5h_auto_wake_next_check_at" field.
+func (m *GroupMutation) ResetOpenai5hAutoWakeNextCheckAt() {
+	m.openai_5h_auto_wake_next_check_at = nil
+	delete(m.clearedFields, group.FieldOpenai5hAutoWakeNextCheckAt)
+}
+
 // SetOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field.
 func (m *GroupMutation) SetOpenai5hAutoWakeLastCheckedAt(t time.Time) {
 	m.openai_5h_auto_wake_last_checked_at = &t
@@ -26147,7 +26197,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 69)
+	fields := make([]string, 0, 70)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26306,6 +26356,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.openai_5h_auto_wake_enabled != nil {
 		fields = append(fields, group.FieldOpenai5hAutoWakeEnabled)
+	}
+	if m.openai_5h_auto_wake_next_check_at != nil {
+		fields = append(fields, group.FieldOpenai5hAutoWakeNextCheckAt)
 	}
 	if m.openai_5h_auto_wake_last_checked_at != nil {
 		fields = append(fields, group.FieldOpenai5hAutoWakeLastCheckedAt)
@@ -26469,6 +26522,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.AllowLive()
 	case group.FieldOpenai5hAutoWakeEnabled:
 		return m.Openai5hAutoWakeEnabled()
+	case group.FieldOpenai5hAutoWakeNextCheckAt:
+		return m.Openai5hAutoWakeNextCheckAt()
 	case group.FieldOpenai5hAutoWakeLastCheckedAt:
 		return m.Openai5hAutoWakeLastCheckedAt()
 	case group.FieldOpenai5hAutoWakeLastCandidatePoolCount:
@@ -26616,6 +26671,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldAllowLive(ctx)
 	case group.FieldOpenai5hAutoWakeEnabled:
 		return m.OldOpenai5hAutoWakeEnabled(ctx)
+	case group.FieldOpenai5hAutoWakeNextCheckAt:
+		return m.OldOpenai5hAutoWakeNextCheckAt(ctx)
 	case group.FieldOpenai5hAutoWakeLastCheckedAt:
 		return m.OldOpenai5hAutoWakeLastCheckedAt(ctx)
 	case group.FieldOpenai5hAutoWakeLastCandidatePoolCount:
@@ -27027,6 +27084,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetOpenai5hAutoWakeEnabled(v)
+		return nil
+	case group.FieldOpenai5hAutoWakeNextCheckAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOpenai5hAutoWakeNextCheckAt(v)
 		return nil
 	case group.FieldOpenai5hAutoWakeLastCheckedAt:
 		v, ok := value.(time.Time)
@@ -27587,6 +27651,9 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldModelRouting) {
 		fields = append(fields, group.FieldModelRouting)
 	}
+	if m.FieldCleared(group.FieldOpenai5hAutoWakeNextCheckAt) {
+		fields = append(fields, group.FieldOpenai5hAutoWakeNextCheckAt)
+	}
 	if m.FieldCleared(group.FieldOpenai5hAutoWakeLastCheckedAt) {
 		fields = append(fields, group.FieldOpenai5hAutoWakeLastCheckedAt)
 	}
@@ -27681,6 +27748,9 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldModelRouting:
 		m.ClearModelRouting()
+		return nil
+	case group.FieldOpenai5hAutoWakeNextCheckAt:
+		m.ClearOpenai5hAutoWakeNextCheckAt()
 		return nil
 	case group.FieldOpenai5hAutoWakeLastCheckedAt:
 		m.ClearOpenai5hAutoWakeLastCheckedAt()
@@ -27863,6 +27933,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldOpenai5hAutoWakeEnabled:
 		m.ResetOpenai5hAutoWakeEnabled()
+		return nil
+	case group.FieldOpenai5hAutoWakeNextCheckAt:
+		m.ResetOpenai5hAutoWakeNextCheckAt()
 		return nil
 	case group.FieldOpenai5hAutoWakeLastCheckedAt:
 		m.ResetOpenai5hAutoWakeLastCheckedAt()

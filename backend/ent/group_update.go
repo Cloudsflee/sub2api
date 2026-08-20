@@ -1017,6 +1017,26 @@ func (_u *GroupUpdate) SetNillableOpenai5hAutoWakeEnabled(v *bool) *GroupUpdate 
 	return _u
 }
 
+// SetOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field.
+func (_u *GroupUpdate) SetOpenai5hAutoWakeNextCheckAt(v time.Time) *GroupUpdate {
+	_u.mutation.SetOpenai5hAutoWakeNextCheckAt(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableOpenai5hAutoWakeNextCheckAt(v *time.Time) *GroupUpdate {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeNextCheckAt(*v)
+	}
+	return _u
+}
+
+// ClearOpenai5hAutoWakeNextCheckAt clears the value of the "openai_5h_auto_wake_next_check_at" field.
+func (_u *GroupUpdate) ClearOpenai5hAutoWakeNextCheckAt() *GroupUpdate {
+	_u.mutation.ClearOpenai5hAutoWakeNextCheckAt()
+	return _u
+}
+
 // SetOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field.
 func (_u *GroupUpdate) SetOpenai5hAutoWakeLastCheckedAt(v time.Time) *GroupUpdate {
 	_u.mutation.SetOpenai5hAutoWakeLastCheckedAt(v)
@@ -1954,6 +1974,12 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Openai5hAutoWakeEnabled(); ok {
 		_spec.SetField(group.FieldOpenai5hAutoWakeEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeNextCheckAt(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeNextCheckAt, field.TypeTime, value)
+	}
+	if _u.mutation.Openai5hAutoWakeNextCheckAtCleared() {
+		_spec.ClearField(group.FieldOpenai5hAutoWakeNextCheckAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.Openai5hAutoWakeLastCheckedAt(); ok {
 		_spec.SetField(group.FieldOpenai5hAutoWakeLastCheckedAt, field.TypeTime, value)
@@ -3332,6 +3358,26 @@ func (_u *GroupUpdateOne) SetNillableOpenai5hAutoWakeEnabled(v *bool) *GroupUpda
 	return _u
 }
 
+// SetOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field.
+func (_u *GroupUpdateOne) SetOpenai5hAutoWakeNextCheckAt(v time.Time) *GroupUpdateOne {
+	_u.mutation.SetOpenai5hAutoWakeNextCheckAt(v)
+	return _u
+}
+
+// SetNillableOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableOpenai5hAutoWakeNextCheckAt(v *time.Time) *GroupUpdateOne {
+	if v != nil {
+		_u.SetOpenai5hAutoWakeNextCheckAt(*v)
+	}
+	return _u
+}
+
+// ClearOpenai5hAutoWakeNextCheckAt clears the value of the "openai_5h_auto_wake_next_check_at" field.
+func (_u *GroupUpdateOne) ClearOpenai5hAutoWakeNextCheckAt() *GroupUpdateOne {
+	_u.mutation.ClearOpenai5hAutoWakeNextCheckAt()
+	return _u
+}
+
 // SetOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field.
 func (_u *GroupUpdateOne) SetOpenai5hAutoWakeLastCheckedAt(v time.Time) *GroupUpdateOne {
 	_u.mutation.SetOpenai5hAutoWakeLastCheckedAt(v)
@@ -4299,6 +4345,12 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.Openai5hAutoWakeEnabled(); ok {
 		_spec.SetField(group.FieldOpenai5hAutoWakeEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Openai5hAutoWakeNextCheckAt(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeNextCheckAt, field.TypeTime, value)
+	}
+	if _u.mutation.Openai5hAutoWakeNextCheckAtCleared() {
+		_spec.ClearField(group.FieldOpenai5hAutoWakeNextCheckAt, field.TypeTime)
 	}
 	if value, ok := _u.mutation.Openai5hAutoWakeLastCheckedAt(); ok {
 		_spec.SetField(group.FieldOpenai5hAutoWakeLastCheckedAt, field.TypeTime, value)

@@ -125,6 +125,8 @@ type Group struct {
 	AllowLive bool `json:"allow_live,omitempty"`
 	// 是否为此 OpenAI 分组自动唤醒 5h 配额窗口
 	Openai5hAutoWakeEnabled bool `json:"openai_5h_auto_wake_enabled,omitempty"`
+	// OpenAI 5h 自动唤醒下一次计划检查时间
+	Openai5hAutoWakeNextCheckAt *time.Time `json:"openai_5h_auto_wake_next_check_at,omitempty"`
 	// Openai5hAutoWakeLastCheckedAt holds the value of the "openai_5h_auto_wake_last_checked_at" field.
 	Openai5hAutoWakeLastCheckedAt *time.Time `json:"openai_5h_auto_wake_last_checked_at,omitempty"`
 	// Openai5hAutoWakeLastCandidatePoolCount holds the value of the "openai_5h_auto_wake_last_candidate_pool_count" field.
@@ -273,7 +275,7 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullInt64)
 		case group.FieldName, group.FieldDescription, group.FieldPeakStart, group.FieldPeakEnd, group.FieldStatus, group.FieldDuplicateOperationID, group.FieldPlatform, group.FieldSubscriptionType, group.FieldOpenai5hAutoWakeLastReason, group.FieldOpenai5hAutoWakeLastTaskStatus, group.FieldDefaultMappedModel, group.FieldMaxReasoningEffort:
 			values[i] = new(sql.NullString)
-		case group.FieldCreatedAt, group.FieldUpdatedAt, group.FieldDeletedAt, group.FieldOpenai5hAutoWakeLastCheckedAt:
+		case group.FieldCreatedAt, group.FieldUpdatedAt, group.FieldDeletedAt, group.FieldOpenai5hAutoWakeNextCheckAt, group.FieldOpenai5hAutoWakeLastCheckedAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -640,6 +642,13 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field openai_5h_auto_wake_enabled", values[i])
 			} else if value.Valid {
 				_m.Openai5hAutoWakeEnabled = value.Bool
+			}
+		case group.FieldOpenai5hAutoWakeNextCheckAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field openai_5h_auto_wake_next_check_at", values[i])
+			} else if value.Valid {
+				_m.Openai5hAutoWakeNextCheckAt = new(time.Time)
+				*_m.Openai5hAutoWakeNextCheckAt = value.Time
 			}
 		case group.FieldOpenai5hAutoWakeLastCheckedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -1020,6 +1029,11 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("openai_5h_auto_wake_enabled=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Openai5hAutoWakeEnabled))
+	builder.WriteString(", ")
+	if v := _m.Openai5hAutoWakeNextCheckAt; v != nil {
+		builder.WriteString("openai_5h_auto_wake_next_check_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
 	builder.WriteString(", ")
 	if v := _m.Openai5hAutoWakeLastCheckedAt; v != nil {
 		builder.WriteString("openai_5h_auto_wake_last_checked_at=")

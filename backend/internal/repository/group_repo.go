@@ -105,6 +105,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
 		SetAllowLive(groupIn.AllowLive).
 		SetOpenai5hAutoWakeEnabled(groupIn.OpenAI5hAutoWakeEnabled).
+		SetNillableOpenai5hAutoWakeNextCheckAt(groupIn.OpenAI5hAutoWakeNextCheckAt).
 		SetRequireOauthOnly(groupIn.RequireOAuthOnly).
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
@@ -283,6 +284,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
 		SetAllowLive(groupIn.AllowLive).
 		SetOpenai5hAutoWakeEnabled(groupIn.OpenAI5hAutoWakeEnabled).
+		SetNillableOpenai5hAutoWakeNextCheckAt(groupIn.OpenAI5hAutoWakeNextCheckAt).
 		SetRequireOauthOnly(groupIn.RequireOAuthOnly).
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
@@ -369,6 +371,11 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		builder = builder.SetAudioSttPricePerHour(*groupIn.AudioSTTPricePerHour)
 	} else {
 		builder = builder.ClearAudioSttPricePerHour()
+	}
+	if groupIn.OpenAI5hAutoWakeNextCheckAt != nil {
+		builder = builder.SetOpenai5hAutoWakeNextCheckAt(*groupIn.OpenAI5hAutoWakeNextCheckAt)
+	} else {
+		builder = builder.ClearOpenai5hAutoWakeNextCheckAt()
 	}
 
 	// 处理 FallbackGroupID：nil 时清除，否则设置

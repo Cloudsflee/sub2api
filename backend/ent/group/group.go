@@ -122,6 +122,8 @@ const (
 	FieldAllowLive = "allow_live"
 	// FieldOpenai5hAutoWakeEnabled holds the string denoting the openai_5h_auto_wake_enabled field in the database.
 	FieldOpenai5hAutoWakeEnabled = "openai_5h_auto_wake_enabled"
+	// FieldOpenai5hAutoWakeNextCheckAt holds the string denoting the openai_5h_auto_wake_next_check_at field in the database.
+	FieldOpenai5hAutoWakeNextCheckAt = "openai_5h_auto_wake_next_check_at"
 	// FieldOpenai5hAutoWakeLastCheckedAt holds the string denoting the openai_5h_auto_wake_last_checked_at field in the database.
 	FieldOpenai5hAutoWakeLastCheckedAt = "openai_5h_auto_wake_last_checked_at"
 	// FieldOpenai5hAutoWakeLastCandidatePoolCount holds the string denoting the openai_5h_auto_wake_last_candidate_pool_count field in the database.
@@ -282,6 +284,7 @@ var Columns = []string{
 	FieldAllowMessagesDispatch,
 	FieldAllowLive,
 	FieldOpenai5hAutoWakeEnabled,
+	FieldOpenai5hAutoWakeNextCheckAt,
 	FieldOpenai5hAutoWakeLastCheckedAt,
 	FieldOpenai5hAutoWakeLastCandidatePoolCount,
 	FieldOpenai5hAutoWakeLastReason,
@@ -694,6 +697,11 @@ func ByAllowLive(opts ...sql.OrderTermOption) OrderOption {
 // ByOpenai5hAutoWakeEnabled orders the results by the openai_5h_auto_wake_enabled field.
 func ByOpenai5hAutoWakeEnabled(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldOpenai5hAutoWakeEnabled, opts...).ToFunc()
+}
+
+// ByOpenai5hAutoWakeNextCheckAt orders the results by the openai_5h_auto_wake_next_check_at field.
+func ByOpenai5hAutoWakeNextCheckAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldOpenai5hAutoWakeNextCheckAt, opts...).ToFunc()
 }
 
 // ByOpenai5hAutoWakeLastCheckedAt orders the results by the openai_5h_auto_wake_last_checked_at field.

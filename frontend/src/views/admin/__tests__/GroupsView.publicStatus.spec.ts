@@ -70,7 +70,7 @@ const publicGroup = {
   id: 42,
   name: 'Public capacity',
   description: null,
-  platform: 'anthropic',
+  platform: 'openai',
   rate_multiplier: 1,
   rpm_limit: 0,
   is_exclusive: false,
@@ -158,6 +158,32 @@ const PublicStatusFieldStub = defineComponent({
   `
 })
 
+const SelectStub = defineComponent({
+  inheritAttrs: false,
+  props: ['modelValue', 'options', 'disabled'],
+  emits: ['update:modelValue', 'change'],
+  template: `
+    <select
+      v-bind="$attrs"
+      :value="modelValue"
+      :disabled="disabled"
+      @change="$emit('update:modelValue', $event.target.value); $emit('change')"
+    >
+      <option v-for="option in options" :key="String(option.value)" :value="option.value">
+        {{ option.label }}
+      </option>
+    </select>
+  `
+})
+
+const ReasoningEffortPolicyFieldsStub = defineComponent({
+  setup(_, { expose }) {
+    expose({ validate: () => true, resetValidation: () => undefined })
+    return {}
+  },
+  template: '<div />'
+})
+
 function mountView() {
   return mount(GroupsView, {
     global: {
@@ -170,7 +196,7 @@ function mountView() {
         Pagination: true,
         ConfirmDialog: true,
         EmptyState: true,
-        Select: true,
+        Select: SelectStub,
         PlatformIcon: true,
         Icon: {
           props: ['name'],
@@ -179,7 +205,7 @@ function mountView() {
         GroupCapacityBadge: true,
         GroupRateMultipliersModal: true,
         GroupRPMOverridesModal: true,
-        ReasoningEffortPolicyFields: true,
+        ReasoningEffortPolicyFields: ReasoningEffortPolicyFieldsStub,
         VueDraggable: { template: '<div><slot /></div>' }
       }
     }
@@ -224,6 +250,8 @@ describe('GroupsView public account status setting', () => {
     await flushPromises()
 
     await wrapper.get('[data-tour="groups-create-btn"]').trigger('click')
+    await wrapper.get('[data-tour="group-form-platform"]').setValue('openai')
+    await flushPromises()
     await wrapper.get('[data-testid="public-status-field-toggle"]').trigger('click')
     await wrapper.get('[data-tour="group-form-name"]').setValue('New public group')
     await wrapper.get('#create-group-form').trigger('submit')
@@ -234,6 +262,27 @@ describe('GroupsView public account status setting', () => {
       name: 'New public group',
       public_status_enabled: true
     })
+    wrapper.unmount()
+  })
+
+  it('clears the create setting when the platform changes away from OpenAI', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-tour="groups-create-btn"]').trigger('click')
+    const platform = wrapper.get('[data-tour="group-form-platform"]')
+    await platform.setValue('openai')
+    await flushPromises()
+    await wrapper.get('[data-testid="public-status-field-toggle"]').trigger('click')
+
+    await platform.setValue('anthropic')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="public-status-field"]').exists()).toBe(false)
+
+    await wrapper.get('[data-tour="group-form-name"]').setValue('Private after switch')
+    await wrapper.get('#create-group-form').trigger('submit')
+    await flushPromises()
+    expect(createGroup.mock.calls[0][0]).toMatchObject({ public_status_enabled: false })
     wrapper.unmount()
   })
 
@@ -258,6 +307,27 @@ describe('GroupsView public account status setting', () => {
     expect(updateGroup).toHaveBeenCalledTimes(1)
     expect(updateGroup.mock.calls[0][0]).toBe(42)
     expect(updateGroup.mock.calls[0][1]).toMatchObject({ public_status_enabled: true })
+    wrapper.unmount()
+  })
+
+  it('clears a stale public setting when editing a non-OpenAI group', async () => {
+    listGroups.mockResolvedValue({
+      items: [{ ...publicGroup, platform: 'anthropic', public_status_enabled: true }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="group-edit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="public-status-field"]').exists()).toBe(false)
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+    expect(updateGroup.mock.calls[0][1]).toMatchObject({ public_status_enabled: false })
     wrapper.unmount()
   })
 })

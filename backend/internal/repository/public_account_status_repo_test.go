@@ -55,3 +55,57 @@ func TestPopulatePublicStatusGeminiQuotaHintsUsesNarrowProjection(t *testing.T) 
 	require.NotContains(t, selectClause, "refresh_token")
 	require.NotContains(t, selectClause, "api_key")
 }
+
+func TestListPublicStatusGroupsUsesUnifiedOpenAIEligibility(t *testing.T) {
+	var capturedSQL string
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	driver := entsql.OpenDB(dialect.Postgres, db)
+	client := dbent.NewClient(dbent.Driver(driver))
+	t.Cleanup(func() { _ = client.Close() })
+	repo := &publicAccountStatusRepository{client: client}
+
+	mock.ExpectQuery("public group eligibility").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "description", "platform", "status"}).
+			AddRow(int64(7), "Public", nil, service.PlatformOpenAI, service.StatusActive))
+
+	groups, err := repo.ListPublicStatusGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	require.NoError(t, mock.ExpectationsWereMet())
+	requirePublicOpenAIGroupPredicates(t, capturedSQL)
+}
+
+func TestListPublicStatusAccountsRejectsHiddenGroupBeforeLoadingAccounts(t *testing.T) {
+	var capturedSQL string
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(captureEntQueryMatcher{actual: &capturedSQL}))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	driver := entsql.OpenDB(dialect.Postgres, db)
+	client := dbent.NewClient(dbent.Driver(driver))
+	t.Cleanup(func() { _ = client.Close() })
+	repo := &publicAccountStatusRepository{client: client}
+
+	mock.ExpectQuery("public group direct lookup eligibility").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	accounts, total, err := repo.ListPublicStatusAccounts(context.Background(), 99, 0, 20)
+	require.ErrorIs(t, err, service.ErrPublicAccountStatusGroupNotFound)
+	require.Nil(t, accounts)
+	require.Zero(t, total)
+	require.NoError(t, mock.ExpectationsWereMet(), "hidden group lookup must stop before loading account rows")
+	requirePublicOpenAIGroupPredicates(t, capturedSQL)
+	require.Contains(t, normalizeSQLWhitespace(capturedSQL), `"id" =`)
+}
+
+func requirePublicOpenAIGroupPredicates(t *testing.T, query string) {
+	t.Helper()
+	normalized := normalizeSQLWhitespace(query)
+	for _, field := range []string{"public_status_enabled", "status", "platform", "name"} {
+		require.Contains(t, normalized, field)
+	}
+	require.Contains(t, strings.ToUpper(normalized), "NOT")
+}

@@ -19,6 +19,7 @@ var profitControlJSONFields = []string{
 
 var openAI5hAutoWakeJSONFields = []string{
 	"openai_5h_auto_wake_enabled",
+	"openai_5h_auto_wake_next_check_at",
 	"openai_5h_auto_wake_last_checked_at",
 	"openai_5h_auto_wake_last_candidate_pool_count",
 	"openai_5h_auto_wake_last_reason",
@@ -86,11 +87,13 @@ func TestGroupFromServiceAdminIncludesProfitControl(t *testing.T) {
 
 func TestGroupFromServiceAdminIncludesOpenAI5hAutoWakeState(t *testing.T) {
 	checkedAt := time.Now().UTC().Truncate(time.Second)
+	nextCheckAt := checkedAt.Add(time.Hour)
 	candidates := 3
 	taskID := int64(19)
 	group := profitControlServiceGroup()
 	group.Platform = service.PlatformOpenAI
 	group.OpenAI5hAutoWakeEnabled = true
+	group.OpenAI5hAutoWakeNextCheckAt = &nextCheckAt
 	group.OpenAI5hAutoWakeLastCheckedAt = &checkedAt
 	group.OpenAI5hAutoWakeLastCandidatePoolCount = &candidates
 	group.OpenAI5hAutoWakeLastReason = service.OpenAI5hAutoWakeReasonTaskCreated
@@ -98,7 +101,7 @@ func TestGroupFromServiceAdminIncludesOpenAI5hAutoWakeState(t *testing.T) {
 	group.OpenAI5hAutoWakeLastTaskStatus = service.OpenAI5hWakeTaskStatusRunning
 
 	admin := GroupFromServiceAdmin(group)
-	if !admin.OpenAI5hAutoWakeEnabled || admin.OpenAI5hAutoWakeLastCheckedAt == nil ||
+	if !admin.OpenAI5hAutoWakeEnabled || admin.OpenAI5hAutoWakeNextCheckAt == nil || admin.OpenAI5hAutoWakeLastCheckedAt == nil ||
 		admin.OpenAI5hAutoWakeLastCandidatePoolCount == nil || admin.OpenAI5hAutoWakeLastTaskID == nil {
 		t.Fatalf("admin DTO did not preserve OpenAI 5h auto-wake state: %+v", admin)
 	}

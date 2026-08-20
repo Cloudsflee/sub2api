@@ -128,7 +128,7 @@
                 value
               }}</span>
               <Icon
-                v-if="row.public_status_enabled"
+                v-if="row.platform === 'openai' && row.public_status_enabled"
                 data-testid="group-public-status-indicator"
                 name="globe"
                 size="sm"
@@ -516,7 +516,7 @@
             v-model="createForm.platform"
             :options="platformOptions"
             data-tour="group-form-platform"
-            @change="createForm.copy_accounts_from_group_ids = []"
+            @change="handleCreatePlatformChange"
           />
           <p class="input-hint">{{ t("admin.groups.platformHint") }}</p>
         </div>
@@ -765,6 +765,7 @@
         </div>
 
         <PublicStatusField
+          v-if="createForm.platform === 'openai'"
           class="border-t pt-4"
           v-model="createForm.public_status_enabled"
           :url="publicStatusUrl"
@@ -2273,6 +2274,7 @@
           />
         </div>
         <PublicStatusField
+          v-if="editForm.platform === 'openai'"
           class="border-t pt-4"
           v-model="editForm.public_status_enabled"
           :url="publicStatusUrl"
@@ -2554,6 +2556,17 @@
                 data-testid="openai-5h-auto-wake-last-checked"
               >
                 {{ formatOpenAI5hAutoWakeCheckedAt(editingGroup) }}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.groups.openAI5hAutoWake.nextCheck") }}
+              </dt>
+              <dd
+                class="mt-0.5 break-words text-gray-800 dark:text-gray-200"
+                data-testid="openai-5h-auto-wake-next-check"
+              >
+                {{ formatOpenAI5hAutoWakeNextCheckAt(editingGroup) }}
               </dd>
             </div>
             <div>
@@ -5678,6 +5691,13 @@ const formatOpenAI5hAutoWakeCheckedAt = (group: AdminGroup | null) => {
   return formatted || t("admin.groups.openAI5hAutoWake.neverChecked");
 };
 
+const formatOpenAI5hAutoWakeNextCheckAt = (group: AdminGroup | null) => {
+  const formatted = formatDateTimeToMinute(
+    group?.openai_5h_auto_wake_next_check_at,
+  );
+  return formatted || t("admin.groups.openAI5hAutoWake.notScheduled");
+};
+
 const formatOpenAI5hAutoWakeTaskStatus = (status?: string) => {
   if (!status) {
     return "";
@@ -6079,6 +6099,16 @@ const handlePageSizeChange = (pageSize: number) => {
   loadGroups();
 };
 
+const handleCreatePlatformChange = () => {
+  // The public account entry is an OpenAI-only contract. Keep the form state
+  // and the eventual payload aligned even when a custom Select emits change
+  // before Vue has flushed the platform watcher.
+  createForm.copy_accounts_from_group_ids = [];
+  if (createForm.platform !== "openai") {
+    createForm.public_status_enabled = false;
+  }
+};
+
 const handleSort = (key: string, order: 'asc' | 'desc') => {
   sortState.sort_by = key;
   sortState.sort_order = order;
@@ -6224,6 +6254,8 @@ const handleCreateGroup = async () => {
     // 构建请求数据，包含模型路由配置
     const requestData = {
       ...createGroupForm,
+      public_status_enabled:
+        createForm.platform === "openai" && createForm.public_status_enabled,
       model_pricing: groupPricingToAPI(
         createForm.model_pricing,
         createForm.platform,
@@ -6348,7 +6380,8 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.platform = group.platform;
   editForm.rate_multiplier = group.rate_multiplier;
   editForm.is_exclusive = group.is_exclusive;
-  editForm.public_status_enabled = group.public_status_enabled ?? false;
+  editForm.public_status_enabled =
+    group.platform === "openai" && (group.public_status_enabled ?? false);
   editForm.status = group.status;
   editForm.subscription_type = group.subscription_type || "standard";
   editForm.daily_limit_usd = group.daily_limit_usd;
@@ -6498,6 +6531,8 @@ const handleUpdateGroup = async () => {
     // 转换 fallback_group_id: null -> 0 (后端使用 0 表示清除)
     const payload = {
       ...editForm,
+      public_status_enabled:
+        editForm.platform === "openai" && editForm.public_status_enabled,
       model_pricing: groupPricingToAPI(
         editForm.model_pricing,
         editForm.platform,
@@ -6914,6 +6949,7 @@ watch(
       resetMessagesDispatchFormState(createForm);
       createForm.allow_live = false;
       createForm.openai_5h_auto_wake_enabled = false;
+      createForm.public_status_enabled = false;
     }
     if (!isProfitControlPlatform(newVal)) {
       createForm.profit_control_enabled = false;
@@ -6963,6 +6999,7 @@ watch(
       resetMessagesDispatchFormState(editForm);
       editForm.allow_live = false;
       editForm.openai_5h_auto_wake_enabled = false;
+      editForm.public_status_enabled = false;
     }
     if (!isProfitControlPlatform(newVal)) {
       editForm.profit_control_enabled = false;
@@ -7014,6 +7051,7 @@ watch(
       editForm.allow_messages_dispatch = false
       editForm.allow_live = false
       editForm.openai_5h_auto_wake_enabled = false
+      editForm.public_status_enabled = false
       editForm.default_mapped_model = ''
     }
   }

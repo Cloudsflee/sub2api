@@ -844,7 +844,9 @@ export default {
         disabled: 'Disabled',
         paused: 'Paused',
         lastChecked: 'Last checked',
+        nextCheck: 'Next scheduled check',
         neverChecked: 'Not checked yet',
+        notScheduled: 'Not scheduled',
         candidatePools: 'Candidate quota pools',
         lastTask: 'Last task',
         reason: 'Last result',
@@ -929,8 +931,8 @@ export default {
         exampleContent: 'Public group rate is 0.8. Create an exclusive group with 0.7 rate, manually assign VIP users to give them better pricing.'
       },
       publicStatus: {
-        label: 'Public account status',
-        hint: 'Publish masked account status and usage for this group at the fixed status page. Inactive groups remain visible until deleted or disabled here.',
+        label: 'Public account entry',
+        hint: 'Controls both public account import and the masked account status page for this OpenAI group.',
         enabled: 'Public',
         disabled: 'Private',
         copy: 'Copy public status URL',

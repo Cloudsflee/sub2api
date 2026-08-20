@@ -248,6 +248,11 @@ func (Group) Fields() []ent.Field {
 		field.Bool("openai_5h_auto_wake_enabled").
 			Default(false).
 			Comment("是否为此 OpenAI 分组自动唤醒 5h 配额窗口"),
+		field.Time("openai_5h_auto_wake_next_check_at").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}).
+			Comment("OpenAI 5h 自动唤醒下一次计划检查时间"),
 		field.Time("openai_5h_auto_wake_last_checked_at").
 			Optional().
 			Nillable().

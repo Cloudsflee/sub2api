@@ -61,6 +61,7 @@ const messages: Record<string, string> = {
   'admin.groups.openAI5hAutoWake.disabled': 'Disabled',
   'admin.groups.openAI5hAutoWake.paused': 'Paused',
   'admin.groups.openAI5hAutoWake.neverChecked': 'Not checked yet',
+  'admin.groups.openAI5hAutoWake.notScheduled': 'Not scheduled',
   'admin.groups.openAI5hAutoWake.notAvailable': 'Not available',
   'admin.groups.openAI5hAutoWake.reasons.task_created': 'Task created',
   'admin.groups.openAI5hAutoWake.statuses.running': 'Running',
@@ -126,6 +127,7 @@ const openAIGroup = {
   rate_limited_account_count: 0,
   sort_order: 10,
   openai_5h_auto_wake_enabled: true,
+  openai_5h_auto_wake_next_check_at: '2026-08-19T04:30:00Z',
   openai_5h_auto_wake_last_checked_at: '2026-08-19T02:30:00Z',
   openai_5h_auto_wake_last_candidate_pool_count: 2,
   openai_5h_auto_wake_last_reason: 'task_created',
@@ -310,6 +312,9 @@ describe('GroupsView OpenAI 5h auto wake', () => {
     )
     expect(wrapper.get('[data-testid="openai-5h-auto-wake-last-checked"]').text()).not.toBe(
       'Not checked yet',
+    )
+    expect(wrapper.get('[data-testid="openai-5h-auto-wake-next-check"]').text()).not.toBe(
+      'Not scheduled',
     )
 
     await wrapper.get('#edit-group-form').trigger('submit')

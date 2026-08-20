@@ -452,13 +452,19 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		}
 	}
 
+	openAI5hAutoWakeEnabled := platform == PlatformOpenAI && input.OpenAI5hAutoWakeEnabled
+	var openAI5hAutoWakeNextCheckAt *time.Time
+	if openAI5hAutoWakeEnabled {
+		now := time.Now().UTC()
+		openAI5hAutoWakeNextCheckAt = &now
+	}
 	group := &Group{
 		Name:                            input.Name,
 		Description:                     input.Description,
 		Platform:                        platform,
 		RateMultiplier:                  input.RateMultiplier,
 		IsExclusive:                     input.IsExclusive,
-		PublicStatusEnabled:             input.PublicStatusEnabled,
+		PublicStatusEnabled:             platform == PlatformOpenAI && input.PublicStatusEnabled,
 		Status:                          StatusActive,
 		SubscriptionType:                subscriptionType,
 		DailyLimitUSD:                   dailyLimit,
@@ -501,7 +507,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		SupportedModelScopes:            input.SupportedModelScopes,
 		AllowMessagesDispatch:           input.AllowMessagesDispatch,
 		AllowLive:                       input.AllowLive,
-		OpenAI5hAutoWakeEnabled:         platform == PlatformOpenAI && input.OpenAI5hAutoWakeEnabled,
+		OpenAI5hAutoWakeEnabled:         openAI5hAutoWakeEnabled,
+		OpenAI5hAutoWakeNextCheckAt:     openAI5hAutoWakeNextCheckAt,
 		RequireOAuthOnly:                input.RequireOAuthOnly,
 		RequirePrivacySet:               input.RequirePrivacySet,
 		DefaultMappedModel:              input.DefaultMappedModel,
@@ -905,6 +912,16 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if group.Platform != PlatformOpenAI {
 		group.AllowLive = false
 		group.OpenAI5hAutoWakeEnabled = false
+		group.PublicStatusEnabled = false
+	}
+	// A saved active OpenAI group is immediately eligible for a fresh check.
+	// Disabled groups retain their switches but do not retain a runnable
+	// deadline; reactivation below schedules an immediate check again.
+	if group.Platform == PlatformOpenAI && group.OpenAI5hAutoWakeEnabled && group.IsActive() {
+		now := time.Now().UTC()
+		group.OpenAI5hAutoWakeNextCheckAt = &now
+	} else if !group.IsActive() || !group.OpenAI5hAutoWakeEnabled {
+		group.OpenAI5hAutoWakeNextCheckAt = nil
 	}
 	sanitizeGroupReasoningEffortPolicy(group)
 

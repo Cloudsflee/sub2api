@@ -732,6 +732,20 @@ func (_c *GroupCreate) SetNillableOpenai5hAutoWakeEnabled(v *bool) *GroupCreate 
 	return _c
 }
 
+// SetOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field.
+func (_c *GroupCreate) SetOpenai5hAutoWakeNextCheckAt(v time.Time) *GroupCreate {
+	_c.mutation.SetOpenai5hAutoWakeNextCheckAt(v)
+	return _c
+}
+
+// SetNillableOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableOpenai5hAutoWakeNextCheckAt(v *time.Time) *GroupCreate {
+	if v != nil {
+		_c.SetOpenai5hAutoWakeNextCheckAt(*v)
+	}
+	return _c
+}
+
 // SetOpenai5hAutoWakeLastCheckedAt sets the "openai_5h_auto_wake_last_checked_at" field.
 func (_c *GroupCreate) SetOpenai5hAutoWakeLastCheckedAt(v time.Time) *GroupCreate {
 	_c.mutation.SetOpenai5hAutoWakeLastCheckedAt(v)
@@ -1689,6 +1703,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Openai5hAutoWakeEnabled(); ok {
 		_spec.SetField(group.FieldOpenai5hAutoWakeEnabled, field.TypeBool, value)
 		_node.Openai5hAutoWakeEnabled = value
+	}
+	if value, ok := _c.mutation.Openai5hAutoWakeNextCheckAt(); ok {
+		_spec.SetField(group.FieldOpenai5hAutoWakeNextCheckAt, field.TypeTime, value)
+		_node.Openai5hAutoWakeNextCheckAt = &value
 	}
 	if value, ok := _c.mutation.Openai5hAutoWakeLastCheckedAt(); ok {
 		_spec.SetField(group.FieldOpenai5hAutoWakeLastCheckedAt, field.TypeTime, value)
@@ -2789,6 +2807,24 @@ func (u *GroupUpsert) SetOpenai5hAutoWakeEnabled(v bool) *GroupUpsert {
 // UpdateOpenai5hAutoWakeEnabled sets the "openai_5h_auto_wake_enabled" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateOpenai5hAutoWakeEnabled() *GroupUpsert {
 	u.SetExcluded(group.FieldOpenai5hAutoWakeEnabled)
+	return u
+}
+
+// SetOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field.
+func (u *GroupUpsert) SetOpenai5hAutoWakeNextCheckAt(v time.Time) *GroupUpsert {
+	u.Set(group.FieldOpenai5hAutoWakeNextCheckAt, v)
+	return u
+}
+
+// UpdateOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateOpenai5hAutoWakeNextCheckAt() *GroupUpsert {
+	u.SetExcluded(group.FieldOpenai5hAutoWakeNextCheckAt)
+	return u
+}
+
+// ClearOpenai5hAutoWakeNextCheckAt clears the value of the "openai_5h_auto_wake_next_check_at" field.
+func (u *GroupUpsert) ClearOpenai5hAutoWakeNextCheckAt() *GroupUpsert {
+	u.SetNull(group.FieldOpenai5hAutoWakeNextCheckAt)
 	return u
 }
 
@@ -4118,6 +4154,27 @@ func (u *GroupUpsertOne) SetOpenai5hAutoWakeEnabled(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateOpenai5hAutoWakeEnabled() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateOpenai5hAutoWakeEnabled()
+	})
+}
+
+// SetOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field.
+func (u *GroupUpsertOne) SetOpenai5hAutoWakeNextCheckAt(v time.Time) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeNextCheckAt(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateOpenai5hAutoWakeNextCheckAt() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeNextCheckAt()
+	})
+}
+
+// ClearOpenai5hAutoWakeNextCheckAt clears the value of the "openai_5h_auto_wake_next_check_at" field.
+func (u *GroupUpsertOne) ClearOpenai5hAutoWakeNextCheckAt() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenai5hAutoWakeNextCheckAt()
 	})
 }
 
@@ -5655,6 +5712,27 @@ func (u *GroupUpsertBulk) SetOpenai5hAutoWakeEnabled(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateOpenai5hAutoWakeEnabled() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateOpenai5hAutoWakeEnabled()
+	})
+}
+
+// SetOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field.
+func (u *GroupUpsertBulk) SetOpenai5hAutoWakeNextCheckAt(v time.Time) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenai5hAutoWakeNextCheckAt(v)
+	})
+}
+
+// UpdateOpenai5hAutoWakeNextCheckAt sets the "openai_5h_auto_wake_next_check_at" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateOpenai5hAutoWakeNextCheckAt() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenai5hAutoWakeNextCheckAt()
+	})
+}
+
+// ClearOpenai5hAutoWakeNextCheckAt clears the value of the "openai_5h_auto_wake_next_check_at" field.
+func (u *GroupUpsertBulk) ClearOpenai5hAutoWakeNextCheckAt() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenai5hAutoWakeNextCheckAt()
 	})
 }
 

@@ -274,7 +274,7 @@ func TestPublicAccountStatusGroupsIncludeDuplicateMembershipAndCache(t *testing.
 	repo := &publicAccountStatusRepoStub{
 		groups: []PublicStatusGroupRecord{
 			{ID: 1, Name: "One", Platform: PlatformOpenAI, Status: StatusActive},
-			{ID: 2, Name: "Two", Platform: PlatformOpenAI, Status: "disabled"},
+			{ID: 2, Name: "Two", Platform: PlatformOpenAI, Status: StatusActive},
 		},
 		groupRows: []PublicStatusGroupAccountRecord{
 			{GroupID: 1, Account: account},
@@ -293,7 +293,7 @@ func TestPublicAccountStatusGroupsIncludeDuplicateMembershipAndCache(t *testing.
 	require.Equal(t, 1, repo.groupCalls)
 	require.Equal(t, 1, first[0].StatusSummary.Total)
 	require.Equal(t, 1, first[1].StatusSummary.Total)
-	require.Equal(t, "disabled", first[1].Status, "inactive groups remain visible when explicitly public")
+	require.Equal(t, StatusActive, first[1].Status)
 }
 
 func TestPublicAccountStatusUnpublishedGroupIsNotFound(t *testing.T) {
