@@ -11,11 +11,13 @@ import type {
 const {
   listGroups,
   listAccounts,
-  fetchPublicSettings
+  fetchPublicSettings,
+  authState,
 } = vi.hoisted(() => ({
   listGroups: vi.fn(),
   listAccounts: vi.fn(),
-  fetchPublicSettings: vi.fn()
+  fetchPublicSettings: vi.fn(),
+  authState: { isAdmin: false, isAuthenticated: false, user: null }
 }))
 
 vi.mock('@/api/publicAccountStatus', async () => {
@@ -37,6 +39,10 @@ vi.mock('@/stores/app', () => ({
     publicSettingsLoaded: true,
     fetchPublicSettings
   })
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => authState
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -168,6 +174,9 @@ function mountView() {
 describe('AccountStatusView', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    authState.isAdmin = false
+    authState.isAuthenticated = false
+    authState.user = null
     localStorage.clear()
     listGroups.mockReset()
     listAccounts.mockReset()

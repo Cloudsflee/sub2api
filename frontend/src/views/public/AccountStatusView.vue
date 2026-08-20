@@ -11,6 +11,41 @@
           <span class="truncate text-base font-semibold text-gray-900 dark:text-white">{{ siteName }}</span>
         </RouterLink>
         <div class="flex shrink-0 items-center gap-1">
+          <RouterLink
+            v-if="isAdmin"
+            to="/admin/dashboard"
+            class="inline-flex h-9 items-center gap-2 px-2 text-sm font-medium text-gray-600 hover:text-primary-600 dark:text-dark-300 dark:hover:text-primary-400"
+            :title="t('publicAccountStatus.backToAdmin')"
+          >
+            <Icon name="arrowLeft" size="sm" />
+            <span class="hidden lg:inline">{{ t('publicAccountStatus.backToAdmin') }}</span>
+          </RouterLink>
+          <RouterLink
+            v-else-if="isAuthenticated"
+            to="/dashboard"
+            class="inline-flex h-9 items-center gap-2 px-2 text-sm font-medium text-gray-600 hover:text-primary-600 dark:text-dark-300 dark:hover:text-primary-400"
+            :title="t('publicAccountStatus.backToDashboard')"
+          >
+            <Icon name="arrowLeft" size="sm" />
+            <span class="hidden lg:inline">{{ t('publicAccountStatus.backToDashboard') }}</span>
+          </RouterLink>
+          <RouterLink
+            v-else
+            :to="{ path: '/login', query: { redirect: '/account-status' } }"
+            class="inline-flex h-9 items-center gap-2 px-2 text-sm font-medium text-gray-600 hover:text-primary-600 dark:text-dark-300 dark:hover:text-primary-400"
+            :title="t('publicAccountStatus.login')"
+          >
+            <Icon name="login" size="sm" />
+            <span class="hidden lg:inline">{{ t('publicAccountStatus.login') }}</span>
+          </RouterLink>
+          <RouterLink
+            to="/account-import"
+            class="inline-flex h-9 items-center gap-2 px-2 text-sm font-medium text-gray-600 hover:text-primary-600 dark:text-dark-300 dark:hover:text-primary-400"
+            :title="t('publicAccountStatus.accountImportLink')"
+          >
+            <Icon name="upload" size="sm" />
+            <span class="hidden sm:inline">{{ t('publicAccountStatus.accountImportLink') }}</span>
+          </RouterLink>
           <LocaleSwitcher />
           <button
             type="button"
@@ -347,6 +382,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import Icon from '@/components/icons/Icon.vue'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Pagination from '@/components/common/Pagination.vue'
@@ -367,6 +403,7 @@ import { sanitizeUrl } from '@/utils/url'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const authStore = useAuthStore()
 
 const groups = ref<PublicAccountStatusGroup[]>([])
 const activeGroupId = ref<number | null>(null)
@@ -393,6 +430,8 @@ const siteLogo = computed(() =>
     allowDataUrl: true
   })
 )
+const isAdmin = computed(() => Boolean(authStore.isAdmin))
+const isAuthenticated = computed(() => Boolean(authStore.isAuthenticated))
 const isDark = ref(document.documentElement.classList.contains('dark'))
 const activeGroup = computed(() => groups.value.find((group) => group.id === activeGroupId.value) ?? null)
 

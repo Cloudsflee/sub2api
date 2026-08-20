@@ -54,8 +54,13 @@ describe('AppSidebar header styles', () => {
   })
 })
 
-describe('AppSidebar shop management navigation', () => {
-  it('gives administrators a discoverable entry to the public shop manager', () => {
-    expect(componentSource).toContain("{ path: '/account-import', label: t('nav.shopManagement'), icon: ShopIcon }")
+describe('AppSidebar account import navigation', () => {
+  it('gives administrators a discoverable account import entry', () => {
+    expect(componentSource).toContain("{ path: '/account-import', label: t('nav.accountImport'), icon: ShopIcon }")
+  })
+
+  it('gives regular users an account import entry without duplicating the admin personal section', () => {
+    expect(componentSource).toContain("items.push({ path: '/account-import', label: t('nav.accountImport'), icon: ShopIcon })")
+    expect(componentSource).toContain('if (withDashboard) {')
   })
 })

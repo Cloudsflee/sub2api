@@ -176,7 +176,7 @@ export default {
     modelPlaza: '模型广场',
     subscriptions: '订阅管理',
     accounts: '账号管理',
-    shopManagement: '店铺管理',
+    accountImport: '账号导入',
     proxies: 'IP管理',
     redeemCodes: '兑换码',
     ops: '运维监控',

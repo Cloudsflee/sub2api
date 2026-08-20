@@ -713,6 +713,9 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   const items: NavItem[] = []
   if (withDashboard) {
     items.push({ path: '/dashboard', label: t('nav.dashboard'), icon: DashboardIcon })
+    // Account import is available to regular users as well as administrators.
+    // Keep it out of the admin personal section to avoid a duplicate entry.
+    items.push({ path: '/account-import', label: t('nav.accountImport'), icon: ShopIcon })
   }
   items.push(
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
@@ -784,7 +787,7 @@ const adminNavItems = computed((): NavItem[] => {
     },
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
-    { path: '/account-import', label: t('nav.shopManagement'), icon: ShopIcon },
+    { path: '/account-import', label: t('nav.accountImport'), icon: ShopIcon },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
     {

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -210,6 +211,7 @@ func ProvideAccountHandler(
 	tokenCacheInvalidator service.TokenCacheInvalidator,
 	grokQuotaService *service.GrokQuotaService,
 	openAI5hWakeService *service.OpenAI5hWakeService,
+	urlPolicyConfig *config.Config,
 ) *AccountHandler {
 	handler := NewAccountHandler(
 		adminService,
@@ -229,5 +231,6 @@ func ProvideAccountHandler(
 	)
 	handler.grokImportProber = grokQuotaService
 	handler.SetOpenAI5hWakeService(openAI5hWakeService)
+	handler.SetURLPolicyConfig(urlPolicyConfig)
 	return handler
 }

@@ -39,6 +39,10 @@ func RegisterUserRoutes(
 			user.POST("/auth-identities/bind/start", h.User.StartIdentityBinding)
 			user.GET("/api-keys/:id/usage/daily", panelRateLimiter.Heavy(), h.Usage.GetMyAPIKeyDailyUsage)
 			user.GET("/platform-quotas", h.User.GetMyPlatformQuotas)
+			// Authenticated users may import OpenAI-compatible upstream credentials.
+			// The handler itself remains in the account service so it shares the
+			// public-group and account lifecycle rules with the admin importer.
+			user.POST("/account-import/upstream", h.Admin.Account.ImportPublicUpstreamAccount)
 
 			// 通知邮箱管理
 			notifyEmail := user.Group("/notify-email")

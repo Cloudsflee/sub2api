@@ -1,6 +1,10 @@
 export default {
   publicAccountStatus: {
     title: 'Account Status',
+    login: 'Sign in',
+    backToAdmin: 'Back to admin',
+    backToDashboard: 'Back to dashboard',
+    accountImportLink: 'Account import',
     refresh: 'Refresh',
     refreshing: 'Refreshing',
     lastUpdated: 'Updated {time}',

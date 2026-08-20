@@ -25,7 +25,9 @@ export { channelMonitorUserAPI } from './channelMonitor'
 export {
   getPublicAccountImportGroups,
   submitPublicAccountImport,
+  submitPublicAccountImportUpstream,
   type PublicAccountImportGroup,
+  type PublicAccountImportUpstreamPayload,
   type PublicAccountImportResult,
 } from './publicAccountImport'
 

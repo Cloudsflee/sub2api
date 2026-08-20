@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
@@ -65,6 +66,7 @@ type AccountHandler struct {
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
 	openAI5hWake            *service.OpenAI5hWakeService
+	urlPolicyConfig         *config.Config
 }
 
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
@@ -78,6 +80,16 @@ func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUs
 
 func (h *AccountHandler) SetOpenAI5hWakeService(wake *service.OpenAI5hWakeService) {
 	h.openAI5hWake = wake
+}
+
+// SetURLPolicyConfig attaches the process-wide outbound URL policy used by
+// authenticated upstream account imports. Keeping this optional preserves the
+// lightweight constructor used by focused handler tests.
+func (h *AccountHandler) SetURLPolicyConfig(cfg *config.Config) {
+	if h == nil {
+		return
+	}
+	h.urlPolicyConfig = cfg
 }
 
 // NewAccountHandler creates a new admin account handler

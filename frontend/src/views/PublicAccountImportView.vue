@@ -10,22 +10,43 @@
           />
           <span class="truncate text-base font-semibold">{{ siteName }}</span>
         </div>
-        <RouterLink
-          v-if="isAdmin"
-          to="/admin/dashboard"
-          class="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-primary-600 dark:text-dark-300 dark:hover:text-primary-400"
-        >
-          <Icon name="arrowLeft" size="sm" />
-          {{ t('publicAccountImport.backToAdmin') }}
-        </RouterLink>
-        <RouterLink
-          v-else
-          :to="{ path: '/login', query: { redirect: '/account-import' } }"
-          class="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-primary-600 dark:text-dark-300 dark:hover:text-primary-400"
-        >
-          <Icon name="login" size="sm" />
-          {{ t('publicAccountImport.adminLogin') }}
-        </RouterLink>
+        <div class="flex items-center gap-3">
+          <RouterLink
+            v-if="isAdmin"
+            to="/admin/dashboard"
+            class="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-primary-600 dark:text-dark-300 dark:hover:text-primary-400"
+            :title="t('publicAccountImport.backToAdmin')"
+          >
+            <Icon name="arrowLeft" size="sm" />
+            <span class="hidden sm:inline">{{ t('publicAccountImport.backToAdmin') }}</span>
+          </RouterLink>
+          <RouterLink
+            v-else-if="isAuthenticated"
+            to="/dashboard"
+            class="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-primary-600 dark:text-dark-300 dark:hover:text-primary-400"
+            :title="t('publicAccountImport.backToDashboard')"
+          >
+            <Icon name="arrowLeft" size="sm" />
+            <span class="hidden sm:inline">{{ t('publicAccountImport.backToDashboard') }}</span>
+          </RouterLink>
+          <RouterLink
+            v-else
+            :to="{ path: '/login', query: { redirect: '/account-import' } }"
+            class="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-primary-600 dark:text-dark-300 dark:hover:text-primary-400"
+            :title="t('publicAccountImport.adminLogin')"
+          >
+            <Icon name="login" size="sm" />
+            <span class="hidden sm:inline">{{ t('publicAccountImport.adminLogin') }}</span>
+          </RouterLink>
+          <RouterLink
+            to="/account-status"
+            class="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-primary-600 dark:text-dark-300 dark:hover:text-primary-400"
+            :title="t('publicAccountImport.accountStatusLink')"
+          >
+            <Icon name="chart" size="sm" />
+            <span class="hidden sm:inline">{{ t('publicAccountImport.accountStatusLink') }}</span>
+          </RouterLink>
+        </div>
       </div>
     </header>
 
@@ -67,68 +88,141 @@
         class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-900"
         @submit.prevent="handleSubmit"
       >
+        <div class="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 px-5 py-3 dark:border-dark-700 dark:bg-dark-800/60 sm:px-6" role="tablist" :aria-label="t('publicAccountImport.modeLabel')">
+          <button
+            type="button"
+            data-testid="public-import-mode-json"
+            class="border-b-2 px-3 py-2 text-sm font-semibold transition-colors"
+            :class="importMode === 'json' ? 'border-primary-600 text-primary-700 dark:text-primary-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100'"
+            :aria-pressed="importMode === 'json'"
+            @click="selectImportMode('json')"
+          >
+            {{ t('publicAccountImport.jsonMode') }}
+          </button>
+          <button
+            type="button"
+            data-testid="public-import-mode-upstream"
+            class="border-b-2 px-3 py-2 text-sm font-semibold transition-colors"
+            :class="importMode === 'upstream' ? 'border-primary-600 text-primary-700 dark:text-primary-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-dark-400 dark:hover:text-dark-100'"
+            :aria-pressed="importMode === 'upstream'"
+            @click="selectImportMode('upstream')"
+          >
+            {{ t('publicAccountImport.upstreamMode') }}
+          </button>
+        </div>
         <div class="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
           <section class="p-5 sm:p-6">
-            <div class="mb-3 flex items-center justify-between gap-3">
-              <label class="text-sm font-semibold">
-                {{ t('publicAccountImport.filesLabel') }}
-              </label>
-              <span class="text-xs text-gray-500 dark:text-dark-400">
-                {{ t('publicAccountImport.fileLimit') }}
-              </span>
-            </div>
-
-            <button
-              type="button"
-              class="flex w-full flex-col items-center justify-center border border-dashed px-5 py-10 text-center transition-colors"
-              :class="dragActive
-                ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-950/30 dark:text-primary-300'
-                : 'border-gray-300 bg-gray-50 text-gray-600 hover:border-primary-400 hover:bg-primary-50/40 dark:border-dark-600 dark:bg-dark-800 dark:text-dark-300 dark:hover:border-primary-600'"
-              :disabled="submitting"
-              @click="openFilePicker"
-              @dragenter.prevent="handleDragEnter"
-              @dragover.prevent
-              @dragleave.prevent="handleDragLeave"
-              @drop.prevent="handleDrop"
-            >
-              <Icon name="upload" size="xl" class="mb-3" />
-              <span class="text-sm font-medium">{{ t('publicAccountImport.dropFiles') }}</span>
-              <span class="mt-1 text-xs text-gray-500 dark:text-dark-400">
-                {{ t('publicAccountImport.chooseFiles') }}
-              </span>
-            </button>
-            <input
-              ref="fileInput"
-              type="file"
-              class="hidden"
-              accept="application/json,.json"
-              multiple
-              @change="handleFileChange"
-            />
-
-            <div v-if="files.length" class="mt-4 border-y border-gray-200 dark:border-dark-700">
-              <div
-                v-for="(file, index) in files"
-                :key="`${file.name}-${file.size}-${index}`"
-                class="flex items-center gap-3 border-b border-gray-100 py-3 last:border-b-0 dark:border-dark-800"
-              >
-                <Icon name="document" size="sm" class="shrink-0 text-gray-400" />
-                <div class="min-w-0 flex-1">
-                  <div class="truncate text-sm font-medium" :title="file.name">{{ file.name }}</div>
-                  <div class="text-xs text-gray-500 dark:text-dark-400">{{ formatBytes(file.size) }}</div>
-                </div>
-                <button
-                  type="button"
-                  class="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
-                  :title="t('publicAccountImport.removeFile')"
-                  :aria-label="t('publicAccountImport.removeFile')"
-                  :disabled="submitting"
-                  @click="removeFile(index)"
-                >
-                  <Icon name="x" size="sm" />
-                </button>
+            <template v-if="importMode === 'json'">
+              <div class="mb-3 flex items-center justify-between gap-3">
+                <label class="text-sm font-semibold">
+                  {{ t('publicAccountImport.filesLabel') }}
+                </label>
+                <span class="text-xs text-gray-500 dark:text-dark-400">
+                  {{ t('publicAccountImport.fileLimit') }}
+                </span>
               </div>
-            </div>
+
+              <button
+                type="button"
+                class="flex w-full flex-col items-center justify-center border border-dashed px-5 py-10 text-center transition-colors"
+                :class="dragActive
+                  ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-950/30 dark:text-primary-300'
+                  : 'border-gray-300 bg-gray-50 text-gray-600 hover:border-primary-400 hover:bg-primary-50/40 dark:border-dark-600 dark:bg-dark-800 dark:text-dark-300 dark:hover:border-primary-600'"
+                :disabled="submitting"
+                @click="openFilePicker"
+                @dragenter.prevent="handleDragEnter"
+                @dragover.prevent
+                @dragleave.prevent="handleDragLeave"
+                @drop.prevent="handleDrop"
+              >
+                <Icon name="upload" size="xl" class="mb-3" />
+                <span class="text-sm font-medium">{{ t('publicAccountImport.dropFiles') }}</span>
+                <span class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                  {{ t('publicAccountImport.chooseFiles') }}
+                </span>
+              </button>
+              <input
+                ref="fileInput"
+                type="file"
+                class="hidden"
+                accept="application/json,.json"
+                multiple
+                @change="handleFileChange"
+              />
+
+              <div v-if="files.length" class="mt-4 border-y border-gray-200 dark:border-dark-700">
+                <div
+                  v-for="(file, index) in files"
+                  :key="`${file.name}-${file.size}-${index}`"
+                  class="flex items-center gap-3 border-b border-gray-100 py-3 last:border-b-0 dark:border-dark-800"
+                >
+                  <Icon name="document" size="sm" class="shrink-0 text-gray-400" />
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate text-sm font-medium" :title="file.name">{{ file.name }}</div>
+                    <div class="text-xs text-gray-500 dark:text-dark-400">{{ formatBytes(file.size) }}</div>
+                  </div>
+                  <button
+                    type="button"
+                    class="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
+                    :title="t('publicAccountImport.removeFile')"
+                    :aria-label="t('publicAccountImport.removeFile')"
+                    :disabled="submitting"
+                    @click="removeFile(index)"
+                  >
+                    <Icon name="x" size="sm" />
+                  </button>
+                </div>
+              </div>
+
+              <label for="public-account-import-paste" class="mt-5 block text-sm font-semibold">
+                {{ t('publicAccountImport.pasteLabel') }}
+              </label>
+              <textarea
+                id="public-account-import-paste"
+                v-model="pastedJSON"
+                data-testid="public-import-paste"
+                class="input mt-2 min-h-32 w-full resize-y font-mono text-xs"
+                :placeholder="t('publicAccountImport.pastePlaceholder')"
+                :disabled="submitting"
+                @input="resetSubmissionState"
+              ></textarea>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                {{ t('publicAccountImport.combinedLimit') }}
+              </p>
+            </template>
+
+            <template v-else>
+              <div class="mb-4">
+                <h2 class="text-sm font-semibold">{{ t('publicAccountImport.upstreamTitle') }}</h2>
+                <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ t('publicAccountImport.upstreamDescription') }}</p>
+              </div>
+              <div v-if="!isAuthenticated" class="border-y border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid="public-import-login-required">
+                {{ t('publicAccountImport.loginRequired') }}
+                <RouterLink
+                  :to="{ path: '/login', query: { redirect: '/account-import' } }"
+                  class="ml-1 font-semibold underline"
+                >{{ t('publicAccountImport.loginToImport') }}</RouterLink>
+              </div>
+              <div class="space-y-4" :class="{ 'mt-4': !isAuthenticated }">
+                <div>
+                  <label for="public-account-import-name" class="input-label">{{ t('publicAccountImport.nameLabel') }} <span class="font-normal text-gray-400">({{ t('common.optional') }})</span></label>
+                  <input id="public-account-import-name" v-model="upstreamName" type="text" class="input" maxlength="100" :placeholder="t('publicAccountImport.namePlaceholder')" :disabled="submitting || !isAuthenticated" @input="resetSubmissionState" />
+                </div>
+                <div>
+                  <label for="public-account-import-base-url" class="input-label">{{ t('publicAccountImport.baseURLLabel') }}</label>
+                  <input id="public-account-import-base-url" v-model="upstreamBaseURL" type="url" class="input" inputmode="url" maxlength="2048" :placeholder="t('publicAccountImport.baseURLPlaceholder')" :disabled="submitting || !isAuthenticated" @input="resetSubmissionState" />
+                </div>
+                <div>
+                  <label for="public-account-import-api-key" class="input-label">{{ t('publicAccountImport.apiKeyLabel') }}</label>
+                  <div class="relative">
+                    <input id="public-account-import-api-key" v-model="upstreamAPIKey" :type="showUpstreamAPIKey ? 'text' : 'password'" class="input pr-11 font-mono" maxlength="8192" autocomplete="off" :placeholder="t('publicAccountImport.apiKeyPlaceholder')" :disabled="submitting || !isAuthenticated" @input="resetSubmissionState" />
+                    <button type="button" class="absolute inset-y-0 right-0 inline-flex w-10 items-center justify-center text-gray-500 hover:text-primary-600 dark:text-dark-400 dark:hover:text-primary-400" :title="showUpstreamAPIKey ? t('publicAccountImport.hideKey') : t('publicAccountImport.showKey')" :aria-label="showUpstreamAPIKey ? t('publicAccountImport.hideKey') : t('publicAccountImport.showKey')" :disabled="submitting || !isAuthenticated" @click="showUpstreamAPIKey = !showUpstreamAPIKey">
+                      <Icon :name="showUpstreamAPIKey ? 'eyeOff' : 'eye'" size="sm" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </template>
           </section>
 
           <section class="border-t border-gray-200 p-5 dark:border-dark-700 sm:p-6 lg:border-l lg:border-t-0">
@@ -239,11 +333,11 @@
           <button
             type="submit"
             class="btn btn-primary min-w-32"
-            :disabled="submitting || loadingGroups || files.length === 0 || selectedGroupIds.length === 0"
+            :disabled="submitting || loadingGroups || !canSubmitImport || selectedGroupIds.length === 0"
           >
             <span v-if="submitting" class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"></span>
             <Icon v-else name="upload" size="sm" class="mr-2" />
-            {{ submitting ? t('publicAccountImport.submitting') : t('publicAccountImport.submit') }}
+            {{ submitting ? t('publicAccountImport.submitting') : (importMode === 'upstream' ? t('publicAccountImport.submitUpstream') : t('publicAccountImport.submit')) }}
           </button>
         </div>
       </form>
@@ -708,6 +802,7 @@ import {
   getPublicAccountImportShops,
   requestPublicAccountImportProductRefresh,
   submitPublicAccountImport,
+  submitPublicAccountImportUpstream,
   submitPublicAccountImportShop,
   updatePublicAccountImportShopTrustLevel,
   type PublicAccountImportGroup,
@@ -739,6 +834,10 @@ import {
 import { sanitizeUrl } from '@/utils/url'
 
 const MAX_FILE_BYTES = 512 * 1024
+const MAX_TOTAL_JSON_BYTES = 2 * 1024 * 1024
+const MAX_UPSTREAM_NAME_RUNES = 100
+const MAX_UPSTREAM_URL_BYTES = 2048
+const MAX_UPSTREAM_KEY_BYTES = 8192
 const CATALOG_PAGE_SIZE = 10
 const PRODUCT_PRICE_VERIFICATION_TTL_MS = 60_000
 const PRODUCT_PRICE_FAILURE_RETRY_MS = 15_000
@@ -751,6 +850,8 @@ interface ProductPriceVerification {
   status: ProductPriceStatus
   checkedAt: number
 }
+
+type ImportMode = 'json' | 'upstream'
 
 function unavailableProductSyncWorkerStatus(reason = ''): PublicAccountImportProductSyncWorkerStatus {
   const lanes: PublicAccountImportProductSyncWorkerLaneStatus[] = Array.from(
@@ -782,6 +883,12 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const fileInput = ref<HTMLInputElement | null>(null)
 const files = ref<File[]>([])
+const pastedJSON = ref('')
+const importMode = ref<ImportMode>('json')
+const upstreamName = ref('')
+const upstreamBaseURL = ref('')
+const upstreamAPIKey = ref('')
+const showUpstreamAPIKey = ref(false)
 const groups = ref<PublicAccountImportGroup[]>([])
 const selectedGroupIds = ref<number[]>([])
 const loadingGroups = ref(true)
@@ -830,6 +937,10 @@ const dragActive = computed(() => dragDepth.value > 0)
 const siteName = computed(() => appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '/logo.png', { allowRelative: true, allowDataUrl: true }))
 const isAdmin = computed(() => authStore.isAdmin)
+const isAuthenticated = computed(() => Boolean(authStore.isAuthenticated))
+const canSubmitImport = computed(() => importMode.value === 'json'
+  ? files.value.length > 0 || pastedJSON.value.trim().length > 0
+  : isAuthenticated.value && upstreamBaseURL.value.trim().length > 0 && upstreamAPIKey.value.trim().length > 0)
 const mainTabs = computed(() => [
   { value: 'import' as const, label: t('publicAccountImport.importModule') },
   { value: 'shops' as const, label: t('publicAccountImport.shopModule') },
@@ -897,6 +1008,7 @@ onBeforeUnmount(() => {
 })
 
 watch(selectedGroupIds, resetSubmissionState, { deep: true })
+watch(importMode, resetSubmissionState)
 watch(productSearch, () => { productPage.value = 1 })
 watch(productPriceOrder, () => { productPage.value = 1 })
 watch(shopPageCount, (count) => { shopPage.value = Math.min(shopPage.value, count) })
@@ -911,6 +1023,12 @@ function resetSubmissionState() {
   result.value = null
   errorMessage.value = ''
   idempotencyKey.value = createIdempotencyKey()
+}
+
+function selectImportMode(mode: ImportMode): void {
+  importMode.value = mode
+  errorMessage.value = ''
+  result.value = null
 }
 
 function openFilePicker() {
@@ -963,6 +1081,62 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`
 }
 
+function utf8ByteLength(value: string): number {
+  if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(value).length
+  return unescape(encodeURIComponent(value)).length
+}
+
+function normalizeJSONText(value: string): string {
+  return value.replace(/^\uFEFF/, '').trim()
+}
+
+function validateUpstreamForm(): { name: string; baseURL: string; apiKey: string } | null {
+  const name = upstreamName.value.trim()
+  const baseURL = upstreamBaseURL.value.trim()
+  const apiKey = upstreamAPIKey.value.trim()
+  if (!baseURL) {
+    errorMessage.value = t('publicAccountImport.baseURLRequired')
+    return null
+  }
+  if (!apiKey) {
+    errorMessage.value = t('publicAccountImport.apiKeyRequired')
+    return null
+  }
+  if (Array.from(name).length > MAX_UPSTREAM_NAME_RUNES) {
+    errorMessage.value = t('publicAccountImport.nameTooLong')
+    return null
+  }
+  if (utf8ByteLength(baseURL) > MAX_UPSTREAM_URL_BYTES) {
+    errorMessage.value = t('publicAccountImport.baseURLTooLong')
+    return null
+  }
+  if (utf8ByteLength(apiKey) > MAX_UPSTREAM_KEY_BYTES) {
+    errorMessage.value = t('publicAccountImport.apiKeyTooLong')
+    return null
+  }
+  if (containsControlCharacter(apiKey)) {
+    errorMessage.value = t('publicAccountImport.apiKeyInvalid')
+    return null
+  }
+  try {
+    const parsed = new URL(baseURL)
+    if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) throw new Error('scheme')
+    if (parsed.username || parsed.password || parsed.hash) throw new Error('userinfo')
+  } catch {
+    errorMessage.value = t('publicAccountImport.baseURLInvalid')
+    return null
+  }
+  return { name, baseURL, apiKey }
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0)
+    if (code <= 31 || code === 127) return true
+  }
+  return false
+}
+
 function filterAdditionalResultMessages<T extends { index: number; message: string }>(messages: T[]): T[] {
   const items = result.value?.items || []
   return messages.filter((message) => !items.some((item) => (
@@ -991,12 +1165,48 @@ function importActionClass(action: string): string {
 }
 
 async function handleSubmit() {
-  if (!files.value.length) {
-    errorMessage.value = t('publicAccountImport.selectFilesError')
-    return
-  }
   if (!selectedGroupIds.value.length) {
     errorMessage.value = t('publicAccountImport.selectGroupsError')
+    return
+  }
+
+  if (importMode.value === 'upstream') {
+    if (!isAuthenticated.value) {
+      errorMessage.value = t('publicAccountImport.loginRequired')
+      return
+    }
+    const upstream = validateUpstreamForm()
+    if (!upstream) return
+    submitting.value = true
+    errorMessage.value = ''
+    result.value = null
+    try {
+      const importResult = await submitPublicAccountImportUpstream(
+        {
+          ...(upstream.name ? { name: upstream.name } : {}),
+          base_url: upstream.baseURL,
+          api_key: upstream.apiKey,
+          group_ids: [...selectedGroupIds.value],
+        },
+        idempotencyKey.value
+      )
+      result.value = importResult
+      if (importResult.created > 0 || importResult.updated > 0 || importResult.skipped > 0) {
+        // API keys are intentionally short-lived in the UI after a completed import.
+        upstreamAPIKey.value = ''
+        showUpstreamAPIKey.value = false
+      }
+      idempotencyKey.value = createIdempotencyKey()
+    } catch (error: any) {
+      errorMessage.value = error?.message || t('publicAccountImport.importFailed')
+    } finally {
+      submitting.value = false
+    }
+    return
+  }
+
+  if (!files.value.length && !pastedJSON.value.trim()) {
+    errorMessage.value = t('publicAccountImport.selectFilesError')
     return
   }
 
@@ -1006,10 +1216,18 @@ async function handleSubmit() {
   try {
     const contents: string[] = []
     for (const file of files.value) {
-      const content = (await file.text()).replace(/^\uFEFF/, '').trim()
+      const content = normalizeJSONText(await file.text())
       if (!content) throw new Error(t('publicAccountImport.emptyFile', { name: file.name }))
+      if (utf8ByteLength(content) > MAX_FILE_BYTES) throw new Error(t('publicAccountImport.fileTooLarge', { name: file.name }))
       contents.push(content)
     }
+    const pasted = normalizeJSONText(pastedJSON.value)
+    if (pasted) {
+      if (utf8ByteLength(pasted) > MAX_FILE_BYTES) throw new Error(t('publicAccountImport.pasteTooLarge'))
+      contents.push(pasted)
+    }
+    const totalBytes = contents.reduce((sum, content) => sum + utf8ByteLength(content), 0)
+    if (totalBytes > MAX_TOTAL_JSON_BYTES) throw new Error(t('publicAccountImport.combinedTooLarge'))
 
     result.value = await submitPublicAccountImport(
       { contents, group_ids: selectedGroupIds.value },

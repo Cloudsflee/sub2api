@@ -1,6 +1,10 @@
 export default {
   publicAccountStatus: {
     title: '账号状态',
+    login: '登录',
+    backToAdmin: '返回管理后台',
+    backToDashboard: '返回用户后台',
+    accountImportLink: '账号导入',
     refresh: '刷新',
     refreshing: '刷新中',
     lastUpdated: '更新于 {time}',

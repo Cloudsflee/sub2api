@@ -34,6 +34,14 @@ export interface PublicAccountImportPayload {
   group_ids: number[]
 }
 
+/** Authenticated OpenAI-compatible upstream account import payload. */
+export interface PublicAccountImportUpstreamPayload {
+  name?: string
+  base_url: string
+  api_key: string
+  group_ids: number[]
+}
+
 export type PublicAccountImportShopTrustLevel = 'trusted' | 'neutral' | 'untrusted'
 
 export interface PublicAccountImportShop {
@@ -149,6 +157,22 @@ export async function submitPublicAccountImport(
 ): Promise<PublicAccountImportResult> {
   const { data } = await apiClient.post<PublicAccountImportResult>(
     '/public/account-import',
+    payload,
+    { headers: { 'Idempotency-Key': idempotencyKey } }
+  )
+  return data
+}
+
+/**
+ * Import one OpenAI-compatible URL + API key account for the signed-in user.
+ * The API key is write-only and is never present in the result type.
+ */
+export async function submitPublicAccountImportUpstream(
+  payload: PublicAccountImportUpstreamPayload,
+  idempotencyKey: string
+): Promise<PublicAccountImportResult> {
+  const { data } = await apiClient.post<PublicAccountImportResult>(
+    '/user/account-import/upstream',
     payload,
     { headers: { 'Idempotency-Key': idempotencyKey } }
   )

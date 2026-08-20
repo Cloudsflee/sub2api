@@ -17,6 +17,7 @@ import {
   getPublicAccountImportProducts,
 	getPublicAccountImportProductsWithETag,
   requestPublicAccountImportProductRefresh,
+  submitPublicAccountImportUpstream,
   updatePublicAccountImportShopTrustLevel,
 } from '@/api/publicAccountImport'
 
@@ -26,6 +27,25 @@ describe('public account import product API', () => {
     post.mockReset()
     patch.mockReset()
     del.mockReset()
+  })
+
+  it('posts authenticated URL + Key imports with an idempotency key', async () => {
+    post.mockResolvedValue({
+      data: { total: 1, created: 1, updated: 0, skipped: 0, failed: 0 },
+    })
+
+    const payload = {
+      name: 'Primary upstream',
+      base_url: 'https://api.example.com/v1',
+      api_key: 'secret-key',
+      group_ids: [5],
+    }
+    await expect(submitPublicAccountImportUpstream(payload, 'operation-key')).resolves.toMatchObject({
+      created: 1,
+    })
+    expect(post).toHaveBeenCalledWith('/user/account-import/upstream', payload, {
+      headers: { 'Idempotency-Key': 'operation-key' },
+    })
   })
 
   it('normalizes public trust levels and uses the administrator shop paths for writes', async () => {
