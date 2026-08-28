@@ -1239,7 +1239,11 @@ func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(ctx context.Contex
 	// scheduler cache. Capture the identity before entering the repository so a
 	// concurrent credential merge cannot make the SQL CAS use a different
 	// workspace/user tuple than the response that produced this snapshot.
-	return persistOpenAICodexSnapshotForAccount(updateCtx, s.accountRepo, cloneOpenAICodexSnapshotIdentity(account), updates)
+	err := persistOpenAICodexSnapshotForAccount(updateCtx, s.accountRepo, cloneOpenAICodexSnapshotIdentity(account), updates)
+	if err == nil {
+		notifyOpenAIAutoReset(account.ID)
+	}
+	return err
 }
 
 // persistAndResolveOpenAICodexProbeSnapshot persists a probe observation and

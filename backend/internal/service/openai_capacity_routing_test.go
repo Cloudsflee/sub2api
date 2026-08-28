@@ -138,13 +138,13 @@ func TestReportOpenAIAccountScheduleResult_CapacityCoolsOAuthAccountModel(t *tes
 	failoverErr := &UpstreamFailoverError{Reason: openAIModelCapacityFailureReason}
 	account := &Account{ID: 31, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 
-	svc.ReportOpenAIAccountScheduleResult(account.ID, "gpt-5.5", false, nil, failoverErr)
+	svc.ReportOpenAIAccountScheduleResult(account, "gpt-5.5", false, nil, failoverErr)
 	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5"))
-	svc.ReportOpenAIAccountScheduleResult(account.ID, "gpt-5.5", false, nil, failoverErr)
+	svc.ReportOpenAIAccountScheduleResult(account, "gpt-5.5", false, nil, failoverErr)
 	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5"))
 	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.6"))
 
-	svc.ReportOpenAIAccountScheduleResult(account.ID, "gpt-5.5", true, nil)
+	svc.ReportOpenAIAccountScheduleResult(account, "gpt-5.5", true, nil)
 	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5"))
 }
 
