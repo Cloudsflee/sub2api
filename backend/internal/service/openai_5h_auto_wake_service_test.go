@@ -249,6 +249,33 @@ func TestOpenAI5hAutoWakeCheckSchedulesTransientPoolWithoutCreatingTask(t *testi
 	require.WithinDuration(t, resetAt.Add(openAI5hAutoWakeResetGrace), *taskRepo.updates[0].NextCheckAt, time.Second)
 }
 
+func TestOpenAI5hAutoWakeCheckUsesEarlierTransientDeadlineAlongsideFuturePool(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	transientReset := now.Add(5 * time.Minute)
+	deferred := *newOpenAI5hWakeAccount(1, "transient-due-pool")
+	deferred.RateLimitResetAt = &transientReset
+	futureReset := now.Add(4 * time.Hour)
+	future := trustedOpenAI5hWakeAccount(2, "trusted-future-pool", futureReset)
+	baseRepo := &openAI5hAutoWakeAccountRepoStub{}
+	accountRepo := &openAI5hAutoWakeTransientAccountRepoStub{
+		openAI5hAutoWakeAccountRepoStub: baseRepo,
+		accountsByGroup:                 map[int64][]Account{9: {deferred, future}},
+	}
+	taskRepo := &openAI5hAutoWakeTaskRepoStub{group: &OpenAI5hAutoWakeGroup{
+		ID: 9, Enabled: true, Status: StatusActive,
+	}}
+	wake := &OpenAI5hWakeService{repo: taskRepo, accountRepo: accountRepo}
+
+	require.NoError(t, wake.CheckGroupNow(context.Background(), 9))
+	require.Empty(t, taskRepo.createCalls)
+	require.Len(t, taskRepo.updates, 1)
+	require.Equal(t, OpenAI5hAutoWakeReasonNoCandidate, taskRepo.updates[0].Reason)
+	require.WithinDuration(
+		t, transientReset.Add(openAI5hAutoWakeResetGrace),
+		*taskRepo.updates[0].NextCheckAt, time.Second,
+	)
+}
+
 func TestOpenAI5hAutoWakeUsesOnlyEligibleMembersForSharedTransientPoolTask(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	identity := "shared-transient-pool"

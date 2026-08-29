@@ -617,8 +617,12 @@ func (s *OpenAI5hWakeService) checkGroupNow(ctx context.Context, groupID int64) 
 		}
 	}
 	if len(candidates) == 0 {
-		if nextCheckAt == nil {
-			nextCheckAt = openAI5hWakeTransientRetryDeadline(scheduleGroups, checkedAt)
+		// A due pool can still be temporarily ineligible while another pool
+		// contributes a much later trusted reset. Recheck at the earlier runtime
+		// deadline so the blocked pool is not hidden behind the later window.
+		transientRetryAt := openAI5hWakeTransientRetryDeadline(scheduleGroups, checkedAt)
+		if transientRetryAt != nil && (nextCheckAt == nil || transientRetryAt.Before(*nextCheckAt)) {
+			nextCheckAt = transientRetryAt
 		}
 		if nextCheckAt == nil {
 			fallback := checkedAt.Add(openAI5hAutoWakeNoDataInterval)
