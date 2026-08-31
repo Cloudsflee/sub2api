@@ -148,6 +148,7 @@ type codexModelsManifestRequest struct {
 	credentialAccount   *Account
 	accountConcurrency  int
 	useAPIKeyUpstream   bool
+	forceFullResponses  bool
 }
 
 type codexModelsManifestCacheEntry struct {
@@ -228,8 +229,9 @@ func (c *codexModelsManifestCache) set(key string, manifest *CodexModelsManifest
 // the ChatGPT backend for OAuth accounts or a custom upstream for API key accounts.
 //
 // After validating the stable top-level envelope, OAuth response bodies are
-// passed through verbatim. Custom API key manifests receive only the narrowly
-// scoped compatibility adjustments required by custom-provider Codex clients.
+// passed through verbatim unless the image-generation bridge requires the full
+// Responses protocol. Custom API key manifests receive the same narrowly
+// scoped compatibility adjustment required by custom-provider Codex clients.
 func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*CodexModelsManifest, error) {
 	if account == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_ACCOUNT_REQUIRED", "account is required")
@@ -334,14 +336,25 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 		credentialAccount:   credAccount,
 		accountConcurrency:  account.Concurrency,
 		useAPIKeyUpstream:   useAPIKeyUpstream,
+		forceFullResponses:  s != nil && s.cfg != nil && s.cfg.Gateway.CodexImageGenerationBridgeEnabled,
 	}
 	if useAPIKeyUpstream {
 		return s.fetchCachedAPIKeyCodexModelsManifest(ctx, request, ifNoneMatch)
 	}
+	clientIfNoneMatch := ifNoneMatch
+	if request.forceFullResponses {
+		// The bridge-adjusted manifest has a local ETag that the ChatGPT backend
+		// does not recognize. Always fetch the body, then evaluate the client ETag
+		// against the adjusted representation below.
+		ifNoneMatch = ""
+	}
 	manifest, fetchErr := s.fetchCodexModelsManifestUpstream(ctx, request, ifNoneMatch)
 	if !credAccount.IsOpenAIAgentIdentity() || !isAgentIdentityTaskInvalidCodexModelsError(fetchErr) {
 		s.handleCodexModelsManifestAccountAuthError(ctx, account, credAccount, fetchErr)
-		return manifest, fetchErr
+		if fetchErr != nil || !request.forceFullResponses {
+			return manifest, fetchErr
+		}
+		return codexModelsManifestForClient(manifest, clientIfNoneMatch), nil
 	}
 	expectedTaskID := strings.TrimSpace(credAccount.GetCredential("task_id"))
 	if recoverErr := s.recoverAgentIdentityTask(ctx, credAccount, expectedTaskID); recoverErr != nil {
@@ -359,7 +372,11 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 		}
 	}
 	setOpenAIChatGPTAccountHeaders(request.headers, credAccount)
-	return s.fetchCodexModelsManifestUpstream(ctx, request, ifNoneMatch)
+	manifest, fetchErr = s.fetchCodexModelsManifestUpstream(ctx, request, ifNoneMatch)
+	if fetchErr != nil || !request.forceFullResponses {
+		return manifest, fetchErr
+	}
+	return codexModelsManifestForClient(manifest, clientIfNoneMatch), nil
 }
 
 func isAgentIdentityTaskInvalidCodexModelsError(err error) bool {
@@ -543,8 +560,9 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 			retryable: true,
 		}
 	}
-	if request.useAPIKeyUpstream {
-		body, err = adjustAPIKeyCodexModelsManifest(body)
+	adjustForFullResponses := request.useAPIKeyUpstream || request.forceFullResponses
+	if adjustForFullResponses {
+		body, err = adjustCodexModelsManifestForFullResponses(body)
 		if err != nil {
 			return nil, &codexModelsManifestUpstreamError{
 				err: infraerrors.Newf(
@@ -561,9 +579,9 @@ func (s *OpenAIGatewayService) fetchCodexModelsManifestUpstream(ctx context.Cont
 	manifest := &CodexModelsManifest{Body: body, ETag: etag}
 	if request.useAPIKeyUpstream {
 		manifest.upstreamETag = etag
-		if !bytes.Equal(body, upstreamBody) {
-			manifest.ETag = codexModelsManifestBodyETag(body)
-		}
+	}
+	if adjustForFullResponses && !bytes.Equal(body, upstreamBody) {
+		manifest.ETag = codexModelsManifestBodyETag(body)
 	}
 	return manifest, nil
 }
@@ -579,11 +597,11 @@ var apiKeyCodexModelsWithoutResponsesLite = map[string]struct{}{
 	"gpt-5.6-luna":  {},
 }
 
-// adjustAPIKeyCodexModelsManifest prevents Codex from selecting Responses
-// Lite for custom API key providers. Those clients do not install web.run in
-// Lite mode, so the affected model manifests must advertise the full Responses
-// path. Return the original body when no targeted true value is present.
-func adjustAPIKeyCodexModelsManifest(body []byte) ([]byte, error) {
+// adjustCodexModelsManifestForFullResponses prevents Codex from selecting
+// Responses Lite when the downstream route needs hosted tools unavailable to
+// the Lite endpoint. Return the original body when no targeted true value is
+// present so pass-through behavior and upstream ETags remain unchanged.
+func adjustCodexModelsManifestForFullResponses(body []byte) ([]byte, error) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, fmt.Errorf("decode JSON object: %w", err)

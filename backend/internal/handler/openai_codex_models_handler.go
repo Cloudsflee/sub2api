@@ -15,9 +15,11 @@ import (
 // Codex CLI and the Codex desktop app refresh their model picker from
 // GET {base_url}/models?client_version=... (custom provider mode) or
 // GET /backend-api/codex/models (chatgpt_base_url mode). Both routes land
-// here. ChatGPT manifests are proxied verbatim; custom API key manifests receive
-// provider-compatibility normalization and use a short-lived, asynchronously
-// revalidated cache to tolerate canceled client requests.
+// here. ChatGPT manifests are normally proxied verbatim; when the Codex image
+// bridge is enabled, affected models advertise full Responses so hosted tools
+// can be injected. Custom API key manifests receive provider-compatibility
+// normalization and use a short-lived, asynchronously revalidated cache to
+// tolerate canceled client requests.
 func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 	if c.Request.Context().Err() != nil {
 		return

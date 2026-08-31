@@ -501,7 +501,7 @@ func TestFetchCodexModelsManifestAPIKeyConvertsStandardOpenAIModelList(t *testin
 	require.Equal(t, `W/"openai-list"`, manifest.upstreamETag)
 }
 
-func TestAdjustAPIKeyCodexModelsManifest(t *testing.T) {
+func TestAdjustCodexModelsManifestForFullResponses(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
@@ -526,7 +526,7 @@ func TestAdjustAPIKeyCodexModelsManifest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := adjustAPIKeyCodexModelsManifest([]byte(tt.body))
+			got, err := adjustCodexModelsManifestForFullResponses([]byte(tt.body))
 			require.NoError(t, err)
 			require.Equal(t, tt.want, string(got))
 		})
@@ -570,6 +570,35 @@ func TestFetchCodexModelsManifestOAuthPreservesResponsesLite(t *testing.T) {
 	manifest, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.145.0", "")
 	require.NoError(t, err)
 	require.Equal(t, manifestBody, string(manifest.Body))
+}
+
+func TestFetchCodexModelsManifestOAuthImageBridgeDisablesResponsesLite(t *testing.T) {
+	const manifestBody = `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":true},{"slug":"gpt-5.6-codex","use_responses_lite":true}]}`
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		require.Empty(t, r.Header.Get("If-None-Match"))
+		w.Header().Set("ETag", `"upstream-strong"`)
+		_, _ = w.Write([]byte(manifestBody))
+	}))
+	defer server.Close()
+	original := chatgptCodexModelsURL
+	chatgptCodexModelsURL = server.URL
+	defer func() { chatgptCodexModelsURL = original }()
+
+	s := &OpenAIGatewayService{cfg: &config.Config{}}
+	s.cfg.Gateway.CodexImageGenerationBridgeEnabled = true
+	manifest, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.145.0", "")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"models":[{"slug":"gpt-5.6-sol","use_responses_lite":false},{"slug":"gpt-5.6-codex","use_responses_lite":true}]}`, string(manifest.Body))
+	require.Equal(t, codexModelsManifestBodyETag(manifest.Body), manifest.ETag)
+	require.NotEqual(t, `"upstream-strong"`, manifest.ETag)
+
+	notModified, err := s.FetchCodexModelsManifest(context.Background(), newCodexModelsTestAccount(), "0.145.0", manifest.ETag)
+	require.NoError(t, err)
+	require.True(t, notModified.NotModified)
+	require.Equal(t, manifest.ETag, notModified.ETag)
+	require.Equal(t, 2, calls)
 }
 
 func TestConvertOpenAIModelListToCodexManifest(t *testing.T) {
