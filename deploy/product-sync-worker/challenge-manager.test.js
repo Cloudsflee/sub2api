@@ -12,6 +12,7 @@ const {
   challengeContentCleared,
   challengeCleared,
   challengeSnapshotDetected,
+  captureChallengeSubmissionResponse,
   collectChallengeSnapshot,
   computeDragDistance,
   defaultChallengeProviders,
@@ -656,6 +657,136 @@ test('runtime API challenge is staged at its original URL and solved without an 
   assert.equal(homeNavigations, 0)
 })
 
+test('successful staged API callback captures its bounded JSON result without callback query tokens', async () => {
+  const staged = { url: 'https://pay.ldxp.cn/shopApi/Shop/info' }
+  const response = {
+    url: () => 'https://pay.ldxp.cn/shopApi/Shop/info?u_atoken=secret-token&u_asig=secret-signature',
+    status: () => 200,
+    headerValue: async (name) => {
+      if (name === 'content-type') return 'application/json; charset=utf-8'
+      if (name === 'retry-after') return '3'
+      return ''
+    },
+    text: async () => JSON.stringify({ code: 1, data: { shop: 'ok' } }),
+  }
+
+  const result = await captureChallengeSubmissionResponse(response, staged)
+
+  assert.equal(result.status, 200)
+  assert.equal(result.contentType, 'application/json; charset=utf-8')
+  assert.deepEqual(result.payload, { code: 1, data: { shop: 'ok' } })
+  assert.equal(result.responseURL, staged.url)
+  assert.equal(result.responseURL.includes('u_atoken'), false)
+  assert.equal(result.retryAfter, '3')
+})
+
+test('callback capture accepts the exact ESA business callback origin with the original API path', async () => {
+  const staged = { url: 'https://pay.ldxp.cn/shopApi/Shop/info' }
+  const result = await captureChallengeSubmissionResponse({
+    url: () => 'https://wzyp.cn/shopApi/Shop/info?u_atoken=secret&u_asig=secret',
+    status: () => 200,
+    headerValue: async (name) => name === 'content-type' ? 'application/json' : '',
+    text: async () => '{"code":0,"msg":"ok","data":{}}',
+  }, staged)
+
+  assert.deepEqual(result.payload, { code: 0, msg: 'ok', data: {} })
+  assert.equal(result.responseURL, staged.url)
+})
+
+test('callback capture ignores HTML, non-success, and unrelated navigations', async () => {
+  const staged = { url: 'https://pay.ldxp.cn/shopApi/Shop/info' }
+  const response = (overrides = {}) => ({
+    url: () => staged.url,
+    status: () => 200,
+    headerValue: async () => 'application/json',
+    text: async () => '{"code":1}',
+    ...overrides,
+  })
+
+  assert.equal(await captureChallengeSubmissionResponse(response({
+    headerValue: async () => 'text/html; charset=utf-8',
+  }), staged), null)
+  assert.equal(await captureChallengeSubmissionResponse(response({ status: () => 403 }), staged), null)
+  assert.equal(await captureChallengeSubmissionResponse(response({
+    url: () => 'https://pay.ldxp.cn/shopApi/Shop/goodsList?u_atoken=secret',
+  }), staged), null)
+  assert.equal(await captureChallengeSubmissionResponse(response({
+    url: () => 'https://example.com/shopApi/Shop/info?u_atoken=secret',
+  }), staged), null)
+})
+
+test('callback capture retries once when the navigation body is not ready yet', async () => {
+  const staged = { url: 'https://pay.ldxp.cn/shopApi/Shop/info' }
+  let reads = 0
+  const result = await captureChallengeSubmissionResponse({
+    url: () => `${staged.url}?u_atoken=secret&u_asig=secret`,
+    status: () => 200,
+    headerValue: async (name) => name === 'content-type' ? 'application/json' : '',
+    text: async () => {
+      reads += 1
+      if (reads === 1) throw new Error('response body is not ready')
+      return '{"code":0,"msg":"ok","data":{}}'
+    },
+  }, staged)
+
+  assert.equal(reads, 2)
+  assert.deepEqual(result.payload, { code: 0, msg: 'ok', data: {} })
+})
+
+test('callback capture accepts parsed JSON while navigation headers are still empty', async () => {
+  const staged = { url: 'https://pay.ldxp.cn/shopApi/Shop/info' }
+  const result = await captureChallengeSubmissionResponse({
+    url: () => `${staged.url}?u_atoken=secret&u_asig=secret`,
+    status: () => 200,
+    headerValue: async () => '',
+    text: async () => '{"code":0,"msg":"ok","data":{}}',
+  }, staged)
+
+  assert.deepEqual(result.payload, { code: 0, msg: 'ok', data: {} })
+})
+
+test('staged challenge solve returns the original API JSON callback response', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const apiURL = 'https://pay.ldxp.cn/shopApi/Shop/info'
+  const callbackPayload = { code: 1, data: { shop_name: 'verified' } }
+  const callbackResponse = {
+    url: () => `${apiURL}?u_atoken=secret&u_asig=secret`,
+    status: () => 200,
+    headerValue: async (name) => name === 'content-type' ? 'application/json' : '',
+    text: async () => JSON.stringify(callbackPayload),
+  }
+  let inspections = 0
+  const manager = new ChallengeManager({
+    enabled: true,
+    sessionDirectory: directory,
+    providers: [{
+      id: 'aliyun-esa',
+      detect: () => true,
+      locate: async () => sliderGeometry(),
+    }],
+    stage: async () => ({}),
+    inspect: async () => inspections++ === 0 ? aliyunSnapshot() : clearSnapshot(),
+    drag: async () => {},
+  })
+
+  const result = await manager.solve({
+    context: { storageState: async () => ({ cookies: [], origins: [] }) },
+    page: { waitForNavigation: async () => callbackResponse },
+    challengeResponse: {
+      status: 200,
+      url: apiURL,
+      contentType: 'text/html; charset=utf-8',
+      responseError: 'denied by http_custom',
+      text: '<html><script src="/aliyuncaptcha.js"></script></html>',
+    },
+  })
+
+  assert.equal(result.state, 'solved')
+  assert.deepEqual(result.operationResponse.payload, callbackPayload)
+  assert.equal(result.operationResponse.responseURL, apiURL)
+})
+
 test('a repeated staged API challenge reaches the second drag after its delayed ESA shell', async (t) => {
   const directory = temporaryDirectory()
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
@@ -1193,6 +1324,28 @@ test('protected operation recovers twice per proxy and never cycles after fallba
     && error.restartLane === true)
   assert.deepEqual(attempts, [3, 3])
   assert.deepEqual(switches, [1])
+})
+
+test('protected operation returns a completed verification callback without replaying the request', async () => {
+  let attempts = 0
+  let recoveries = 0
+  const result = await retryChallengeOperationAcrossProxyPool({
+    poolSize: 1,
+    currentIndex: 0,
+    task: async () => {
+      attempts += 1
+      throw new ChallengeError('failed', 'verification required')
+    },
+    recoverCurrent: async () => {
+      recoveries += 1
+      return { completed: true, value: { code: 1, data: { recovered: true } } }
+    },
+    switchTo: async () => {},
+  })
+
+  assert.deepEqual(result, { code: 1, data: { recovered: true } })
+  assert.equal(attempts, 1)
+  assert.equal(recoveries, 1)
 })
 
 test('challenge proxy recovery propagates cancellation without touching fallbacks', async () => {

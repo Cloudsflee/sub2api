@@ -6,6 +6,7 @@ const { performance } = require('node:perf_hooks')
 const { promisify } = require('node:util')
 
 const DEFAULT_ORIGIN = 'https://pay.ldxp.cn'
+const ALIYUN_CALLBACK_ORIGIN = 'https://wzyp.cn'
 const MAX_DRAG_ATTEMPTS = 2
 const MAX_STAGED_CHALLENGE_BYTES = 512_000
 const BLOCKED_RESOURCE_TYPES = new Set(['image', 'media', 'font'])
@@ -260,17 +261,82 @@ function selectChallengeProvider(snapshot, providers = defaultChallengeProviders
   return providers.find((provider) => provider.detect(classifiedSnapshot)) || null
 }
 
-async function responseErrorHeader(response) {
+async function responseHeaderValue(response, name) {
   if (!response) return ''
   try {
     if (typeof response.headerValue === 'function') {
-      return String(await response.headerValue('x-tengine-error') || '')
+      return String(await response.headerValue(name) || '')
     }
     const headers = typeof response.headers === 'function' ? await response.headers() : response.headers
-    return String(headers?.['x-tengine-error'] || headers?.['X-Tengine-Error'] || '')
+    if (!headers || typeof headers !== 'object') return ''
+    const normalizedName = String(name || '').toLowerCase()
+    for (const [key, value] of Object.entries(headers)) {
+      if (String(key).toLowerCase() === normalizedName) return String(value || '')
+    }
+    return ''
   } catch {
     return ''
   }
+}
+
+async function responseErrorHeader(response) {
+  return responseHeaderValue(response, 'x-tengine-error')
+}
+
+// ESA's successful slider callback can complete the exact protected API
+// request which originally produced the verification document. Replaying the
+// same request discards that one-time approval and can immediately trigger a
+// second challenge. Capture only a bounded, same-origin/same-path 2xx JSON
+// callback so the caller can use it as the operation result. HTML callbacks
+// and unrelated navigations retain the legacy replay path.
+async function captureChallengeSubmissionResponse(response, stagedResponse) {
+  if (!response || !stagedResponse) return null
+  let expectedURL
+  let actualURL
+  try {
+    expectedURL = new URL(String(stagedResponse.url || ''))
+    const rawURL = typeof response.url === 'function' ? response.url() : response.url
+    actualURL = new URL(String(rawURL || ''), expectedURL)
+  } catch {
+    return null
+  }
+  const trustedOrigin = actualURL.origin === expectedURL.origin
+    || (expectedURL.origin === DEFAULT_ORIGIN && actualURL.origin === ALIYUN_CALLBACK_ORIGIN)
+  if (!trustedOrigin || actualURL.pathname !== expectedURL.pathname) return null
+
+  const rawStatus = typeof response.status === 'function' ? response.status() : response.status
+  const status = Number(rawStatus)
+  if (!Number.isInteger(status) || status < 200 || status >= 300) return null
+  const contentType = await responseHeaderValue(response, 'content-type')
+  if ((contentType && !/\bjson\b/i.test(contentType)) || typeof response.text !== 'function') return null
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    let text
+    try {
+      text = String(await response.text())
+    } catch {
+      text = ''
+    }
+    if (Buffer.byteLength(text, 'utf8') > MAX_STAGED_CHALLENGE_BYTES) return null
+
+    try {
+      const payload = JSON.parse(text)
+      if (payload && typeof payload === 'object') {
+        return {
+          status,
+          contentType,
+          payload,
+          text,
+          // Keep callback authorization query values out of the retained result.
+          responseURL: expectedURL.href,
+          responseError: await responseErrorHeader(response),
+          retryAfter: await responseHeaderValue(response, 'retry-after'),
+        }
+      }
+    } catch {}
+    if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return null
 }
 
 async function collectChallengeSnapshot(page, response) {
@@ -1508,9 +1574,10 @@ class ChallengeManager {
         // Prefer the response produced by the captcha callback.  Only issue a
         // fresh home navigation when no callback navigation occurred (failed
         // drag, an old SDK variant, or a lightweight test double).
-        response = submissionNavigation
+        const submissionResponse = submissionNavigation
           ? await this.operation(submissionNavigation, signal)
           : null
+        response = submissionResponse
         const responseContext = response ? 'post-drag-submission' : 'post-drag-fallback'
         if (!response) {
           response = await this.operation(this.navigate(page, this.navigationTimeoutMilliseconds, signal), signal)
@@ -1519,15 +1586,66 @@ class ChallengeManager {
           await this.operation(this.inspect(page, response), signal),
           responseContext
         )
+        const operationResponse = stagedResponse && submissionResponse
+          ? await this.operation(captureChallengeSubmissionResponse(submissionResponse, stagedResponse), signal)
+          : null
+        if (this.nativeDragDebug && stagedResponse) {
+          try {
+            const rawURL = submissionResponse && typeof submissionResponse.url === 'function'
+              ? submissionResponse.url()
+              : submissionResponse?.url
+            const callbackURL = rawURL ? new URL(String(rawURL), this.origin) : null
+            const rawStatus = submissionResponse && typeof submissionResponse.status === 'function'
+              ? submissionResponse.status()
+              : submissionResponse?.status
+            const diagnosticText = submissionResponse && typeof submissionResponse.text === 'function'
+              ? String(await submissionResponse.text())
+              : ''
+            let jsonSummary = null
+            try {
+              const payload = JSON.parse(diagnosticText)
+              jsonSummary = {
+                type: Array.isArray(payload) ? 'array' : typeof payload,
+                keys: payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 20) : [],
+                code: payload?.code,
+                msg: payload?.msg,
+                dataType: Array.isArray(payload?.data) ? 'array' : typeof payload?.data,
+              }
+            } catch {}
+            this.logger.log?.(`${new Date().toISOString()} challenge callback diagnostic: ${JSON.stringify({
+              captured: Boolean(operationResponse),
+              navigated: Boolean(submissionResponse),
+              status: Number(rawStatus) || 0,
+              origin: callbackURL?.origin || '',
+              pathname: callbackURL?.pathname || '',
+              expectedOrigin: stagedResponse ? new URL(stagedResponse.url).origin : '',
+              expectedPathname: stagedResponse ? new URL(stagedResponse.url).pathname : '',
+              queryKeys: callbackURL ? Array.from(callbackURL.searchParams.keys()).sort() : [],
+              contentType: submissionResponse ? await responseHeaderValue(submissionResponse, 'content-type') : '',
+              responseError: submissionResponse ? await responseErrorHeader(submissionResponse) : '',
+              bodyBytes: Buffer.byteLength(diagnosticText, 'utf8'),
+              bodyChallenge: /denied\s+by\s+http_custom|aliyun|alicloud|aliyuncaptcha|captcha-element|滑块|滑动.{0,30}验证/i
+                .test(diagnosticText.slice(0, MAX_STAGED_CHALLENGE_BYTES)),
+              jsonSummary,
+            })}`)
+          } catch (error) {
+            this.logger.warn?.(`${new Date().toISOString()} challenge callback diagnostic failed: ${String(error?.message || error)}`)
+          }
+        }
         // ESA can retain the challenge response header on a successful
-        // callback. The caller replays the protected API request before it
-        // trusts this result, so content clearing remains valid only here,
-        // after an actual drag.
+        // callback. A captured JSON callback is returned as the protected API
+        // result; other callback shapes keep the legacy replay path. Content
+        // clearing remains valid only here, after an actual drag.
         if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
           await this.persistSolvedSession(context, provider.id, proxy)
           const solvedAt = new Date(this.now()).toISOString()
           report({ state: 'solved', provider: provider.id, attempt, solvedAt })
-          return { state: 'solved', provider: provider.id, attempt }
+          return {
+            state: 'solved',
+            provider: provider.id,
+            attempt,
+            ...(operationResponse ? { operationResponse } : {}),
+          }
         }
       }
       throw new ChallengeError('failed', `${provider.id} challenge remained after ${MAX_DRAG_ATTEMPTS} drag attempts`)
@@ -1650,7 +1768,8 @@ async function retryChallengeOperationAcrossProxyPool(options = {}) {
         if (recoveries >= MAX_DRAG_ATTEMPTS) break
         recoveries += 1
         try {
-          await options.recoverCurrent({ error, recovery: recoveries, proxyIndex })
+          const recoveryResult = await options.recoverCurrent({ error, recovery: recoveries, proxyIndex })
+          if (recoveryResult?.completed === true) return recoveryResult.value
         } catch (recoveryError) {
           throwIfAborted(signal)
           lastError = recoveryError
@@ -1685,6 +1804,7 @@ module.exports = {
   challengeContentCleared,
   challengeCleared,
   challengeSnapshotDetected,
+  captureChallengeSubmissionResponse,
   challengeTextDetected,
   challengePageEvidenceDetected,
   genericSlideSnapshotDetected,

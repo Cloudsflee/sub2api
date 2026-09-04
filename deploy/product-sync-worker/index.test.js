@@ -9,6 +9,7 @@ const { spawn } = require('node:child_process')
 const {
   browserProfileIsInUse,
   clearStaleBrowserProfileLocks,
+  challengeOperationCompletion,
   challengeStatusValues,
   backend,
   evaluateShopRequest,
@@ -104,6 +105,16 @@ test('new challenge recovery clears stale provider, attempt, and solve timestamp
     challenge_provider: 'aliyun-esa',
     challenge_attempt: 1,
   })
+})
+
+test('challenge callback completion accepts only successful object payloads', () => {
+  const payload = { code: 1, data: { verified: true } }
+  assert.deepEqual(challengeOperationCompletion({
+    operationResponse: { status: 200, payload },
+  }), { completed: true, value: payload })
+  assert.equal(challengeOperationCompletion({ operationResponse: { status: 403, payload } }), null)
+  assert.equal(challengeOperationCompletion({ operationResponse: { status: 200, payload: null } }), null)
+  assert.equal(challengeOperationCompletion(null), null)
 })
 
 test('pressure recovery preserves a verified context when a job lease is cancelled', () => {

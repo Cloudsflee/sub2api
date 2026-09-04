@@ -463,6 +463,14 @@ function publishChallengeState(lane, event) {
   publishLaneStatus(lane, challengeStatusValues(event))
 }
 
+function challengeOperationCompletion(result) {
+  const response = result?.operationResponse
+  if (!response || !response.payload || typeof response.payload !== 'object') return null
+  const status = Number(response.status)
+  if (!Number.isInteger(status) || status < 200 || status >= 300) return null
+  return { completed: true, value: response.payload }
+}
+
 async function solveChallengeForContext(lane, context, page, proxy, signal, challengeResponse) {
   const result = await challengeManager.solve({
     context,
@@ -521,8 +529,13 @@ async function postShopAPIWithChallengeRecovery(lane, shopToken, path, body, dea
     task,
     recoverCurrent: async ({ error }) => {
       ensureJobDeadline(deadlineAt, signal)
-      await recoverLaneChallenge(lane, signal, error.challengeResponse)
+      const recovery = await recoverLaneChallenge(lane, signal, error.challengeResponse)
       ensureJobDeadline(deadlineAt, signal)
+      const completion = challengeOperationCompletion(recovery)
+      if (completion) {
+        console.log(`${new Date().toISOString()} lane ${lane.index + 1} accepted shop API ${path} from the ESA verification callback`)
+      }
+      return completion
     },
     switchTo: async (proxyIndex) => {
       try {
@@ -1466,6 +1479,7 @@ if (require.main === module) {
 
 module.exports = {
   backend,
+  challengeOperationCompletion,
   challengeStatusValues,
   backendRequestSignal,
   browserProfileIsInUse,

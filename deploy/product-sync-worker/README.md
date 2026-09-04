@@ -173,8 +173,11 @@ target origin, proxy server, and hashed proxy identity; invalid or mismatched
 files are removed and rebuilt. Images, fonts, and
 media are allowed only while solving, then the normal resource block is
 restored. If a shop API returns HTML during a sync, the lane solves in the same
-context and retries only that failed API call, preserving completed catalog
-work. After two failed drags it moves directly to its lane-local fallback.
+context and preserves completed catalog work. When ESA's verified callback
+completes the original API request on `https://wzyp.cn`, the worker consumes
+that same-path JSON response directly instead of discarding the one-time
+approval and replaying the request. Other callback shapes retain the normal
+retry path. After two failed drags it moves directly to its lane-local fallback.
 ESA callback navigation is allowed up to 15 seconds. Firefox
 `NS_BINDING_ABORTED` during a callback handoff is treated as an ESA-owned
 navigation and followed by a fresh document inspection instead of an immediate
