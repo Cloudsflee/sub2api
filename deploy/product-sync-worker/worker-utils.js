@@ -4,6 +4,8 @@ const path = require('node:path')
 
 const supportedProxyProtocols = new Set(['http:', 'https:', 'socks5:'])
 const inventorylessGoodsTypes = new Set(['article', 'resource', 'equity'])
+const shopProductOrigin = 'https://pay.ldxp.cn'
+const shopCallbackOrigin = 'https://wzyp.cn'
 // ESA puts its identifying markers after a large inline mobile/desktop
 // bootstrap script. Keep detection bounded, but inspect more than the first
 // couple of kilobytes so API challenge responses are not misclassified as
@@ -343,6 +345,30 @@ function normalizeGoodsStatus(value) {
   return 'unknown'
 }
 
+function normalizeCatalogProductURL(value, goodsKey) {
+  let url
+  try {
+    url = new URL(String(value || '').trim())
+  } catch {
+    return ''
+  }
+  if (url.protocol !== 'https:' || url.username || url.password
+    || ![shopProductOrigin, shopCallbackOrigin].includes(url.origin)) return ''
+  const parts = url.pathname.split('/').filter(Boolean)
+  if (parts.length !== 2 || parts[0] !== 'item') return ''
+  let pathGoodsKey
+  try {
+    pathGoodsKey = decodeURIComponent(parts[1])
+  } catch {
+    return ''
+  }
+  if (pathGoodsKey !== goodsKey) return ''
+  url.host = new URL(shopProductOrigin).host
+  url.search = ''
+  url.hash = ''
+  return url.href
+}
+
 function catalogProductState(item, fallbackGoodsType) {
   const goodsKey = String(item?.goods_key || '').trim()
   if (!goodsKey || goodsKey.length > 100) {
@@ -373,7 +399,7 @@ function catalogProductState(item, fallbackGoodsType) {
   if (stock < minimumQuantity) return { state: 'unavailable', goodsKey }
 
   const name = String(item?.name || '').trim()
-  const url = String(item?.link || '').trim()
+  const url = normalizeCatalogProductURL(item?.link, goodsKey)
   const price = normalizeNonNegativeAmount(item?.price)
   const marketPrice = item?.market_price === undefined || item?.market_price === null || item?.market_price === ''
     ? 0
@@ -801,6 +827,7 @@ module.exports = {
   initializeProxyPool,
   isPressureError,
   mapWithConcurrency,
+  normalizeCatalogProductURL,
   normalizeNonNegativeInteger,
   parseBoolean,
   parsePositiveMilliseconds,

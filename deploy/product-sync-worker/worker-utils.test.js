@@ -20,6 +20,7 @@ const {
   createJobHeartbeat,
   initializeProxyPool,
   isPressureError,
+  normalizeCatalogProductURL,
   parseBoolean,
   parsePositiveMilliseconds,
   parseProxyConfiguration,
@@ -59,6 +60,25 @@ test('catalogProductState validates status, stock, and minimum quantity from rea
   assert.equal(catalogProductState({ ...available, extend: { ...available.extend, stock_count: null } }, 'card').state, 'unknown')
   assert.equal(catalogProductState({ ...available, extend: { ...available.extend, limit_count: -1 } }, 'card').state, 'unknown')
   assert.equal(catalogProductState({ ...available, price: '' }, 'card').state, 'unknown')
+})
+
+test('catalog product URLs from the exact ESA callback origin are canonicalized to the shop origin', () => {
+  const available = fixture.goodsList.data.list[0]
+  const callbackURL = available.link.replace('https://pay.ldxp.cn', 'https://wzyp.cn')
+  const state = catalogProductState({ ...available, link: `${callbackURL}?u_atoken=opaque#fragment` }, 'card')
+
+  assert.equal(state.state, 'candidate')
+  assert.equal(state.product.url, available.link)
+  assert.equal(normalizeCatalogProductURL(callbackURL, available.goods_key), available.link)
+  assert.equal(normalizeCatalogProductURL(
+    callbackURL.replace('/item/', '/other/'),
+    available.goods_key
+  ), '')
+  assert.equal(normalizeCatalogProductURL(
+    callbackURL.replace('wzyp.cn', 'example.com'),
+    available.goods_key
+  ), '')
+  assert.equal(normalizeCatalogProductURL(callbackURL, 'different-key'), '')
 })
 
 test('catalogProductState normalizes inventoryless product types to one quoted unit', () => {

@@ -183,6 +183,9 @@ handoffs are exposed to the browser as 307 so both hops remain POST requests.
 While the verified page is on the exact callback origin, later API requests use
 the same browser context's cookie-sharing request client and manually preserve
 POST bodies across trusted redirects, avoiding cross-origin fetch failures.
+Product links returned by that callback are canonicalized from the exact
+`wzyp.cn/item/<goods_key>` form back to `pay.ldxp.cn/item/<goods_key>` before
+publication so backend URL validation receives the public shop origin.
 Each chained verification stage permits two failed drags; a completed API call
 resets that budget before the next shop endpoint. Exhausting a stage moves
 directly to the lane-local fallback.
