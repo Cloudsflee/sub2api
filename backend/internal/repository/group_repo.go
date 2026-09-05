@@ -106,13 +106,17 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetAllowLive(groupIn.AllowLive).
 		SetOpenai5hAutoWakeEnabled(groupIn.OpenAI5hAutoWakeEnabled).
 		SetNillableOpenai5hAutoWakeNextCheckAt(groupIn.OpenAI5hAutoWakeNextCheckAt).
+		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
+		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).
 		SetRequireOauthOnly(groupIn.RequireOAuthOnly).
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetMessagesDispatchModelConfig(groupIn.MessagesDispatchModelConfig).
 		SetModelsListConfig(groupIn.ModelsListConfig).
+		SetCodexModelsManifestConfig(groupIn.CodexModelsManifestConfig).
 		SetRpmLimit(groupIn.RPMLimit).
 		SetMaxReasoningEffort(groupIn.MaxReasoningEffort).
+		SetMaxReasoningEffortOverLimit(groupIn.MaxReasoningEffortOverLimit).
 		SetReasoningEffortMappings(groupIn.ReasoningEffortMappings).
 		SetPeakRateEnabled(groupIn.PeakRateEnabled).
 		SetPeakStart(groupIn.PeakStart).
@@ -285,13 +289,17 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetAllowLive(groupIn.AllowLive).
 		SetOpenai5hAutoWakeEnabled(groupIn.OpenAI5hAutoWakeEnabled).
 		SetNillableOpenai5hAutoWakeNextCheckAt(groupIn.OpenAI5hAutoWakeNextCheckAt).
+		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
+		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).
 		SetRequireOauthOnly(groupIn.RequireOAuthOnly).
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetMessagesDispatchModelConfig(groupIn.MessagesDispatchModelConfig).
 		SetModelsListConfig(groupIn.ModelsListConfig).
+		SetCodexModelsManifestConfig(groupIn.CodexModelsManifestConfig).
 		SetRpmLimit(groupIn.RPMLimit).
 		SetMaxReasoningEffort(groupIn.MaxReasoningEffort).
+		SetMaxReasoningEffortOverLimit(groupIn.MaxReasoningEffortOverLimit).
 		SetReasoningEffortMappings(groupIn.ReasoningEffortMappings).
 		SetPeakRateEnabled(groupIn.PeakRateEnabled).
 		SetPeakStart(groupIn.PeakStart).

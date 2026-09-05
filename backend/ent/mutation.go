@@ -22174,14 +22174,18 @@ type GroupMutation struct {
 	openai_5h_auto_wake_last_task_id                 *int64
 	addopenai_5h_auto_wake_last_task_id              *int64
 	openai_5h_auto_wake_last_task_status             *string
+	force_openai_fast                                *bool
+	free_openai_fast                                 *bool
 	require_oauth_only                               *bool
 	require_privacy_set                              *bool
 	default_mapped_model                             *string
 	messages_dispatch_model_config                   *domain.OpenAIMessagesDispatchModelConfig
 	models_list_config                               *domain.GroupModelsListConfig
+	codex_models_manifest_config                     *domain.GroupCodexModelsManifestConfig
 	rpm_limit                                        *int
 	addrpm_limit                                     *int
 	max_reasoning_effort                             *string
+	max_reasoning_effort_over_limit                  *string
 	reasoning_effort_mappings                        *[]domain.ReasoningEffortMapping
 	appendreasoning_effort_mappings                  []domain.ReasoningEffortMapping
 	profit_control_enabled                           *bool
@@ -25368,6 +25372,78 @@ func (m *GroupMutation) ResetOpenai5hAutoWakeLastTaskStatus() {
 	delete(m.clearedFields, group.FieldOpenai5hAutoWakeLastTaskStatus)
 }
 
+// SetForceOpenaiFast sets the "force_openai_fast" field.
+func (m *GroupMutation) SetForceOpenaiFast(b bool) {
+	m.force_openai_fast = &b
+}
+
+// ForceOpenaiFast returns the value of the "force_openai_fast" field in the mutation.
+func (m *GroupMutation) ForceOpenaiFast() (r bool, exists bool) {
+	v := m.force_openai_fast
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldForceOpenaiFast returns the old "force_openai_fast" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldForceOpenaiFast(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldForceOpenaiFast is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldForceOpenaiFast requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldForceOpenaiFast: %w", err)
+	}
+	return oldValue.ForceOpenaiFast, nil
+}
+
+// ResetForceOpenaiFast resets all changes to the "force_openai_fast" field.
+func (m *GroupMutation) ResetForceOpenaiFast() {
+	m.force_openai_fast = nil
+}
+
+// SetFreeOpenaiFast sets the "free_openai_fast" field.
+func (m *GroupMutation) SetFreeOpenaiFast(b bool) {
+	m.free_openai_fast = &b
+}
+
+// FreeOpenaiFast returns the value of the "free_openai_fast" field in the mutation.
+func (m *GroupMutation) FreeOpenaiFast() (r bool, exists bool) {
+	v := m.free_openai_fast
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFreeOpenaiFast returns the old "free_openai_fast" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldFreeOpenaiFast(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFreeOpenaiFast is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFreeOpenaiFast requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFreeOpenaiFast: %w", err)
+	}
+	return oldValue.FreeOpenaiFast, nil
+}
+
+// ResetFreeOpenaiFast resets all changes to the "free_openai_fast" field.
+func (m *GroupMutation) ResetFreeOpenaiFast() {
+	m.free_openai_fast = nil
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (m *GroupMutation) SetRequireOauthOnly(b bool) {
 	m.require_oauth_only = &b
@@ -25548,6 +25624,42 @@ func (m *GroupMutation) ResetModelsListConfig() {
 	m.models_list_config = nil
 }
 
+// SetCodexModelsManifestConfig sets the "codex_models_manifest_config" field.
+func (m *GroupMutation) SetCodexModelsManifestConfig(dcmmc domain.GroupCodexModelsManifestConfig) {
+	m.codex_models_manifest_config = &dcmmc
+}
+
+// CodexModelsManifestConfig returns the value of the "codex_models_manifest_config" field in the mutation.
+func (m *GroupMutation) CodexModelsManifestConfig() (r domain.GroupCodexModelsManifestConfig, exists bool) {
+	v := m.codex_models_manifest_config
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCodexModelsManifestConfig returns the old "codex_models_manifest_config" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldCodexModelsManifestConfig(ctx context.Context) (v domain.GroupCodexModelsManifestConfig, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCodexModelsManifestConfig is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCodexModelsManifestConfig requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCodexModelsManifestConfig: %w", err)
+	}
+	return oldValue.CodexModelsManifestConfig, nil
+}
+
+// ResetCodexModelsManifestConfig resets all changes to the "codex_models_manifest_config" field.
+func (m *GroupMutation) ResetCodexModelsManifestConfig() {
+	m.codex_models_manifest_config = nil
+}
+
 // SetRpmLimit sets the "rpm_limit" field.
 func (m *GroupMutation) SetRpmLimit(i int) {
 	m.rpm_limit = &i
@@ -25638,6 +25750,42 @@ func (m *GroupMutation) OldMaxReasoningEffort(ctx context.Context) (v string, er
 // ResetMaxReasoningEffort resets all changes to the "max_reasoning_effort" field.
 func (m *GroupMutation) ResetMaxReasoningEffort() {
 	m.max_reasoning_effort = nil
+}
+
+// SetMaxReasoningEffortOverLimit sets the "max_reasoning_effort_over_limit" field.
+func (m *GroupMutation) SetMaxReasoningEffortOverLimit(s string) {
+	m.max_reasoning_effort_over_limit = &s
+}
+
+// MaxReasoningEffortOverLimit returns the value of the "max_reasoning_effort_over_limit" field in the mutation.
+func (m *GroupMutation) MaxReasoningEffortOverLimit() (r string, exists bool) {
+	v := m.max_reasoning_effort_over_limit
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMaxReasoningEffortOverLimit returns the old "max_reasoning_effort_over_limit" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldMaxReasoningEffortOverLimit(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMaxReasoningEffortOverLimit is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMaxReasoningEffortOverLimit requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMaxReasoningEffortOverLimit: %w", err)
+	}
+	return oldValue.MaxReasoningEffortOverLimit, nil
+}
+
+// ResetMaxReasoningEffortOverLimit resets all changes to the "max_reasoning_effort_over_limit" field.
+func (m *GroupMutation) ResetMaxReasoningEffortOverLimit() {
+	m.max_reasoning_effort_over_limit = nil
 }
 
 // SetReasoningEffortMappings sets the "reasoning_effort_mappings" field.
@@ -26197,7 +26345,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 70)
+	fields := make([]string, 0, 74)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26375,6 +26523,12 @@ func (m *GroupMutation) Fields() []string {
 	if m.openai_5h_auto_wake_last_task_status != nil {
 		fields = append(fields, group.FieldOpenai5hAutoWakeLastTaskStatus)
 	}
+	if m.force_openai_fast != nil {
+		fields = append(fields, group.FieldForceOpenaiFast)
+	}
+	if m.free_openai_fast != nil {
+		fields = append(fields, group.FieldFreeOpenaiFast)
+	}
 	if m.require_oauth_only != nil {
 		fields = append(fields, group.FieldRequireOauthOnly)
 	}
@@ -26390,11 +26544,17 @@ func (m *GroupMutation) Fields() []string {
 	if m.models_list_config != nil {
 		fields = append(fields, group.FieldModelsListConfig)
 	}
+	if m.codex_models_manifest_config != nil {
+		fields = append(fields, group.FieldCodexModelsManifestConfig)
+	}
 	if m.rpm_limit != nil {
 		fields = append(fields, group.FieldRpmLimit)
 	}
 	if m.max_reasoning_effort != nil {
 		fields = append(fields, group.FieldMaxReasoningEffort)
+	}
+	if m.max_reasoning_effort_over_limit != nil {
+		fields = append(fields, group.FieldMaxReasoningEffortOverLimit)
 	}
 	if m.reasoning_effort_mappings != nil {
 		fields = append(fields, group.FieldReasoningEffortMappings)
@@ -26534,6 +26694,10 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.Openai5hAutoWakeLastTaskID()
 	case group.FieldOpenai5hAutoWakeLastTaskStatus:
 		return m.Openai5hAutoWakeLastTaskStatus()
+	case group.FieldForceOpenaiFast:
+		return m.ForceOpenaiFast()
+	case group.FieldFreeOpenaiFast:
+		return m.FreeOpenaiFast()
 	case group.FieldRequireOauthOnly:
 		return m.RequireOauthOnly()
 	case group.FieldRequirePrivacySet:
@@ -26544,10 +26708,14 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.MessagesDispatchModelConfig()
 	case group.FieldModelsListConfig:
 		return m.ModelsListConfig()
+	case group.FieldCodexModelsManifestConfig:
+		return m.CodexModelsManifestConfig()
 	case group.FieldRpmLimit:
 		return m.RpmLimit()
 	case group.FieldMaxReasoningEffort:
 		return m.MaxReasoningEffort()
+	case group.FieldMaxReasoningEffortOverLimit:
+		return m.MaxReasoningEffortOverLimit()
 	case group.FieldReasoningEffortMappings:
 		return m.ReasoningEffortMappings()
 	case group.FieldProfitControlEnabled:
@@ -26683,6 +26851,10 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldOpenai5hAutoWakeLastTaskID(ctx)
 	case group.FieldOpenai5hAutoWakeLastTaskStatus:
 		return m.OldOpenai5hAutoWakeLastTaskStatus(ctx)
+	case group.FieldForceOpenaiFast:
+		return m.OldForceOpenaiFast(ctx)
+	case group.FieldFreeOpenaiFast:
+		return m.OldFreeOpenaiFast(ctx)
 	case group.FieldRequireOauthOnly:
 		return m.OldRequireOauthOnly(ctx)
 	case group.FieldRequirePrivacySet:
@@ -26693,10 +26865,14 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldMessagesDispatchModelConfig(ctx)
 	case group.FieldModelsListConfig:
 		return m.OldModelsListConfig(ctx)
+	case group.FieldCodexModelsManifestConfig:
+		return m.OldCodexModelsManifestConfig(ctx)
 	case group.FieldRpmLimit:
 		return m.OldRpmLimit(ctx)
 	case group.FieldMaxReasoningEffort:
 		return m.OldMaxReasoningEffort(ctx)
+	case group.FieldMaxReasoningEffortOverLimit:
+		return m.OldMaxReasoningEffortOverLimit(ctx)
 	case group.FieldReasoningEffortMappings:
 		return m.OldReasoningEffortMappings(ctx)
 	case group.FieldProfitControlEnabled:
@@ -27127,6 +27303,20 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetOpenai5hAutoWakeLastTaskStatus(v)
 		return nil
+	case group.FieldForceOpenaiFast:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetForceOpenaiFast(v)
+		return nil
+	case group.FieldFreeOpenaiFast:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFreeOpenaiFast(v)
+		return nil
 	case group.FieldRequireOauthOnly:
 		v, ok := value.(bool)
 		if !ok {
@@ -27162,6 +27352,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetModelsListConfig(v)
 		return nil
+	case group.FieldCodexModelsManifestConfig:
+		v, ok := value.(domain.GroupCodexModelsManifestConfig)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCodexModelsManifestConfig(v)
+		return nil
 	case group.FieldRpmLimit:
 		v, ok := value.(int)
 		if !ok {
@@ -27175,6 +27372,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetMaxReasoningEffort(v)
+		return nil
+	case group.FieldMaxReasoningEffortOverLimit:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMaxReasoningEffortOverLimit(v)
 		return nil
 	case group.FieldReasoningEffortMappings:
 		v, ok := value.([]domain.ReasoningEffortMapping)
@@ -27952,6 +28156,12 @@ func (m *GroupMutation) ResetField(name string) error {
 	case group.FieldOpenai5hAutoWakeLastTaskStatus:
 		m.ResetOpenai5hAutoWakeLastTaskStatus()
 		return nil
+	case group.FieldForceOpenaiFast:
+		m.ResetForceOpenaiFast()
+		return nil
+	case group.FieldFreeOpenaiFast:
+		m.ResetFreeOpenaiFast()
+		return nil
 	case group.FieldRequireOauthOnly:
 		m.ResetRequireOauthOnly()
 		return nil
@@ -27967,11 +28177,17 @@ func (m *GroupMutation) ResetField(name string) error {
 	case group.FieldModelsListConfig:
 		m.ResetModelsListConfig()
 		return nil
+	case group.FieldCodexModelsManifestConfig:
+		m.ResetCodexModelsManifestConfig()
+		return nil
 	case group.FieldRpmLimit:
 		m.ResetRpmLimit()
 		return nil
 	case group.FieldMaxReasoningEffort:
 		m.ResetMaxReasoningEffort()
+		return nil
+	case group.FieldMaxReasoningEffortOverLimit:
+		m.ResetMaxReasoningEffortOverLimit()
 		return nil
 	case group.FieldReasoningEffortMappings:
 		m.ResetReasoningEffortMappings()
@@ -53170,6 +53386,7 @@ type UserMutation struct {
 	signup_source                 *string
 	last_login_at                 *time.Time
 	last_active_at                *time.Time
+	restrict_public_groups        *bool
 	balance_notify_enabled        *bool
 	balance_notify_threshold_type *string
 	balance_notify_threshold      *float64
@@ -54093,6 +54310,42 @@ func (m *UserMutation) LastActiveAtCleared() bool {
 func (m *UserMutation) ResetLastActiveAt() {
 	m.last_active_at = nil
 	delete(m.clearedFields, user.FieldLastActiveAt)
+}
+
+// SetRestrictPublicGroups sets the "restrict_public_groups" field.
+func (m *UserMutation) SetRestrictPublicGroups(b bool) {
+	m.restrict_public_groups = &b
+}
+
+// RestrictPublicGroups returns the value of the "restrict_public_groups" field in the mutation.
+func (m *UserMutation) RestrictPublicGroups() (r bool, exists bool) {
+	v := m.restrict_public_groups
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRestrictPublicGroups returns the old "restrict_public_groups" field's value of the User entity.
+// If the User object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UserMutation) OldRestrictPublicGroups(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRestrictPublicGroups is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRestrictPublicGroups requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRestrictPublicGroups: %w", err)
+	}
+	return oldValue.RestrictPublicGroups, nil
+}
+
+// ResetRestrictPublicGroups resets all changes to the "restrict_public_groups" field.
+func (m *UserMutation) ResetRestrictPublicGroups() {
+	m.restrict_public_groups = nil
 }
 
 // SetBalanceNotifyEnabled sets the "balance_notify_enabled" field.
@@ -55121,7 +55374,7 @@ func (m *UserMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UserMutation) Fields() []string {
-	fields := make([]string, 0, 24)
+	fields := make([]string, 0, 25)
 	if m.created_at != nil {
 		fields = append(fields, user.FieldCreatedAt)
 	}
@@ -55175,6 +55428,9 @@ func (m *UserMutation) Fields() []string {
 	}
 	if m.last_active_at != nil {
 		fields = append(fields, user.FieldLastActiveAt)
+	}
+	if m.restrict_public_groups != nil {
+		fields = append(fields, user.FieldRestrictPublicGroups)
 	}
 	if m.balance_notify_enabled != nil {
 		fields = append(fields, user.FieldBalanceNotifyEnabled)
@@ -55238,6 +55494,8 @@ func (m *UserMutation) Field(name string) (ent.Value, bool) {
 		return m.LastLoginAt()
 	case user.FieldLastActiveAt:
 		return m.LastActiveAt()
+	case user.FieldRestrictPublicGroups:
+		return m.RestrictPublicGroups()
 	case user.FieldBalanceNotifyEnabled:
 		return m.BalanceNotifyEnabled()
 	case user.FieldBalanceNotifyThresholdType:
@@ -55295,6 +55553,8 @@ func (m *UserMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldLastLoginAt(ctx)
 	case user.FieldLastActiveAt:
 		return m.OldLastActiveAt(ctx)
+	case user.FieldRestrictPublicGroups:
+		return m.OldRestrictPublicGroups(ctx)
 	case user.FieldBalanceNotifyEnabled:
 		return m.OldBalanceNotifyEnabled(ctx)
 	case user.FieldBalanceNotifyThresholdType:
@@ -55441,6 +55701,13 @@ func (m *UserMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetLastActiveAt(v)
+		return nil
+	case user.FieldRestrictPublicGroups:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRestrictPublicGroups(v)
 		return nil
 	case user.FieldBalanceNotifyEnabled:
 		v, ok := value.(bool)
@@ -55700,6 +55967,9 @@ func (m *UserMutation) ResetField(name string) error {
 		return nil
 	case user.FieldLastActiveAt:
 		m.ResetLastActiveAt()
+		return nil
+	case user.FieldRestrictPublicGroups:
+		m.ResetRestrictPublicGroups()
 		return nil
 	case user.FieldBalanceNotifyEnabled:
 		m.ResetBalanceNotifyEnabled()
