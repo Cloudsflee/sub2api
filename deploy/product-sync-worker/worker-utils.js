@@ -541,7 +541,7 @@ function shopRequestError(path, error) {
   const browserSessionClosed = /target (?:page, )?context or browser has been closed|page, context or browser has been closed|browser has been closed|context has been closed|page has been closed/i.test(message)
   const isNetworkFailure = name === 'aborterror'
     || browserSessionClosed
-    || /aborterror|signal is aborted|failed to fetch|fetch failed|networkerror|network request failed|load failed|net::err_/i.test(message)
+    || /aborterror|signal is aborted|failed to fetch|fetch failed|networkerror|network request failed|load failed|net::err_|execution context was destroyed|most likely because of a navigation/i.test(message)
   const wrapped = new ShopSyncError(
     isNetworkFailure ? 'network' : 'unknown',
     `shop API ${path} failed: ${message}`

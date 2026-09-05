@@ -242,6 +242,7 @@ test('shopRequestError classifies browser transport failures as pressure errors'
     new Error('page.evaluate: AbortError: signal is aborted without reason'),
     new Error('page.evaluate: NetworkError when attempting to fetch resource'),
     new Error('net::ERR_PROXY_CONNECTION_FAILED'),
+    new Error('page.evaluate: Execution context was destroyed, most likely because of a navigation'),
   ]) {
     const wrapped = shopRequestError('/shopApi/Shop/goodsList', error)
     assert.ok(wrapped instanceof ShopSyncError)
@@ -249,7 +250,7 @@ test('shopRequestError classifies browser transport failures as pressure errors'
     assert.equal(isPressureError(wrapped), true)
   }
 
-  const applicationError = shopRequestError('/shopApi/Shop/goodsList', new Error('execution context was destroyed'))
+  const applicationError = shopRequestError('/shopApi/Shop/goodsList', new Error('catalog item validation failed'))
   assert.equal(applicationError.kind, 'unknown')
   assert.equal(isPressureError(applicationError), false)
 })

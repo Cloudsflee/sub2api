@@ -840,11 +840,15 @@ async function initializeShopPage(
       if (recovery) console.log(`${new Date().toISOString()} lane ${lane.index + 1} shop session recovered after verification`)
       return { challengeDetected: true, challengeSolved: true }
     } else {
-      if (!reachedShopOrigin) {
-        throw new ShopSyncError('network', 'shop session stopped at the ESA callback origin without a verification page')
-      }
+      // A completed ESA callback leaves the page on the exact callback origin
+      // with a JSON document. That is a usable steady state now that later
+      // requests use BrowserContext.request and preserve POST redirects.
       publishChallengeState(lane, { state: 'clear' })
-      return { challengeDetected: false, challengeSolved: false }
+      return {
+        challengeDetected: false,
+        challengeSolved: false,
+        callbackOriginReady: !reachedShopOrigin && reachedChallengeCallbackOrigin,
+      }
     }
   } catch (error) {
     if (isChallengeError(error) || error?.kind) throw error
