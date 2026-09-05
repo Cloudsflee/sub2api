@@ -8,7 +8,10 @@ const { promisify } = require('node:util')
 const DEFAULT_ORIGIN = 'https://pay.ldxp.cn'
 const ALIYUN_CALLBACK_ORIGIN = 'https://wzyp.cn'
 const MAX_DRAG_ATTEMPTS = 2
+const MAX_CHALLENGE_STAGES = 2
+const MAX_TOTAL_DRAG_ATTEMPTS = MAX_DRAG_ATTEMPTS * MAX_CHALLENGE_STAGES
 const MAX_STAGED_CHALLENGE_BYTES = 512_000
+const MAX_CHALLENGE_CALLBACK_FORM_BYTES = 64 * 1024
 const BLOCKED_RESOURCE_TYPES = new Set(['image', 'media', 'font'])
 const ALIYUN_CLEARANCE_COOKIE = /^acw_sc__v(?:2|3)$/i
 const execFileAsync = promisify(execFile)
@@ -289,7 +292,7 @@ async function responseErrorHeader(response) {
 // second challenge. Capture only a bounded, same-origin/same-path 2xx JSON
 // callback so the caller can use it as the operation result. HTML callbacks
 // and unrelated navigations retain the legacy replay path.
-async function captureChallengeSubmissionResponse(response, stagedResponse) {
+async function captureChallengeSubmissionResponse(response, stagedResponse, options = {}) {
   if (!response || !stagedResponse) return null
   let expectedURL
   let actualURL
@@ -301,7 +304,9 @@ async function captureChallengeSubmissionResponse(response, stagedResponse) {
     return null
   }
   const trustedOrigin = actualURL.origin === expectedURL.origin
-    || (expectedURL.origin === DEFAULT_ORIGIN && actualURL.origin === ALIYUN_CALLBACK_ORIGIN)
+    || (options.callbackRewritten === true
+      && expectedURL.origin === DEFAULT_ORIGIN
+      && actualURL.origin === ALIYUN_CALLBACK_ORIGIN)
   if (!trustedOrigin || actualURL.pathname !== expectedURL.pathname) return null
 
   const rawStatus = typeof response.status === 'function' ? response.status() : response.status
@@ -337,6 +342,148 @@ async function captureChallengeSubmissionResponse(response, stagedResponse) {
     if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 100))
   }
   return null
+}
+
+function normalizeChallengeCallbackRequest(value) {
+  if (!value || typeof value !== 'object') return null
+  const formBody = String(value.formBody || '')
+  if (!formBody || Buffer.byteLength(formBody, 'utf8') > MAX_CHALLENGE_CALLBACK_FORM_BYTES) return null
+  const visitorID = String(value.visitorID || '').trim()
+  if (!visitorID || visitorID.length > 256 || /[\r\n]/.test(visitorID)) return null
+  return { formBody, visitorID }
+}
+
+async function installChallengeCallbackRewrite(page, stagedResponse, challengeRequest) {
+  const state = {
+    rewritten: false,
+    rewrites: 0,
+    redirectUpgraded: false,
+    redirectUpgrades: 0,
+    installed: false,
+    seen: 0,
+    matched: false,
+    error: '',
+  }
+  const disabled = { state, cleanup: async () => {} }
+  const request = normalizeChallengeCallbackRequest(challengeRequest)
+  if (!request || !page || typeof page.route !== 'function' || typeof page.unroute !== 'function') return disabled
+
+  let expectedURL
+  try {
+    expectedURL = new URL(String(stagedResponse?.url || ''))
+  } catch {
+    return disabled
+  }
+  if (expectedURL.origin !== DEFAULT_ORIGIN && expectedURL.origin !== ALIYUN_CALLBACK_ORIGIN) return disabled
+
+  const pattern = '**/*'
+  const handler = async (route, routedRequest) => {
+    const current = routedRequest || (typeof route.request === 'function' ? route.request() : null)
+    try {
+      state.seen += 1
+      if (!current) {
+        await route.continue()
+        return
+      }
+      const method = typeof current.method === 'function' ? current.method() : ''
+      const navigation = typeof current.isNavigationRequest !== 'function' || current.isNavigationRequest()
+      const targetURL = new URL(String(typeof current.url === 'function' ? current.url() : ''), expectedURL)
+      // ESA variants can submit the signed request directly as either GET or
+      // POST before redirecting it to the callback host. A single drag can
+      // also produce more than one signed navigation. Rewrite every matching
+      // request instead of consuming only the first one, otherwise a later
+      // redirect silently loses the protected form body again.
+      const signedOriginRequest = (method === 'GET' || method === 'POST')
+        && expectedURL.origin === DEFAULT_ORIGIN
+        && targetURL.origin === DEFAULT_ORIGIN
+      const redirectedCallback = (method === 'GET' || method === 'POST')
+        && targetURL.origin === ALIYUN_CALLBACK_ORIGIN
+      if ((!signedOriginRequest && !redirectedCallback) || !navigation
+        || targetURL.pathname !== expectedURL.pathname
+        || !targetURL.searchParams.has('u_atoken')
+        || !targetURL.searchParams.has('u_asig')) {
+        await route.continue()
+        return
+      }
+      state.matched = true
+
+      const headers = typeof current.allHeaders === 'function'
+        ? await current.allHeaders()
+        : (typeof current.headers === 'function' ? current.headers() : {})
+      const rewrittenHeaders = { ...headers }
+      delete rewrittenHeaders.host
+      delete rewrittenHeaders['content-length']
+      rewrittenHeaders.accept = 'application/json'
+      rewrittenHeaders['content-type'] = 'application/x-www-form-urlencoded;charset=UTF-8'
+      rewrittenHeaders.origin = DEFAULT_ORIGIN
+      rewrittenHeaders.referer = `${DEFAULT_ORIGIN}/`
+      rewrittenHeaders.visitorid = request.visitorID
+      const rewrittenRequest = {
+        // Preserve the signed request at the origin that ESA selected. The
+        // shop-origin POST must finish there before ESA redirects to its
+        // callback host; only the redirected callback request is handled on
+        // the callback host. Moving the first POST early skips origin-side
+        // verification state and causes every later API call to challenge.
+        url: targetURL.href,
+        method: 'POST',
+        headers: rewrittenHeaders,
+        postData: request.formBody,
+      }
+
+      if (typeof route.fetch === 'function' && typeof route.fulfill === 'function') {
+        // Playwright does not invoke page.route again for redirects produced
+        // by route.continue(). ESA answers the restored shop-origin POST with
+        // a 301/302/303 to its callback host, which browsers would downgrade
+        // to a bodyless GET. Fetch exactly one hop and expose that trusted
+        // redirect to the browser as 307 so it preserves method and form data.
+        const upstream = await route.fetch({ ...rewrittenRequest, maxRedirects: 0 })
+        const rawStatus = typeof upstream?.status === 'function' ? upstream.status() : upstream?.status
+        const status = Number(rawStatus)
+        const location = await responseHeaderValue(upstream, 'location')
+        let redirectURL = null
+        try {
+          redirectURL = location ? new URL(location, targetURL) : null
+        } catch {}
+        const trustedRedirect = [301, 302, 303].includes(status)
+          && redirectURL
+          && redirectURL.origin === ALIYUN_CALLBACK_ORIGIN
+          && redirectURL.pathname === expectedURL.pathname
+          && redirectURL.searchParams.has('u_atoken')
+          && redirectURL.searchParams.has('u_asig')
+        if (trustedRedirect) {
+          const upstreamHeaders = typeof upstream.headers === 'function'
+            ? await upstream.headers()
+            : (upstream.headers || {})
+          await route.fulfill({
+            response: upstream,
+            status: 307,
+            headers: { ...upstreamHeaders, location: redirectURL.href },
+          })
+          state.redirectUpgraded = true
+          state.redirectUpgrades += 1
+        } else {
+          await route.fulfill({ response: upstream })
+        }
+      } else {
+        await route.continue(rewrittenRequest)
+      }
+      state.rewritten = true
+      state.rewrites += 1
+    } catch (error) {
+      state.error = String(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 240)
+      await route.continue().catch(() => {})
+    }
+  }
+  try {
+    await page.route(pattern, handler)
+    state.installed = true
+  } catch {
+    return disabled
+  }
+  return {
+    state,
+    cleanup: async () => page.unroute(pattern, handler).catch(() => {}),
+  }
 }
 
 async function collectChallengeSnapshot(page, response) {
@@ -1269,7 +1416,10 @@ function normalizeStagedChallengeResponse(value, origin) {
   } catch {
     throw new ChallengeError('failed', 'shop API verification response has an invalid URL')
   }
-  if (url.origin !== origin) {
+  const configuredOrigin = new URL(origin).origin
+  const trustedOrigin = url.origin === configuredOrigin
+    || (configuredOrigin === DEFAULT_ORIGIN && url.origin === ALIYUN_CALLBACK_ORIGIN)
+  if (!trustedOrigin) {
     throw new ChallengeError('failed', 'shop API verification response escaped the configured origin')
   }
   const status = Number(value.status)
@@ -1280,6 +1430,47 @@ function normalizeStagedChallengeResponse(value, origin) {
     responseError: String(value.responseError || '').replace(/[\r\n]/g, ''),
     text,
   }
+}
+
+async function captureFollowupChallengeResponse(response, stagedResponse) {
+  if (!response || !stagedResponse || typeof response.text !== 'function') return null
+  let expectedURL
+  let actualURL
+  try {
+    expectedURL = new URL(String(stagedResponse.url || ''))
+    const rawURL = typeof response.url === 'function' ? response.url() : response.url
+    actualURL = new URL(String(rawURL || ''), expectedURL)
+  } catch {
+    return null
+  }
+  const trustedOrigin = actualURL.origin === expectedURL.origin
+    || (expectedURL.origin === DEFAULT_ORIGIN && actualURL.origin === ALIYUN_CALLBACK_ORIGIN)
+  if (!trustedOrigin || actualURL.pathname !== expectedURL.pathname) return null
+
+  const contentType = await responseHeaderValue(response, 'content-type')
+  if (contentType && !/html/i.test(contentType)) return null
+  let text
+  try {
+    text = String(await response.text())
+  } catch {
+    return null
+  }
+  if (!text || Buffer.byteLength(text, 'utf8') > MAX_STAGED_CHALLENGE_BYTES) return null
+  const responseError = await responseErrorHeader(response)
+  if (!/denied\s+by\s+http_custom|aliyun|alicloud|aliyuncaptcha|captcha-element|(?:滑块|滑动).{0,30}验证/i
+    .test(`${responseError}\n${text.slice(0, MAX_STAGED_CHALLENGE_BYTES)}`)) return null
+
+  const cleanURL = new URL(actualURL.href)
+  cleanURL.search = ''
+  cleanURL.hash = ''
+  const rawStatus = typeof response.status === 'function' ? response.status() : response.status
+  return normalizeStagedChallengeResponse({
+    url: cleanURL.href,
+    status: Number(rawStatus) || 200,
+    contentType: contentType || 'text/html; charset=utf-8',
+    responseError,
+    text,
+  }, DEFAULT_ORIGIN)
 }
 
 async function stageChallengeResponse(page, origin, value, timeoutMilliseconds) {
@@ -1343,10 +1534,11 @@ async function reloadChallenge(page, timeoutMilliseconds) {
  */
 function startChallengeNavigationWait(page, timeoutMilliseconds) {
   if (!page || typeof page.waitForNavigation !== 'function') return null
-  // Production ESA callbacks have occasionally started just after ten
-  // seconds. Waiting a little longer avoids racing that callback with the
-  // fallback home request while remaining inside the 90-second solve budget.
-  const timeout = Math.max(250, Math.min(15_000, Number(timeoutMilliseconds) || 8_000))
+  // The origin-side signed POST can take more than fifteen seconds before ESA
+  // emits its cross-origin callback. Keep the rewrite route armed long enough
+  // to cover that redirect instead of racing it with the fallback home request.
+  // The enclosing solve still enforces the 90-second total challenge budget.
+  const timeout = Math.max(250, Math.min(25_000, Number(timeoutMilliseconds) || 8_000))
   // Attach the rejection handler to the Playwright promise immediately.  A
   // context can be closed while the drag is still in progress (lane restart,
   // lease loss, or an aborted solve); in that case the waiter rejects after
@@ -1392,7 +1584,6 @@ class ChallengeManager {
     this.nativeDrag = Boolean(options.nativeDrag)
     this.nativeDragDebug = Boolean(options.nativeDragDebug)
     this.logger = options.logger || console
-    this.contextAttempts = new WeakMap()
   }
 
   loadSession(proxy) {
@@ -1461,7 +1652,7 @@ class ChallengeManager {
     options.setResourcesAllowed?.(true)
 
     try {
-      const stagedResponse = normalizeStagedChallengeResponse(options.challengeResponse, this.origin)
+      let stagedResponse = normalizeStagedChallengeResponse(options.challengeResponse, this.origin)
       let response = stagedResponse
         ? await this.operation(this.stage(page, stagedResponse, this.navigationTimeoutMilliseconds, signal), signal)
         : await this.operation(this.navigate(page, this.navigationTimeoutMilliseconds, signal), signal)
@@ -1485,10 +1676,27 @@ class ChallengeManager {
 
       let provider = selectChallengeProvider(snapshot, this.providers)
       if (!provider) throw new ChallengeError('unsupported', 'verification page does not contain a supported slide-to-end challenge')
-      let attempt = this.contextAttempts.get(context) || 0
+      // Attempt budgets belong to one protected operation, not to the whole
+      // browser context. A shop can legitimately challenge /info and then
+      // /goodsList in sequence. The caller shares attemptState across retries
+      // of the same API call, while a new API call receives a fresh budget.
+      const attemptState = options.attemptState && typeof options.attemptState === 'object'
+        ? options.attemptState
+        : { attempt: 0 }
+      let attempt = Number.isInteger(attemptState.attempt) && attemptState.attempt >= 0
+        ? attemptState.attempt
+        : 0
+      let stage = Number.isInteger(attemptState.stage) && attemptState.stage >= 1
+        ? attemptState.stage
+        : 1
+      let stageAttempt = Number.isInteger(attemptState.stageAttempt) && attemptState.stageAttempt >= 0
+        ? attemptState.stageAttempt
+        : Math.min(attempt, MAX_DRAG_ATTEMPTS)
+      attemptState.stage = stage
+      attemptState.stageAttempt = stageAttempt
       report({ state: 'solving', provider: provider.id, attempt })
 
-      while (attempt < MAX_DRAG_ATTEMPTS) {
+      while (attempt < MAX_TOTAL_DRAG_ATTEMPTS && stageAttempt < MAX_DRAG_ATTEMPTS) {
         throwIfAborted(signal)
         if (attempt > 0) {
           response = stagedResponse
@@ -1552,31 +1760,41 @@ class ChallengeManager {
         const distance = computeDragDistance(geometry.trackBox, geometry.handleBox)
         const trajectory = generateDragTrajectory(distance, { random: this.random })
         attempt += 1
-        this.contextAttempts.set(context, attempt)
+        stageAttempt += 1
+        attemptState.attempt = attempt
+        attemptState.stageAttempt = stageAttempt
         report({ state: 'solving', provider: provider.id, attempt })
         // ESA submits its verification token by navigating from the challenge
         // page.  Arm the waiter before the drag so the navigation cannot be
         // cancelled by the fallback home request below.
-        const submissionNavigation = startChallengeNavigationWait(
-          page,
-          Math.min(this.navigationTimeoutMilliseconds, this.timeoutMilliseconds)
-        )
-        await this.operation(this.drag(page, geometry, trajectory, {
-          signal,
-          nativeDrag: this.nativeDrag,
-          nativeWindowPID: options.nativeWindowPID,
-          onNativeDragStart: this.nativeDragDebug
-            ? (values) => this.logger.log?.(`${new Date().toISOString()} native challenge drag geometry: ${JSON.stringify(values)}`)
-            : undefined,
-          onNativeDragError: (error) => this.logger.warn?.(`${new Date().toISOString()} native challenge drag unavailable; falling back to Playwright mouse: ${String(error?.message || error)}`),
-        }), signal)
+        const callbackRewrite = stagedResponse
+          ? await this.operation(installChallengeCallbackRewrite(page, stagedResponse, options.challengeRequest), signal)
+          : { state: { rewritten: false }, cleanup: async () => {} }
+        let submissionResponse = null
+        try {
+          const submissionNavigation = startChallengeNavigationWait(
+            page,
+            Math.min(this.navigationTimeoutMilliseconds, this.timeoutMilliseconds)
+          )
+          await this.operation(this.drag(page, geometry, trajectory, {
+            signal,
+            nativeDrag: this.nativeDrag,
+            nativeWindowPID: options.nativeWindowPID,
+            onNativeDragStart: this.nativeDragDebug
+              ? (values) => this.logger.log?.(`${new Date().toISOString()} native challenge drag geometry: ${JSON.stringify(values)}`)
+              : undefined,
+            onNativeDragError: (error) => this.logger.warn?.(`${new Date().toISOString()} native challenge drag unavailable; falling back to Playwright mouse: ${String(error?.message || error)}`),
+          }), signal)
+          submissionResponse = submissionNavigation
+            ? await this.operation(submissionNavigation, signal)
+            : null
+        } finally {
+          await callbackRewrite.cleanup()
+        }
 
         // Prefer the response produced by the captcha callback.  Only issue a
         // fresh home navigation when no callback navigation occurred (failed
         // drag, an old SDK variant, or a lightweight test double).
-        const submissionResponse = submissionNavigation
-          ? await this.operation(submissionNavigation, signal)
-          : null
         response = submissionResponse
         const responseContext = response ? 'post-drag-submission' : 'post-drag-fallback'
         if (!response) {
@@ -1587,7 +1805,12 @@ class ChallengeManager {
           responseContext
         )
         const operationResponse = stagedResponse && submissionResponse
-          ? await this.operation(captureChallengeSubmissionResponse(submissionResponse, stagedResponse), signal)
+          ? await this.operation(captureChallengeSubmissionResponse(submissionResponse, stagedResponse, {
+            callbackRewritten: callbackRewrite.state.rewritten,
+          }), signal)
+          : null
+        const followupChallenge = stagedResponse && submissionResponse && !operationResponse
+          ? await this.operation(captureFollowupChallengeResponse(submissionResponse, stagedResponse), signal)
           : null
         if (this.nativeDragDebug && stagedResponse) {
           try {
@@ -1612,8 +1835,44 @@ class ChallengeManager {
                 dataType: Array.isArray(payload?.data) ? 'array' : typeof payload?.data,
               }
             } catch {}
+            const requestChain = []
+            let callbackRequest = submissionResponse && typeof submissionResponse.request === 'function'
+              ? submissionResponse.request()
+              : null
+            while (callbackRequest && requestChain.length < 5) {
+              const requestURL = new URL(String(callbackRequest.url?.() || ''), this.origin)
+              const postData = typeof callbackRequest.postData === 'function'
+                ? String(callbackRequest.postData() || '')
+                : ''
+              const formFields = []
+              if (postData) {
+                for (const [key, value] of new URLSearchParams(postData)) {
+                  formFields.push({ key, valueLength: value.length })
+                }
+              }
+              requestChain.push({
+                method: typeof callbackRequest.method === 'function' ? callbackRequest.method() : '',
+                origin: requestURL.origin,
+                pathname: requestURL.pathname,
+                queryKeys: Array.from(requestURL.searchParams.keys()).sort(),
+                postDataBytes: Buffer.byteLength(postData, 'utf8'),
+                formFields,
+              })
+              callbackRequest = typeof callbackRequest.redirectedFrom === 'function'
+                ? callbackRequest.redirectedFrom()
+                : null
+            }
             this.logger.log?.(`${new Date().toISOString()} challenge callback diagnostic: ${JSON.stringify({
               captured: Boolean(operationResponse),
+              followupChallenge: Boolean(followupChallenge),
+              callbackRewritten: callbackRewrite.state.rewritten,
+              callbackRewriteCount: callbackRewrite.state.rewrites || 0,
+              callbackRedirectUpgraded: callbackRewrite.state.redirectUpgraded || false,
+              callbackRedirectUpgradeCount: callbackRewrite.state.redirectUpgrades || 0,
+              callbackRewriteInstalled: callbackRewrite.state.installed,
+              callbackRewriteSeen: callbackRewrite.state.seen,
+              callbackRewriteMatched: callbackRewrite.state.matched,
+              callbackRewriteError: callbackRewrite.state.error,
               navigated: Boolean(submissionResponse),
               status: Number(rawStatus) || 0,
               origin: callbackURL?.origin || '',
@@ -1627,6 +1886,7 @@ class ChallengeManager {
               bodyChallenge: /denied\s+by\s+http_custom|aliyun|alicloud|aliyuncaptcha|captcha-element|滑块|滑动.{0,30}验证/i
                 .test(diagnosticText.slice(0, MAX_STAGED_CHALLENGE_BYTES)),
               jsonSummary,
+              requestChain,
             })}`)
           } catch (error) {
             this.logger.warn?.(`${new Date().toISOString()} challenge callback diagnostic failed: ${String(error?.message || error)}`)
@@ -1636,6 +1896,21 @@ class ChallengeManager {
         // callback. A captured JSON callback is returned as the protected API
         // result; other callback shapes keep the legacy replay path. Content
         // clearing remains valid only here, after an actual drag.
+        if (followupChallenge) {
+          if (stage >= MAX_CHALLENGE_STAGES) {
+            throw new ChallengeError(
+              'failed',
+              `${provider.id} challenge produced more than ${MAX_CHALLENGE_STAGES} verification stages`
+            )
+          }
+          stage += 1
+          stageAttempt = 0
+          attemptState.stage = stage
+          attemptState.stageAttempt = stageAttempt
+          stagedResponse = followupChallenge
+          provider = selectChallengeProvider(snapshot, this.providers) || provider
+          continue
+        }
         if (challengeCleared(snapshot) || challengeContentCleared(snapshot)) {
           await this.persistSolvedSession(context, provider.id, proxy)
           const solvedAt = new Date(this.now()).toISOString()
@@ -1648,7 +1923,10 @@ class ChallengeManager {
           }
         }
       }
-      throw new ChallengeError('failed', `${provider.id} challenge remained after ${MAX_DRAG_ATTEMPTS} drag attempts`)
+      throw new ChallengeError(
+        'failed',
+        `${provider.id} challenge remained after ${stageAttempt} drag attempts at stage ${stage} (${attempt} total)`
+      )
     } finally {
       options.setResourcesAllowed?.(false)
     }
@@ -1742,6 +2020,10 @@ async function retryChallengeOperationAcrossProxyPool(options = {}) {
     throw new Error('challenge operation proxy retry requires a pool, task, recovery, and switch callback')
   }
   throwIfAborted(signal)
+  const maxRecoveriesPerProxy = Number.isInteger(options.maxRecoveriesPerProxy)
+    && options.maxRecoveriesPerProxy >= 0
+    ? options.maxRecoveriesPerProxy
+    : MAX_DRAG_ATTEMPTS
   let lastError
   for (let offset = 0; offset < poolSize; offset += 1) {
     throwIfAborted(signal)
@@ -1757,7 +2039,7 @@ async function retryChallengeOperationAcrossProxyPool(options = {}) {
     }
 
     let recoveries = 0
-    while (recoveries <= MAX_DRAG_ATTEMPTS) {
+    while (recoveries <= maxRecoveriesPerProxy) {
       throwIfAborted(signal)
       try {
         return await options.task()
@@ -1765,7 +2047,7 @@ async function retryChallengeOperationAcrossProxyPool(options = {}) {
         if (!isChallengeError(error)) throw error
         throwIfAborted(signal)
         lastError = error
-        if (recoveries >= MAX_DRAG_ATTEMPTS) break
+        if (recoveries >= maxRecoveriesPerProxy) break
         recoveries += 1
         try {
           const recoveryResult = await options.recoverCurrent({ error, recovery: recoveries, proxyIndex })
@@ -1795,15 +2077,18 @@ function shouldBlockResource(resourceType, challengeResourcesAllowed) {
 }
 
 module.exports = {
+  ALIYUN_CALLBACK_ORIGIN,
   ChallengeError,
   ChallengeManager,
   CancellableMutex,
   MAX_DRAG_ATTEMPTS,
+  MAX_TOTAL_DRAG_ATTEMPTS,
   aliyunSnapshotDetected,
   challengeBackoffMilliseconds,
   challengeContentCleared,
   challengeCleared,
   challengeSnapshotDetected,
+  captureFollowupChallengeResponse,
   captureChallengeSubmissionResponse,
   challengeTextDetected,
   challengePageEvidenceDetected,
@@ -1814,6 +2099,7 @@ module.exports = {
   dragSlider,
   dragSliderNative,
   generateDragTrajectory,
+  installChallengeCallbackRewrite,
   isChallengeError,
   isExpectedNavigationAbort,
   isHTTPCustomDenial,

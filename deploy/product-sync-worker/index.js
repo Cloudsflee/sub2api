@@ -4,7 +4,9 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { collectAuthoritativeSnapshot } = require('./catalog-sync')
 const {
+  ALIYUN_CALLBACK_ORIGIN,
   ChallengeManager,
+  MAX_TOTAL_DRAG_ATTEMPTS,
   challengeBackoffMilliseconds,
   challengeContentCleared,
   challengeCleared,
@@ -107,7 +109,7 @@ const challengeManager = new ChallengeManager({
   enabled: challengeAutoSolveEnabled,
   sessionDirectory: challengeSessionDirectory,
   timeoutMilliseconds: challengeTimeoutMilliseconds,
-  navigationTimeoutMilliseconds: Math.min(20_000, browserProtocolTimeoutMilliseconds),
+  navigationTimeoutMilliseconds: Math.min(30_000, browserProtocolTimeoutMilliseconds),
   nativeDrag: challengeNativeDragEnabled,
   nativeDragDebug: challengeNativeDragDebug,
   stopSignal: workerStopController.signal,
@@ -266,11 +268,148 @@ function laneContextIsReady(lane) {
     && (typeof lane.page.isClosed !== 'function' || !lane.page.isClosed()))
 }
 
+function shopSessionOriginState(snapshot) {
+  const state = { reachedShopOrigin: false, reachedChallengeCallbackOrigin: false }
+  for (const frame of snapshot?.frames || []) {
+    let origin
+    try {
+      origin = new URL(frame?.url).origin
+    } catch {
+      continue
+    }
+    if (origin === shopOrigin) state.reachedShopOrigin = true
+    if (origin === ALIYUN_CALLBACK_ORIGIN) state.reachedChallengeCallbackOrigin = true
+  }
+  return state
+}
+
 function ensureLaneContextReady(lane) {
   if (laneContextIsReady(lane)) return
   const error = new Error(`product sync browser context for lane ${Number(lane?.index || 0) + 1} is unavailable`)
   error.restartLane = true
   throw error
+}
+
+function encodeShopRequestBody(requestBody) {
+  const form = new URLSearchParams()
+  for (const [key, value] of Object.entries(requestBody || {})) {
+    if (Array.isArray(value)) {
+      for (const item of value) form.append(key, item === null || item === undefined ? '' : String(item))
+    } else if (value && typeof value === 'object') {
+      form.append(key, JSON.stringify(value))
+    } else {
+      form.append(key, value === null || value === undefined ? '' : String(value))
+    }
+  }
+  return form.toString()
+}
+
+function shopRequestUsesContextTransport(lane) {
+  if (!lane?.context?.request || typeof lane.context.request.fetch !== 'function') return false
+  if (!lane?.page || typeof lane.page.url !== 'function') return false
+  try {
+    return new URL(lane.page.url()).origin === ALIYUN_CALLBACK_ORIGIN
+  } catch {
+    return false
+  }
+}
+
+async function evaluateShopRequestWithContext(context, args, timeoutMilliseconds, signal) {
+  if (!context?.request || typeof context.request.fetch !== 'function') {
+    throw new Error('shop browser context request API is unavailable')
+  }
+  throwIfAborted(signal)
+  const timeout = Math.max(1, Number(timeoutMilliseconds) || 1)
+  let timer
+  let abortHandler
+  const operation = (async () => {
+    let response
+    try {
+      const requestOptions = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          Accept: 'application/json',
+          Visitorid: args.visitorID,
+        },
+        data: args.requestFormBody,
+        failOnStatusCode: false,
+        timeout: Math.max(1, Number(args.requestTimeoutMilliseconds) || timeout),
+        // Follow the shop/callback handoff ourselves. Automatic 301/302/303
+        // handling converts POST to GET and drops the shop token.
+        maxRedirects: 0,
+      }
+      let requestURL = new URL(args.requestPath)
+      let redirectCount = 0
+      let headers = {}
+      let status = 0
+      while (true) {
+        response = await context.request.fetch(requestURL.href, requestOptions)
+        headers = typeof response.headers === 'function' ? await response.headers() : (response.headers || {})
+        const rawStatus = typeof response.status === 'function' ? response.status() : response.status
+        status = Number(rawStatus) || 0
+        const location = String(headers.location || headers.Location || '')
+        let redirectURL = null
+        try { redirectURL = location ? new URL(location, requestURL) : null } catch {}
+        const trustedRedirect = [301, 302, 303, 307, 308].includes(status)
+          && redirectCount < 4
+          && redirectURL
+          && [shopOrigin, ALIYUN_CALLBACK_ORIGIN].includes(redirectURL.origin)
+          && redirectURL.pathname === requestURL.pathname
+        if (!trustedRedirect) break
+        await response.dispose?.()
+        response = null
+        requestURL = redirectURL
+        redirectCount += 1
+      }
+      const contentType = String(headers['content-type'] || headers['Content-Type'] || '')
+      const text = String(await response.text())
+      let payload = null
+      if (contentType.toLowerCase().includes('application/json')) {
+        try { payload = JSON.parse(text) } catch {}
+      }
+      const rawURL = typeof response.url === 'function' ? response.url() : response.url
+      return {
+        status,
+        contentType,
+        payload,
+        text: text.slice(0, contentType.toLowerCase().includes('application/json') ? 2_000 : 512_000),
+        responseURL: String(rawURL || args.requestPath),
+        responseError: String(headers['x-tengine-error'] || headers['X-Tengine-Error'] || ''),
+        retryAfter: String(headers['retry-after'] || headers['Retry-After'] || ''),
+        redirectCount,
+      }
+    } finally {
+      if (response && typeof response.dispose === 'function') {
+        await response.dispose().catch(() => {})
+      }
+    }
+  })()
+  try {
+    const timeoutPromise = new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new ShopSyncError(
+        'network',
+        `shop API browser-context request timed out after ${timeout}ms`
+      )), timeout)
+    })
+    const cancellationPromise = signal
+      ? new Promise((resolve, reject) => {
+        if (signal.aborted) {
+          reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason || 'operation aborted')))
+          return
+        }
+        abortHandler = () => reject(signal.reason instanceof Error
+          ? signal.reason
+          : new Error(String(signal.reason || 'operation aborted')))
+        signal.addEventListener('abort', abortHandler, { once: true })
+      })
+      : new Promise(() => {})
+    return await Promise.race([operation, timeoutPromise, cancellationPromise])
+  } finally {
+    if (timer) clearTimeout(timer)
+    if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
+    operation.catch(() => {})
+  }
 }
 
 async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
@@ -279,14 +418,26 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
   ensureJobDeadline(deadlineAt, signal)
   const requestURL = new URL(path, shopHomeURL)
   if (requestURL.origin !== shopOrigin) throw new Error(`shop API path escapes ${shopOrigin}`)
+  const requestFormBody = encodeShopRequestBody(body)
+  const visitorID = `sub2api${shopToken.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}`
+  const requestArgs = {
+    requestPath: requestURL.href,
+    requestFormBody,
+    requestTimeoutMilliseconds: Math.min(shopRequestTimeoutMilliseconds, Math.max(1, deadlineAt - Date.now())),
+    visitorID,
+  }
   let result
   try {
-    result = await evaluateShopRequest(lane.page, evaluateShopRequestInBrowser, {
-      requestPath: requestURL.href,
-      requestBody: body,
-      requestTimeoutMilliseconds: Math.min(shopRequestTimeoutMilliseconds, Math.max(1, deadlineAt - Date.now())),
-      visitorID: `sub2api${shopToken.replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)}`,
-    }, Math.min(shopRequestTimeoutMilliseconds + 5_000, Math.max(1, deadlineAt - Date.now())), signal)
+    const nodeTimeout = Math.min(shopRequestTimeoutMilliseconds + 5_000, Math.max(1, deadlineAt - Date.now()))
+    result = shopRequestUsesContextTransport(lane)
+      ? await evaluateShopRequestWithContext(lane.context, requestArgs, nodeTimeout, signal)
+      : await evaluateShopRequest(
+        lane.page,
+        evaluateShopRequestInBrowser,
+        requestArgs,
+        nodeTimeout,
+        signal
+      )
   } catch (error) {
     throwIfAborted(signal)
     // A protocol timeout is the last-resort lane recovery path. Browser-side
@@ -302,6 +453,7 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
     return parseShopHTTPResponse(result)
   } catch (error) {
     if (error?.kind === 'verification') {
+      error.challengeRequest = { formBody: requestFormBody, visitorID }
       console.warn(`${new Date().toISOString()} lane ${lane.index + 1} shop API ${path} classified as known_verification (HTTP ${error.challengeResponse?.status || 'unknown'})`)
     } else if (error?.kind === 'access_denied') {
       console.warn(`${new Date().toISOString()} lane ${lane.index + 1} shop API ${path} classified as access_denied (non-JSON HTTP 403)`)
@@ -330,7 +482,7 @@ async function retryAccessDeniedAfterHomeReview(task, review, options = {}) {
  * single deadline so an upstream that sends headers but never finishes the
  * body cannot leave page.evaluate pending indefinitely.
  */
-async function evaluateShopRequestInBrowser({ requestPath, requestBody, requestTimeoutMilliseconds, visitorID }) {
+async function evaluateShopRequestInBrowser({ requestPath, requestBody, requestFormBody, requestTimeoutMilliseconds, visitorID }) {
   const timeoutMilliseconds = Math.max(1, Number(requestTimeoutMilliseconds) || 1)
   const controller = new AbortController()
   const startedAt = performance.now()
@@ -356,15 +508,32 @@ async function evaluateShopRequestInBrowser({ requestPath, requestBody, requestT
   }
 
   try {
+    let formBody = typeof requestFormBody === 'string' ? requestFormBody : ''
+    if (typeof requestFormBody !== 'string') {
+      const form = new URLSearchParams()
+      for (const [key, value] of Object.entries(requestBody || {})) {
+        if (Array.isArray(value)) {
+          for (const item of value) form.append(key, item === null || item === undefined ? '' : String(item))
+        } else if (value && typeof value === 'object') {
+          form.append(key, JSON.stringify(value))
+        } else {
+          form.append(key, value === null || value === undefined ? '' : String(value))
+        }
+      }
+      formBody = form.toString()
+    }
     const response = await waitForPhase(fetch(requestPath, {
       method: 'POST',
       credentials: 'include',
       headers: {
-        'Content-Type': 'application/json',
+        // ESA replays a successful slider as a browser form submission. Keep
+        // the protected request form-encoded so requestInfo.data preserves
+        // every field instead of treating an entire JSON document as one key.
+        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
         Accept: 'application/json',
         Visitorid: visitorID,
       },
-      body: JSON.stringify(requestBody),
+      body: formBody,
       signal: controller.signal,
     }), 'fetch')
     const contentType = response.headers.get('content-type') || ''
@@ -468,15 +637,33 @@ function challengeOperationCompletion(result) {
   if (!response || !response.payload || typeof response.payload !== 'object') return null
   const status = Number(response.status)
   if (!Number.isInteger(status) || status < 200 || status >= 300) return null
+  // The ESA callback can return a syntactically valid JSON business error
+  // (for example `code=0, msg=店铺链接不存在`) after the slider handoff.  That
+  // response is not proof that the original protected request completed: the
+  // callback may still have lost the original form fields or token.  Only the
+  // shop API's explicit success envelope may short-circuit the replay; all
+  // other payloads go through the normal request retry path.
+  if (response.payload.code !== 1
+    || !response.payload.data
+    || typeof response.payload.data !== 'object') return null
   return { completed: true, value: response.payload }
 }
 
-async function solveChallengeForContext(lane, context, page, proxy, signal, challengeResponse) {
+function resetChallengeAttemptState(state = {}) {
+  state.attempt = 0
+  state.stage = 1
+  state.stageAttempt = 0
+  return state
+}
+
+async function solveChallengeForContext(lane, context, page, proxy, signal, challengeResponse, challengeRequest, attemptState) {
   const result = await challengeManager.solve({
     context,
     page,
     proxy,
     challengeResponse,
+    challengeRequest,
+    attemptState,
     nativeWindowPID: lane.browserProcessID,
     signal,
     onState: (event) => publishChallengeState(lane, event),
@@ -486,7 +673,7 @@ async function solveChallengeForContext(lane, context, page, proxy, signal, chal
   return result
 }
 
-async function recoverLaneChallenge(lane, signal, challengeResponse) {
+async function recoverLaneChallenge(lane, signal, challengeResponse, challengeRequest, attemptState) {
   try {
     return await solveChallengeForContext(
       lane,
@@ -494,7 +681,9 @@ async function recoverLaneChallenge(lane, signal, challengeResponse) {
       lane.page,
       lane.proxy,
       signal,
-      challengeResponse
+      challengeResponse,
+      challengeRequest,
+      attemptState
     )
   } catch (error) {
     throw laneRecoveryCancellationFailure(lane, error, signal)
@@ -503,11 +692,20 @@ async function recoverLaneChallenge(lane, signal, challengeResponse) {
 
 async function postShopAPIWithChallengeRecovery(lane, shopToken, path, body, deadlineAt, signal) {
   const accessDeniedReviewState = { reviewed: false }
+  const challengeAttemptState = resetChallengeAttemptState({})
   const task = () => retryAccessDeniedAfterHomeReview(
     () => postShopAPI(lane, shopToken, path, body, deadlineAt, signal),
     async () => {
       ensureJobDeadline(deadlineAt, signal)
-      const result = await initializeShopPage(lane, lane.context, lane.page, lane.proxy, true, signal)
+      const result = await initializeShopPage(
+        lane,
+        lane.context,
+        lane.page,
+        lane.proxy,
+        true,
+        signal,
+        challengeAttemptState
+      )
       ensureJobDeadline(deadlineAt, signal)
       return result
     },
@@ -525,11 +723,18 @@ async function postShopAPIWithChallengeRecovery(lane, shopToken, path, body, dea
   const result = await retryChallengeOperationAcrossProxyPool({
     poolSize: lane.proxyPool.length,
     currentIndex: lane.proxyIndex,
+    maxRecoveriesPerProxy: MAX_TOTAL_DRAG_ATTEMPTS,
     signal,
     task,
     recoverCurrent: async ({ error }) => {
       ensureJobDeadline(deadlineAt, signal)
-      const recovery = await recoverLaneChallenge(lane, signal, error.challengeResponse)
+      const recovery = await recoverLaneChallenge(
+        lane,
+        signal,
+        error.challengeResponse,
+        error.challengeRequest,
+        challengeAttemptState
+      )
       ensureJobDeadline(deadlineAt, signal)
       const completion = challengeOperationCompletion(recovery)
       if (completion) {
@@ -541,6 +746,7 @@ async function postShopAPIWithChallengeRecovery(lane, shopToken, path, body, dea
       try {
         ensureJobDeadline(deadlineAt, signal)
         await replaceLaneContext(lane, proxyIndex, true, signal)
+        resetChallengeAttemptState(challengeAttemptState)
         ensureJobDeadline(deadlineAt, signal)
         console.log(`${new Date().toISOString()} lane ${lane.index + 1} switched to its alternate exit after shop API verification persisted twice`)
         publishLaneStatus(lane, {
@@ -588,7 +794,15 @@ async function postShopAPIWithPressureRecovery(lane, shopToken, path, body, dead
   )
 }
 
-async function initializeShopPage(lane, context, page, proxy, recovery = false, signal = workerStopController.signal) {
+async function initializeShopPage(
+  lane,
+  context,
+  page,
+  proxy,
+  recovery = false,
+  signal = workerStopController.signal,
+  challengeAttemptState
+) {
   const previousResourcesAllowed = Boolean(lane?.challengeResourcesAllowed)
   // The first navigation is the moment ESA loads its slider image, fonts, and
   // media.  Those resources must be available before the challenge manager can
@@ -609,14 +823,8 @@ async function initializeShopPage(lane, context, page, proxy, recovery = false, 
       }
     }
     const snapshot = await collectChallengeSnapshot(page, response)
-    const reachedShopOrigin = snapshot.frames.some((frame) => {
-      try {
-        return new URL(frame?.url).origin === shopOrigin
-      } catch {
-        return false
-      }
-    })
-    if (!reachedShopOrigin) {
+    const { reachedShopOrigin, reachedChallengeCallbackOrigin } = shopSessionOriginState(snapshot)
+    if (!reachedShopOrigin && !reachedChallengeCallbackOrigin) {
       throw new ShopSyncError('network', `shop session navigation did not reach ${shopOrigin}`)
     }
     throwIfAborted(signal)
@@ -628,10 +836,13 @@ async function initializeShopPage(lane, context, page, proxy, recovery = false, 
     ))
     if (snapshot.isChallenge && !challengeCleared(snapshot)
       && (!challengeContentCleared(snapshot) || challengeShellVisibleOrLoading)) {
-      await solveChallengeForContext(lane, context, page, proxy, signal)
+      await solveChallengeForContext(lane, context, page, proxy, signal, undefined, undefined, challengeAttemptState)
       if (recovery) console.log(`${new Date().toISOString()} lane ${lane.index + 1} shop session recovered after verification`)
       return { challengeDetected: true, challengeSolved: true }
     } else {
+      if (!reachedShopOrigin) {
+        throw new ShopSyncError('network', 'shop session stopped at the ESA callback origin without a verification page')
+      }
       publishChallengeState(lane, { state: 'clear' })
       return { challengeDetected: false, challengeSolved: false }
     }
@@ -1484,12 +1695,17 @@ module.exports = {
   backendRequestSignal,
   browserProfileIsInUse,
   clearStaleBrowserProfileLocks,
+  encodeShopRequestBody,
   evaluateShopRequest,
+  evaluateShopRequestWithContext,
   evaluateShopRequestInBrowser,
   laneContextIsReady,
   laneRecoveryCancellationFailure,
   publishJobSnapshot,
   pressureRecoveryFailure,
+  resetChallengeAttemptState,
+  shopSessionOriginState,
+  shopRequestUsesContextTransport,
   recoverLaneAfterPressure,
   retryAccessDeniedAfterHomeReview,
   syncJobFinalError,

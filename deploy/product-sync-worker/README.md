@@ -177,8 +177,16 @@ context and preserves completed catalog work. When ESA's verified callback
 completes the original API request on `https://wzyp.cn`, the worker consumes
 that same-path JSON response directly instead of discarding the one-time
 approval and replaying the request. Other callback shapes retain the normal
-retry path. After two failed drags it moves directly to its lane-local fallback.
-ESA callback navigation is allowed up to 15 seconds. Firefox
+retry path. Protected shop requests use form encoding so ESA's callback retains
+the original token and request fields. Trusted shop-to-callback 301/302/303
+handoffs are exposed to the browser as 307 so both hops remain POST requests.
+While the verified page is on the exact callback origin, later API requests use
+the same browser context's cookie-sharing request client and manually preserve
+POST bodies across trusted redirects, avoiding cross-origin fetch failures.
+Each chained verification stage permits two failed drags; a completed API call
+resets that budget before the next shop endpoint. Exhausting a stage moves
+directly to the lane-local fallback.
+ESA callback navigation is allowed up to 25 seconds. Firefox
 `NS_BINDING_ABORTED` during a callback handoff is treated as an ESA-owned
 navigation and followed by a fresh document inspection instead of an immediate
 lane failure.

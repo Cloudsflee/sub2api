@@ -8,10 +8,12 @@ const {
   ChallengeError,
   ChallengeManager,
   CancellableMutex,
+  MAX_TOTAL_DRAG_ATTEMPTS,
   challengeBackoffMilliseconds,
   challengeContentCleared,
   challengeCleared,
   challengeSnapshotDetected,
+  captureFollowupChallengeResponse,
   captureChallengeSubmissionResponse,
   collectChallengeSnapshot,
   computeDragDistance,
@@ -19,6 +21,7 @@ const {
   dragSlider,
   dragSliderNative,
   generateDragTrajectory,
+  installChallengeCallbackRewrite,
   isHTTPCustomDenial,
   readStoredSession,
   recoverChallengeAcrossProxyPool,
@@ -682,15 +685,244 @@ test('successful staged API callback captures its bounded JSON result without ca
 
 test('callback capture accepts the exact ESA business callback origin with the original API path', async () => {
   const staged = { url: 'https://pay.ldxp.cn/shopApi/Shop/info' }
-  const result = await captureChallengeSubmissionResponse({
+  const response = {
     url: () => 'https://wzyp.cn/shopApi/Shop/info?u_atoken=secret&u_asig=secret',
     status: () => 200,
     headerValue: async (name) => name === 'content-type' ? 'application/json' : '',
     text: async () => '{"code":0,"msg":"ok","data":{}}',
-  }, staged)
+  }
+  assert.equal(await captureChallengeSubmissionResponse(response, staged), null)
+  const result = await captureChallengeSubmissionResponse(response, staged, { callbackRewritten: true })
 
   assert.deepEqual(result.payload, { code: 0, msg: 'ok', data: {} })
   assert.equal(result.responseURL, staged.url)
+})
+
+test('ESA callback redirect rewrite restores the protected POST body and visitor header', async () => {
+  let handler
+  let pattern
+  let removed = false
+  const page = {
+    route: async (value, callback) => { pattern = value; handler = callback },
+    unroute: async (value, callback) => {
+      assert.equal(value, pattern)
+      assert.equal(callback, handler)
+      removed = true
+    },
+  }
+  const installed = await installChallengeCallbackRewrite(
+    page,
+    { url: 'https://pay.ldxp.cn/shopApi/Shop/info' },
+    { formBody: 'token=shop-token&category_key=', visitorID: 'visitor-1' }
+  )
+  let continued
+  const route = { continue: async (options) => { continued = options } }
+  const request = {
+    url: () => 'https://wzyp.cn/shopApi/Shop/info?u_atoken=secret&u_asig=secret',
+    method: () => 'GET',
+    isNavigationRequest: () => true,
+    allHeaders: async () => ({ cookie: 'session=opaque', 'content-length': '0' }),
+  }
+
+  await handler(route, request)
+
+  assert.equal(pattern, '**/*')
+  assert.equal(installed.state.rewritten, true)
+  assert.equal(continued.url, 'https://wzyp.cn/shopApi/Shop/info?u_atoken=secret&u_asig=secret')
+  assert.equal(continued.method, 'POST')
+  assert.equal(continued.postData, 'token=shop-token&category_key=')
+  assert.equal(continued.headers.visitorid, 'visitor-1')
+  assert.equal(continued.headers.origin, 'https://pay.ldxp.cn')
+  assert.equal(continued.headers['content-type'], 'application/x-www-form-urlencoded;charset=UTF-8')
+  assert.equal(continued.headers['content-length'], undefined)
+  await installed.cleanup()
+  assert.equal(removed, true)
+})
+
+test('ESA signed POST stays on the shop origin without dropping its body', async () => {
+  let handler
+  const page = {
+    route: async (_pattern, callback) => { handler = callback },
+    unroute: async () => {},
+  }
+  const installed = await installChallengeCallbackRewrite(
+    page,
+    { url: 'https://pay.ldxp.cn/shopApi/Shop/info' },
+    { formBody: 'token=shop-token&category_key=', visitorID: 'visitor-1' }
+  )
+  let continued
+  await handler({ continue: async (options) => { continued = options } }, {
+    url: () => 'https://pay.ldxp.cn/shopApi/Shop/info?u_atoken=secret&u_asig=secret',
+    method: () => 'POST',
+    isNavigationRequest: () => true,
+    allHeaders: async () => ({ cookie: 'session=opaque' }),
+  })
+
+  assert.equal(installed.state.rewritten, true)
+  assert.equal(continued.url, 'https://pay.ldxp.cn/shopApi/Shop/info?u_atoken=secret&u_asig=secret')
+  assert.equal(continued.method, 'POST')
+  assert.equal(continued.postData, 'token=shop-token&category_key=')
+})
+
+test('ESA cross-origin 302 is upgraded to 307 so the callback retains the protected POST', async () => {
+  let handler
+  const page = {
+    route: async (_pattern, callback) => { handler = callback },
+    unroute: async () => {},
+  }
+  const installed = await installChallengeCallbackRewrite(
+    page,
+    { url: 'https://pay.ldxp.cn/shopApi/Shop/info' },
+    { formBody: 'token=shop-token&category_key=', visitorID: 'visitor-1' }
+  )
+  let fetched
+  let fulfilled
+  const upstream = {
+    status: () => 302,
+    headers: async () => ({
+      location: 'https://wzyp.cn/shopApi/Shop/info?u_atoken=next&u_asig=next',
+      'set-cookie': 'opaque=1; Secure',
+    }),
+  }
+  await handler({
+    fetch: async (options) => { fetched = options; return upstream },
+    fulfill: async (options) => { fulfilled = options },
+    continue: async () => { throw new Error('continue should not be used') },
+  }, {
+    url: () => 'https://pay.ldxp.cn/shopApi/Shop/info?u_atoken=first&u_asig=first',
+    method: () => 'POST',
+    isNavigationRequest: () => true,
+    allHeaders: async () => ({ cookie: 'session=opaque' }),
+  })
+
+  assert.equal(fetched.url, 'https://pay.ldxp.cn/shopApi/Shop/info?u_atoken=first&u_asig=first')
+  assert.equal(fetched.method, 'POST')
+  assert.equal(fetched.postData, 'token=shop-token&category_key=')
+  assert.equal(fetched.maxRedirects, 0)
+  assert.equal(fulfilled.response, upstream)
+  assert.equal(fulfilled.status, 307)
+  assert.equal(fulfilled.headers.location, 'https://wzyp.cn/shopApi/Shop/info?u_atoken=next&u_asig=next')
+  assert.equal(fulfilled.headers['set-cookie'], 'opaque=1; Secure')
+  assert.equal(installed.state.redirectUpgraded, true)
+  assert.equal(installed.state.redirectUpgrades, 1)
+})
+
+test('unrelated ESA redirect is fulfilled unchanged instead of being upgraded', async () => {
+  let handler
+  const page = {
+    route: async (_pattern, callback) => { handler = callback },
+    unroute: async () => {},
+  }
+  await installChallengeCallbackRewrite(
+    page,
+    { url: 'https://pay.ldxp.cn/shopApi/Shop/info' },
+    { formBody: 'token=shop-token', visitorID: 'visitor-1' }
+  )
+  const upstream = {
+    status: () => 302,
+    headers: async () => ({ location: 'https://example.com/untrusted' }),
+  }
+  let fulfilled
+  await handler({
+    fetch: async () => upstream,
+    fulfill: async (options) => { fulfilled = options },
+  }, {
+    url: () => 'https://pay.ldxp.cn/shopApi/Shop/info?u_atoken=first&u_asig=first',
+    method: () => 'POST',
+    isNavigationRequest: () => true,
+    allHeaders: async () => ({}),
+  })
+
+  assert.deepEqual(fulfilled, { response: upstream })
+})
+
+test('ESA rewrite preserves the form body across every signed GET and POST in one callback chain', async () => {
+  let handler
+  const page = {
+    route: async (_pattern, callback) => { handler = callback },
+    unroute: async () => {},
+  }
+  const installed = await installChallengeCallbackRewrite(
+    page,
+    { url: 'https://pay.ldxp.cn/shopApi/Shop/info' },
+    { formBody: 'token=shop-token&category_key=', visitorID: 'visitor-1' }
+  )
+  const rewrites = []
+  const route = { continue: async (options) => { rewrites.push(options) } }
+  const request = (url, method) => ({
+    url: () => url,
+    method: () => method,
+    isNavigationRequest: () => true,
+    allHeaders: async () => ({ accept: 'text/html', 'content-length': '0' }),
+  })
+
+  await handler(route, request(
+    'https://pay.ldxp.cn/shopApi/Shop/info?u_atoken=first&u_asig=first',
+    'GET'
+  ))
+  await handler(route, request(
+    'https://wzyp.cn/shopApi/Shop/info?u_atoken=second&u_asig=second',
+    'POST'
+  ))
+
+  assert.equal(installed.state.rewritten, true)
+  assert.equal(installed.state.rewrites, 2)
+  assert.equal(rewrites.length, 2)
+  assert.deepEqual(rewrites.map((entry) => entry.url), [
+    'https://pay.ldxp.cn/shopApi/Shop/info?u_atoken=first&u_asig=first',
+    'https://wzyp.cn/shopApi/Shop/info?u_atoken=second&u_asig=second',
+  ])
+  for (const entry of rewrites) {
+    assert.equal(entry.method, 'POST')
+    assert.equal(entry.postData, 'token=shop-token&category_key=')
+    assert.equal(entry.headers.visitorid, 'visitor-1')
+  }
+})
+
+test('chained callback-origin GET is restored to the original POST body', async () => {
+  let handler
+  const page = {
+    route: async (_pattern, callback) => { handler = callback },
+    unroute: async () => {},
+  }
+  const installed = await installChallengeCallbackRewrite(
+    page,
+    { url: 'https://wzyp.cn/shopApi/Shop/info' },
+    { formBody: 'token=shop-token&category_key=', visitorID: 'visitor-1' }
+  )
+  let continued
+  await handler({ continue: async (options) => { continued = options } }, {
+    url: () => 'https://wzyp.cn/shopApi/Shop/info?u_atoken=secret&u_asig=secret',
+    method: () => 'GET',
+    isNavigationRequest: () => true,
+    allHeaders: async () => ({ cookie: 'session=opaque' }),
+  })
+
+  assert.equal(installed.state.rewritten, true)
+  assert.equal(continued.url, 'https://wzyp.cn/shopApi/Shop/info?u_atoken=secret&u_asig=secret')
+  assert.equal(continued.method, 'POST')
+  assert.equal(continued.postData, 'token=shop-token&category_key=')
+})
+
+test('callback redirect rewrite leaves unrelated navigation unchanged', async () => {
+  let handler
+  const page = {
+    route: async (_pattern, callback) => { handler = callback },
+    unroute: async () => {},
+  }
+  const installed = await installChallengeCallbackRewrite(
+    page,
+    { url: 'https://pay.ldxp.cn/shopApi/Shop/info' },
+    { formBody: 'token=shop-token', visitorID: 'visitor-1' }
+  )
+  let continued
+  await handler({ continue: async (options) => { continued = options } }, {
+    url: () => 'https://wzyp.cn/shopApi/Shop/goodsList?u_atoken=secret&u_asig=secret',
+    method: () => 'GET',
+    isNavigationRequest: () => true,
+  })
+  assert.equal(continued, undefined)
+  assert.equal(installed.state.rewritten, false)
 })
 
 test('callback capture ignores HTML, non-success, and unrelated navigations', async () => {
@@ -743,6 +975,190 @@ test('callback capture accepts parsed JSON while navigation headers are still em
   }, staged)
 
   assert.deepEqual(result.payload, { code: 0, msg: 'ok', data: {} })
+})
+
+test('follow-up ESA callback challenge is retained without signed query values', async () => {
+  const staged = { url: 'https://pay.ldxp.cn/shopApi/Shop/info' }
+  const result = await captureFollowupChallengeResponse({
+    url: () => 'https://wzyp.cn/shopApi/Shop/info?u_atoken=secret&u_asig=secret',
+    status: () => 200,
+    headerValue: async (name) => {
+      if (name === 'content-type') return 'text/html; charset=utf-8'
+      if (name === 'x-tengine-error') return 'denied by http_custom'
+      return ''
+    },
+    text: async () => '<html><script src="/aliyuncaptcha.js"></script><div id="captcha-element">滑动验证</div></html>',
+  }, staged)
+
+  assert.equal(result.url, 'https://wzyp.cn/shopApi/Shop/info')
+  assert.equal(result.responseError, 'denied by http_custom')
+  assert.equal(result.text.includes('aliyuncaptcha'), true)
+})
+
+test('challenge manager solves a chained callback-origin challenge with the second drag', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const payURL = 'https://pay.ldxp.cn/shopApi/Shop/info'
+  const callbackURL = 'https://wzyp.cn/shopApi/Shop/info'
+  const callbackPayload = { code: 1, data: { name: 'verified shop' } }
+  const htmlResponse = {
+    url: () => `${callbackURL}?u_atoken=first&u_asig=first`,
+    status: () => 200,
+    headerValue: async (name) => {
+      if (name === 'content-type') return 'text/html; charset=utf-8'
+      if (name === 'x-tengine-error') return 'denied by http_custom'
+      return ''
+    },
+    text: async () => '<html><script src="/aliyuncaptcha.js"></script><div id="captcha-element">滑动验证</div></html>',
+  }
+  const jsonResponse = {
+    url: () => `${callbackURL}?u_atoken=second&u_asig=second`,
+    status: () => 200,
+    headerValue: async (name) => name === 'content-type' ? 'application/json' : '',
+    text: async () => JSON.stringify(callbackPayload),
+  }
+  const navigationResponses = [htmlResponse, jsonResponse]
+  const stagedURLs = []
+  const rewriteHandlers = []
+  const rewriteResults = []
+  let rewriteCleanups = 0
+  let navigationIndex = 0
+  let inspections = 0
+  let drags = 0
+  const manager = new ChallengeManager({
+    enabled: true,
+    sessionDirectory: directory,
+    providers: [{ id: 'aliyun-esa', detect: () => true, locate: async () => sliderGeometry() }],
+    stage: async (_page, response) => { stagedURLs.push(response.url); return {} },
+    inspect: async () => {
+      inspections += 1
+      if (inspections === 4) return clearSnapshot()
+      const snapshot = aliyunSnapshot({ responseError: 'denied by http_custom' })
+      snapshot.frames[0].url = inspections < 3 ? payURL : callbackURL
+      return snapshot
+    },
+    drag: async () => { drags += 1 },
+  })
+
+  const result = await manager.solve({
+    context: { storageState: async () => ({ cookies: [], origins: [] }) },
+    page: {
+      route: async (pattern, handler) => {
+        assert.equal(pattern, '**/*')
+        rewriteHandlers.push(handler)
+      },
+      unroute: async (pattern, handler) => {
+        assert.equal(pattern, '**/*')
+        assert.equal(rewriteHandlers.includes(handler), true)
+        rewriteCleanups += 1
+      },
+      waitForNavigation: () => {
+        const index = navigationIndex
+        navigationIndex += 1
+        return Promise.resolve().then(async () => {
+          let rewritten
+          const signedURL = index === 0
+            ? `${payURL}?u_atoken=first&u_asig=first`
+            : `${callbackURL}?u_atoken=second&u_asig=second`
+          await rewriteHandlers.at(-1)({
+            continue: async (options) => { rewritten = options },
+          }, {
+            url: () => signedURL,
+            method: () => 'GET',
+            isNavigationRequest: () => true,
+            allHeaders: async () => ({ accept: 'text/html' }),
+          })
+          rewriteResults.push(rewritten)
+          return navigationResponses[index]
+        })
+      },
+    },
+    challengeResponse: {
+      status: 200,
+      url: payURL,
+      contentType: 'text/html; charset=utf-8',
+      responseError: 'denied by http_custom',
+      text: '<html><div id="captcha-element">滑动验证</div></html>',
+    },
+    challengeRequest: {
+      formBody: 'token=shop-token&category_key=',
+      visitorID: 'visitor-1',
+    },
+  })
+
+  assert.equal(drags, 2)
+  assert.deepEqual(stagedURLs, [payURL, callbackURL])
+  assert.equal(rewriteHandlers.length, 2)
+  assert.equal(rewriteCleanups, 2)
+  assert.deepEqual(rewriteResults.map((entry) => entry.url), [
+    `${payURL}?u_atoken=first&u_asig=first`,
+    `${callbackURL}?u_atoken=second&u_asig=second`,
+  ])
+  assert.deepEqual(rewriteResults.map((entry) => entry.postData), [
+    'token=shop-token&category_key=',
+    'token=shop-token&category_key=',
+  ])
+  assert.deepEqual(result.operationResponse.payload, callbackPayload)
+})
+
+test('one missed drag still permits both ESA verification stages within the bounded operation budget', async (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const payURL = 'https://pay.ldxp.cn/shopApi/Shop/goodsList'
+  const callbackURL = 'https://wzyp.cn/shopApi/Shop/goodsList'
+  const callbackPayload = { code: 1, data: { total: 1, list: [{ goods_key: 'verified' }] } }
+  const htmlResponse = {
+    url: () => `${callbackURL}?u_atoken=first&u_asig=first`,
+    status: () => 200,
+    headerValue: async (name) => {
+      if (name === 'content-type') return 'text/html; charset=utf-8'
+      if (name === 'x-tengine-error') return 'denied by http_custom'
+      return ''
+    },
+    text: async () => '<html><script src="/aliyuncaptcha.js"></script><div id="captcha-element">滑动验证</div></html>',
+  }
+  const jsonResponse = {
+    url: () => `${callbackURL}?u_atoken=second&u_asig=second`,
+    status: () => 200,
+    headerValue: async (name) => name === 'content-type' ? 'application/json' : '',
+    text: async () => JSON.stringify(callbackPayload),
+  }
+  const navigationResponses = [null, htmlResponse, jsonResponse]
+  const stagedURLs = []
+  let inspections = 0
+  let drags = 0
+  const manager = new ChallengeManager({
+    enabled: true,
+    sessionDirectory: directory,
+    providers: [{ id: 'aliyun-esa', detect: () => true, locate: async () => sliderGeometry() }],
+    stage: async (_page, response) => { stagedURLs.push(response.url); return {} },
+    navigate: async () => ({}),
+    inspect: async () => {
+      inspections += 1
+      if (inspections === 6) return clearSnapshot()
+      const snapshot = aliyunSnapshot({ responseError: 'denied by http_custom' })
+      snapshot.frames[0].url = inspections < 5 ? payURL : callbackURL
+      return snapshot
+    },
+    drag: async () => { drags += 1 },
+  })
+
+  const result = await manager.solve({
+    context: { storageState: async () => ({ cookies: [], origins: [] }) },
+    page: { waitForNavigation: async () => navigationResponses.shift() },
+    attemptState: { attempt: 0 },
+    challengeResponse: {
+      status: 200,
+      url: payURL,
+      contentType: 'text/html; charset=utf-8',
+      responseError: 'denied by http_custom',
+      text: '<html><div id="captcha-element">滑动验证</div></html>',
+    },
+  })
+
+  assert.equal(drags, 3)
+  assert.deepEqual(stagedURLs, [payURL, payURL, callbackURL])
+  assert.deepEqual(result.operationResponse.payload, callbackPayload)
 })
 
 test('staged challenge solve returns the original API JSON callback response', async (t) => {
@@ -815,6 +1231,7 @@ test('a repeated staged API challenge reaches the second drag after its delayed 
   })
   const options = {
     context,
+    attemptState: { attempt: 0 },
     page: { waitForNavigation: async () => ({}) },
     challengeResponse: {
       status: 200,
@@ -892,6 +1309,7 @@ test('challenge manager waits for the ESA success navigation before issuing a ho
     enabled: true,
     providers: [provider],
     sessionDirectory: directory,
+    navigationTimeoutMilliseconds: 30_000,
     navigate: async () => {
       navigateCalls += 1
       return {}
@@ -919,7 +1337,7 @@ test('challenge manager waits for the ESA success navigation before issuing a ho
   assert.equal(result.state, 'solved')
   assert.equal(dragCalls, 1)
   assert.equal(navigateCalls, 1)
-  assert.equal(navigationTimeout, 15_000)
+  assert.equal(navigationTimeout, 25_000)
 })
 
 test('challenge manager refreshes once when the ESA shell has not painted its slider yet', async (t) => {
@@ -1058,7 +1476,7 @@ test('challenge manager observes a closed-page navigation waiter and falls back 
   assert.equal(navigateCalls, 2)
 })
 
-test('challenge manager enforces two drag attempts for the lifetime of a context', async (t) => {
+test('challenge manager shares two drag attempts within one operation and resets for the next operation', async (t) => {
   const directory = temporaryDirectory()
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
   let drags = 0
@@ -1079,12 +1497,19 @@ test('challenge manager enforces two drag attempts for the lifetime of a context
     random: () => 0.5,
   })
 
-  await assert.rejects(() => manager.solve({ context, page: {} }), (error) => (
+  const firstOperation = { attempt: 0 }
+  await assert.rejects(() => manager.solve({ context, page: {}, attemptState: firstOperation }), (error) => (
     error instanceof ChallengeError && error.challengeState === 'failed'
   ))
   assert.equal(drags, 2)
-  await assert.rejects(() => manager.solve({ context, page: {} }), /remained after 2 drag attempts/)
+  await assert.rejects(() => manager.solve({ context, page: {}, attemptState: firstOperation }), /remained after 2 drag attempts/)
   assert.equal(drags, 2)
+
+  const secondOperation = { attempt: 0 }
+  await assert.rejects(() => manager.solve({ context, page: {}, attemptState: secondOperation }), (error) => (
+    error instanceof ChallengeError && error.challengeState === 'failed'
+  ))
+  assert.equal(drags, 4)
 })
 
 test('unsupported verification pages do not touch a slider', async (t) => {
@@ -1324,6 +1749,27 @@ test('protected operation recovers twice per proxy and never cycles after fallba
     && error.restartLane === true)
   assert.deepEqual(attempts, [3, 3])
   assert.deepEqual(switches, [1])
+})
+
+test('protected operation can consume the bounded multi-stage recovery budget when requested', async () => {
+  let attempts = 0
+  let recoveries = 0
+  const result = await retryChallengeOperationAcrossProxyPool({
+    poolSize: 1,
+    currentIndex: 0,
+    maxRecoveriesPerProxy: MAX_TOTAL_DRAG_ATTEMPTS,
+    task: async () => {
+      attempts += 1
+      if (attempts === 4) return 'completed after intermittent callbacks'
+      throw new ChallengeError('failed', 'verification required')
+    },
+    recoverCurrent: async () => { recoveries += 1 },
+    switchTo: async () => {},
+  })
+
+  assert.equal(result, 'completed after intermittent callbacks')
+  assert.equal(attempts, 4)
+  assert.equal(recoveries, 3)
 })
 
 test('protected operation returns a completed verification callback without replaying the request', async () => {

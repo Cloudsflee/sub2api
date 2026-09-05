@@ -12,10 +12,15 @@ const {
   challengeOperationCompletion,
   challengeStatusValues,
   backend,
+  encodeShopRequestBody,
   evaluateShopRequest,
+  evaluateShopRequestWithContext,
   evaluateShopRequestInBrowser,
   laneRecoveryCancellationFailure,
   pressureRecoveryFailure,
+  resetChallengeAttemptState,
+  shopSessionOriginState,
+  shopRequestUsesContextTransport,
   retryAccessDeniedAfterHomeReview,
   syncJobFinalError,
 } = require('./index')
@@ -114,7 +119,46 @@ test('challenge callback completion accepts only successful object payloads', ()
   }), { completed: true, value: payload })
   assert.equal(challengeOperationCompletion({ operationResponse: { status: 403, payload } }), null)
   assert.equal(challengeOperationCompletion({ operationResponse: { status: 200, payload: null } }), null)
+  assert.equal(challengeOperationCompletion({
+    operationResponse: { status: 200, payload: { code: 0, msg: '店铺链接不存在', data: null } },
+  }), null)
+  assert.equal(challengeOperationCompletion({
+    operationResponse: { status: 200, payload: { code: 0, msg: '店铺链接不存在', data: {} } },
+  }), null)
+  assert.equal(challengeOperationCompletion({
+    operationResponse: { status: 200, payload: { code: 1, data: null } },
+  }), null)
   assert.equal(challengeOperationCompletion(null), null)
+})
+
+test('a lane fallback receives a fresh per-operation challenge budget', () => {
+  const state = { attempt: 4, stage: 2, stageAttempt: 2 }
+  assert.equal(resetChallengeAttemptState(state), state)
+  assert.deepEqual(state, { attempt: 0, stage: 1, stageAttempt: 0 })
+})
+
+test('shop session accepts the exact ESA callback origin only as a challenge landing page', () => {
+  assert.deepEqual(shopSessionOriginState({
+    frames: [
+      { url: 'https://wzyp.cn/shopApi/Shop/info?u_atoken=redacted' },
+      { url: 'https://captcha.example/frame' },
+    ],
+  }), {
+    reachedShopOrigin: false,
+    reachedChallengeCallbackOrigin: true,
+  })
+  assert.deepEqual(shopSessionOriginState({
+    frames: [{ url: 'https://pay.ldxp.cn/' }],
+  }), {
+    reachedShopOrigin: true,
+    reachedChallengeCallbackOrigin: false,
+  })
+  assert.deepEqual(shopSessionOriginState({
+    frames: [{ url: 'https://example.com/' }],
+  }), {
+    reachedShopOrigin: false,
+    reachedChallengeCallbackOrigin: false,
+  })
 })
 
 test('pressure recovery preserves a verified context when a job lease is cancelled', () => {
@@ -231,6 +275,148 @@ test('browser shop evaluator reports a fetch timeout without throwing', async ()
   } finally {
     global.fetch = originalFetch
   }
+})
+
+test('browser shop evaluator form-encodes fields for ESA callback replay', async () => {
+  const originalFetch = global.fetch
+  let captured
+  global.fetch = async (url, options) => {
+    captured = { url, options }
+    return fakeResponse(async () => '{"code":1,"data":{}}')
+  }
+  try {
+    const result = await evaluateShopRequestInBrowser({
+      requestPath: 'https://pay.ldxp.cn/shopApi/Shop/info',
+      requestBody: { token: 'shop-token', category_key: null, quantity: 2 },
+      requestTimeoutMilliseconds: 1_000,
+      visitorID: 'visitor',
+    })
+
+    assert.equal(result.status, 200)
+    assert.equal(captured.options.headers['Content-Type'], 'application/x-www-form-urlencoded;charset=UTF-8')
+    assert.equal(captured.options.headers.Visitorid, 'visitor')
+    assert.equal(captured.options.body, 'token=shop-token&category_key=&quantity=2')
+  } finally {
+    global.fetch = originalFetch
+  }
+})
+
+test('shop request form encoding preserves blank, scalar, array, and object fields', () => {
+  assert.equal(encodeShopRequestBody({
+    token: 'shop-token',
+    category_key: null,
+    quantity: 2,
+    tags: ['a', 'b'],
+    filter: { active: true },
+  }), 'token=shop-token&category_key=&quantity=2&tags=a&tags=b&filter=%7B%22active%22%3Atrue%7D')
+})
+
+test('shop requests use the browser-context transport only after an ESA callback changes page origin', () => {
+  const context = { request: { fetch: async () => {} } }
+  assert.equal(shopRequestUsesContextTransport({
+    context,
+    page: { url: () => 'https://pay.ldxp.cn/' },
+  }), false)
+  assert.equal(shopRequestUsesContextTransport({
+    context,
+    page: { url: () => 'https://wzyp.cn/shopApi/Shop/info?u_atoken=redacted' },
+  }), true)
+  assert.equal(shopRequestUsesContextTransport({
+    context: {},
+    page: { url: () => 'https://wzyp.cn/' },
+  }), false)
+  assert.equal(shopRequestUsesContextTransport({
+    context,
+    page: { url: () => 'https://example.com/' },
+  }), false)
+})
+
+test('browser-context shop transport preserves the ESA form body and response metadata without CORS', async () => {
+  let captured
+  let disposed = false
+  const context = {
+    request: {
+      fetch: async (url, options) => {
+        captured = { url, options }
+        return {
+          status: () => 200,
+          url: () => 'https://pay.ldxp.cn/shopApi/Shop/goodsList',
+          headers: async () => ({ 'content-type': 'application/json', 'retry-after': '2' }),
+          text: async () => '{"code":1,"data":{"total":1,"list":[]}}',
+          dispose: async () => { disposed = true },
+        }
+      },
+    },
+  }
+
+  const result = await evaluateShopRequestWithContext(context, {
+    requestPath: 'https://pay.ldxp.cn/shopApi/Shop/goodsList',
+    requestFormBody: 'token=shop-token&goods_type=card',
+    requestTimeoutMilliseconds: 1_000,
+    visitorID: 'visitor-1',
+  }, 1_500)
+
+  assert.equal(captured.url, 'https://pay.ldxp.cn/shopApi/Shop/goodsList')
+  assert.equal(captured.options.method, 'POST')
+  assert.equal(captured.options.data, 'token=shop-token&goods_type=card')
+  assert.equal(captured.options.headers.Visitorid, 'visitor-1')
+  assert.equal(captured.options.timeout, 1_000)
+  assert.equal(captured.options.maxRedirects, 0)
+  assert.deepEqual(result.payload, { code: 1, data: { total: 1, list: [] } })
+  assert.equal(result.retryAfter, '2')
+  assert.equal(result.redirectCount, 0)
+  assert.equal(disposed, true)
+})
+
+test('browser-context shop transport preserves POST across the trusted callback redirect', async () => {
+  const calls = []
+  let disposedRedirect = false
+  let disposedFinal = false
+  const context = {
+    request: {
+      fetch: async (url, options) => {
+        calls.push({ url, options })
+        if (calls.length === 1) {
+          return {
+            status: () => 302,
+            url: () => url,
+            headers: async () => ({
+              location: 'https://wzyp.cn/shopApi/Shop/goodsList?u_atoken=opaque&u_asig=opaque',
+            }),
+            dispose: async () => { disposedRedirect = true },
+          }
+        }
+        return {
+          status: () => 200,
+          url: () => url,
+          headers: async () => ({ 'content-type': 'application/json' }),
+          text: async () => '{"code":1,"data":{"total":2,"list":[]}}',
+          dispose: async () => { disposedFinal = true },
+        }
+      },
+    },
+  }
+
+  const result = await evaluateShopRequestWithContext(context, {
+    requestPath: 'https://pay.ldxp.cn/shopApi/Shop/goodsList',
+    requestFormBody: 'token=shop-token&goods_type=card',
+    requestTimeoutMilliseconds: 1_000,
+    visitorID: 'visitor-1',
+  }, 1_500)
+
+  assert.deepEqual(calls.map((call) => call.url), [
+    'https://pay.ldxp.cn/shopApi/Shop/goodsList',
+    'https://wzyp.cn/shopApi/Shop/goodsList?u_atoken=opaque&u_asig=opaque',
+  ])
+  assert.deepEqual(calls.map((call) => call.options.method), ['POST', 'POST'])
+  assert.deepEqual(calls.map((call) => call.options.data), [
+    'token=shop-token&goods_type=card',
+    'token=shop-token&goods_type=card',
+  ])
+  assert.equal(result.redirectCount, 1)
+  assert.equal(result.payload.code, 1)
+  assert.equal(disposedRedirect, true)
+  assert.equal(disposedFinal, true)
 })
 
 test('browser shop evaluator reports a response body timeout without discarding the page', async () => {
