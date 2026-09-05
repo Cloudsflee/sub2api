@@ -81,12 +81,24 @@ before starting Node, so a Docker restart can safely reuse the container
 filesystem. Camoufox disables Firefox's back/forward document cache and content
 process prelaunch and caps its memory cache at 16 MiB, preventing a solved ESA
 document from remaining resident beside each lane's normal shop page.
-Each lane has
-a capacity-one token bucket at `PRODUCT_SYNC_REQUEST_RATE_PER_LANE`; every
-request then passes through a capacity-one shared bucket at `lane count x lane
-rate`. Blocked lanes never transfer their unused allowance to active lanes, and
-quotes remain sequential within each lane. Each shop publishes immediately
+Each lane retains its capacity-one token bucket at
+`PRODUCT_SYNC_REQUEST_RATE_PER_LANE`. Every request then passes through a
+no-burst adaptive global limiter that starts at `1.5 req/s`, floors at `0.5`,
+and caps at `2.0`. A 403 or 429 halves the global rate. After 100 consecutive
+successful API responses and five pressure-free minutes, the rate rises by
+`0.1 req/s`. Quotes remain sequential within a shop and share a worker-wide
+concurrency limit of two. Each shop publishes immediately
 after every source product is classified as sellable or explicitly unavailable.
+
+A non-JSON 403 is reviewed against the shop home page once. A clear home page
+classifies the response as ESA/CC access denial, opens that egress circuit for
+10 minutes, waits 60 seconds, and selects a lane-local fallback whose circuit
+is closed. Two different egresses denied within 60 seconds force a 120-second
+global silence and the `0.5 req/s` floor. HTTP 429 waits for `Retry-After` when
+present. TLS/connect timeouts are counted per egress and rotate after two
+consecutive failures; a successful response clears only that egress counter.
+Transaction-closed shops keep their last successful snapshot and are deferred
+for 60 minutes instead of publishing an empty catalog.
 
 Jobs send a heartbeat every 30 seconds and refresh the worker status timestamp.
 Missing heartbeats release a lease after 90 seconds, while a single attempt can
@@ -172,7 +184,10 @@ carries a non-secret summary of its provider,
 target origin, proxy server, and hashed proxy identity; invalid or mismatched
 files are removed and rebuilt. Images, fonts, and
 media are allowed only while solving, then the normal resource block is
-restored. If a shop API returns HTML during a sync, the lane solves in the same
+restored. New lanes navigate and post directly to the canonical
+`https://wzyp.cn` origin. Sessions saved for the legacy `https://pay.ldxp.cn`
+origin remain reusable when they contain a valid canonical-origin clearance
+cookie. If a shop API returns HTML during a sync, the lane solves in the same
 context and preserves completed catalog work. When ESA's verified callback
 completes the original API request on `https://wzyp.cn`, the worker consumes
 that same-path JSON response directly instead of discarding the one-time
@@ -180,12 +195,13 @@ approval and replaying the request. Other callback shapes retain the normal
 retry path. Protected shop requests use form encoding so ESA's callback retains
 the original token and request fields. Trusted shop-to-callback 301/302/303
 handoffs are exposed to the browser as 307 so both hops remain POST requests.
-While the verified page is on the exact callback origin, later API requests use
-the same browser context's cookie-sharing request client and manually preserve
-POST bodies across trusted redirects, avoiding cross-origin fetch failures.
-Product links returned by that callback are canonicalized from the exact
-`wzyp.cn/item/<goods_key>` form back to `pay.ldxp.cn/item/<goods_key>` before
-publication so backend URL validation receives the public shop origin.
+While a restored page remains on the legacy origin, later API requests use the
+same browser context's cookie-sharing request client and manually preserve POST
+bodies across redirects between the two trusted origins. Product links returned
+on either origin are canonicalized to the exact
+`wzyp.cn/item/<goods_key>` form before publication. Existing stored legacy shop
+links remain valid inputs and are left unchanged; their refreshed product links
+use the canonical origin.
 Each chained verification stage permits two failed drags; a completed API call
 resets that budget before the next shop endpoint. Exhausting a stage moves
 directly to the lane-local fallback.
@@ -197,7 +213,11 @@ lane failure.
 `/data/status.json` exposes `challenge_auto_solve_enabled` globally and
 `challenge_provider`, `challenge_state`, `challenge_attempt`,
 `challenge_started_at`, `challenge_solved_at`, and `session_restored` for each
-lane.
+lane. It also publishes `adaptive_rate_per_second`, `global_pressure_state`,
+`global_pressure_until`, `global_silence_until`, active `egress_circuits`, and
+the last sanitized `waf_response_fingerprint`. Lane entries include an opaque
+`egress_id` and `egress_circuit_open_until`; proxy credentials, cookies, tokens,
+and signature parameters are excluded.
 
 The local Compose profile applies a 1 CPU, configurable memory, and a 1024 PID
 limit (override with `PRODUCT_SYNC_WORKER_PIDS_LIMIT` for smaller deployments),
@@ -231,8 +251,9 @@ worker, pass the six-active-exit proxy gate, atomically update the six-lane
 and challenge variables, and recreate only the worker. The first lane must be
 ready within three minutes and all six lanes within twelve minutes.
 `/data/status.json` must
-report six lanes, six contexts, six pages, a per-lane rate of `0.75`, a
-global rate of `4.5`, challenge auto-solve enabled, and no container restart.
+report six lanes, six contexts, six pages, an adaptive global rate within
+`0.5-2.0`, global quote concurrency of two, challenge auto-solve enabled, and
+no container restart.
 
 Observe two complete catalog cycles. A no-pressure cycle must finish within 23
 minutes; steady RSS must remain below 1.40 GiB and peak RSS below 1.60 GiB; host

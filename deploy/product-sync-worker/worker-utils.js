@@ -1,11 +1,14 @@
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
+const { parseRetryAfterMilliseconds } = require('./adaptive-rate')
+const {
+  SHOP_CANONICAL_ORIGIN,
+  isTrustedShopOrigin,
+} = require('./shop-origins')
 
 const supportedProxyProtocols = new Set(['http:', 'https:', 'socks5:'])
 const inventorylessGoodsTypes = new Set(['article', 'resource', 'equity'])
-const shopProductOrigin = 'https://pay.ldxp.cn'
-const shopCallbackOrigin = 'https://wzyp.cn'
 // ESA puts its identifying markers after a large inline mobile/desktop
 // bootstrap script. Keep detection bounded, but inspect more than the first
 // couple of kilobytes so API challenge responses are not misclassified as
@@ -322,6 +325,12 @@ function shopUnavailableMessage(value) {
     || /(?:shop|store).*(?:not found|does not exist|closed|deleted|disabled)/.test(message)
 }
 
+function shopClosedForTransactionsMessage(value) {
+  const message = String(value || '').trim().toLowerCase()
+  return /(?:商家|店铺|商店).*(?:已被)?关闭交易/.test(message)
+    || /(?:transactions?|trading|sales?).*(?:closed|disabled)/.test(message)
+}
+
 function normalizeNonNegativeInteger(value) {
   if (value === null || value === undefined || typeof value === 'boolean'
     || (typeof value === 'string' && value.trim() === '')) return null
@@ -352,8 +361,7 @@ function normalizeCatalogProductURL(value, goodsKey) {
   } catch {
     return ''
   }
-  if (url.protocol !== 'https:' || url.username || url.password
-    || ![shopProductOrigin, shopCallbackOrigin].includes(url.origin)) return ''
+  if (url.protocol !== 'https:' || url.username || url.password || !isTrustedShopOrigin(url.origin)) return ''
   const parts = url.pathname.split('/').filter(Boolean)
   if (parts.length !== 2 || parts[0] !== 'item') return ''
   let pathGoodsKey
@@ -363,7 +371,7 @@ function normalizeCatalogProductURL(value, goodsKey) {
     return ''
   }
   if (pathGoodsKey !== goodsKey) return ''
-  url.host = new URL(shopProductOrigin).host
+  url.host = new URL(SHOP_CANONICAL_ORIGIN).host
   url.search = ''
   url.hash = ''
   return url.href
@@ -506,7 +514,13 @@ function parseShopHTTPResponse(result) {
         : status === 429
         ? 'rate_limit'
         : status >= 500 && status < 600 ? 'network' : 'unknown'
-      throw new ShopSyncError(kind, `shop API returned non-JSON HTTP ${status}`)
+      const error = new ShopSyncError(kind, `shop API returned non-JSON HTTP ${status}`)
+      error.status = status
+      error.retryAfter = String(result.retryAfter || '')
+      error.retryAfterMilliseconds = parseRetryAfterMilliseconds(error.retryAfter)
+      error.retryAfterValid = /^\d+(?:\.\d+)?$/.test(error.retryAfter.trim())
+        || Number.isFinite(Date.parse(error.retryAfter))
+      throw error
     }
     const error = new ShopSyncError('verification', `shop API verification required: HTTP ${status}`)
     error.challengeResponse = {
@@ -518,12 +532,24 @@ function parseShopHTTPResponse(result) {
     }
     throw error
   }
-  if (status === 429) throw new ShopSyncError('rate_limit', 'shop API returned HTTP 429')
+  if (status === 429) {
+    const error = new ShopSyncError('rate_limit', 'shop API returned HTTP 429')
+    error.status = status
+    error.retryAfter = String(result.retryAfter || '')
+    error.retryAfterMilliseconds = parseRetryAfterMilliseconds(error.retryAfter)
+    error.retryAfterValid = /^\d+(?:\.\d+)?$/.test(error.retryAfter.trim())
+      || Number.isFinite(Date.parse(error.retryAfter))
+    throw error
+  }
   if (status === 502 || status === 520) {
-    throw new ShopSyncError('network', `shop API returned HTTP ${status}`)
+    const error = new ShopSyncError('network', `shop API returned HTTP ${status}`)
+    error.status = status
+    throw error
   }
   if (status < 200 || status >= 300) {
-    throw new ShopSyncError('unknown', `shop API returned HTTP ${status}`)
+    const error = new ShopSyncError('unknown', `shop API returned HTTP ${status}`)
+    error.status = status
+    throw error
   }
   if (!result.payload || typeof result.payload !== 'object') {
     throw new ShopSyncError('unknown', 'shop API returned invalid JSON')
@@ -539,15 +565,27 @@ function shopRequestError(path, error) {
   const message = redactURLCredentials(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 500)
   const name = String(error?.name || '').toLowerCase()
   const browserSessionClosed = /target (?:page, )?context or browser has been closed|page, context or browser has been closed|browser has been closed|context has been closed|page has been closed/i.test(message)
+  const egressTransportFailure = /client network socket disconnected before secure tls connection|econnreset|econnrefused|etimedout|socket hang up|connect(?:ion)? (?:timed out|timeout|reset|refused)|timeout \d+ms exceeded/i.test(message)
   const isNetworkFailure = name === 'aborterror'
     || browserSessionClosed
+    || egressTransportFailure
     || /aborterror|signal is aborted|failed to fetch|fetch failed|networkerror|network request failed|load failed|net::err_|execution context was destroyed|most likely because of a navigation/i.test(message)
   const wrapped = new ShopSyncError(
     isNetworkFailure ? 'network' : 'unknown',
     `shop API ${path} failed: ${message}`
   )
   if (browserSessionClosed) wrapped.restartLane = true
+  if (egressTransportFailure) wrapped.egressTransportFailure = true
   return wrapped
+}
+
+function isEgressTransportFailure(error) {
+  if (!error || error.restartLane || error.restartBrowser) return false
+  if (error.egressTransportFailure === true) return true
+  if (error.browserTimeout === true) return error.timeoutPhase !== 'protocol'
+  const message = String(error.message || '')
+  return error.kind === 'network'
+    && /tls connection|econnreset|econnrefused|etimedout|socket hang up|connect(?:ion)? (?:timed out|timeout|reset|refused)|timed out during (?:fetch|response_body|request)/i.test(message)
 }
 
 function isPressureError(error) {
@@ -594,7 +632,12 @@ async function withPressureRecovery(task, options = {}) {
     } catch (error) {
       if (!isPressureError(error)) throw error
       state.failureCount = Math.max(0, Number(state.failureCount) || 0) + 1
-      const waitMilliseconds = pressureBackoffMilliseconds(state.failureCount, random)
+      const configuredWait = typeof options.backoffMilliseconds === 'function'
+        ? options.backoffMilliseconds({ error, failureCount: state.failureCount, random })
+        : undefined
+      const waitMilliseconds = Number.isFinite(configuredWait) && configuredWait >= 0
+        ? Math.round(configuredWait)
+        : pressureBackoffMilliseconds(state.failureCount, random)
       if (now() + waitMilliseconds >= deadlineAt) {
         const exhausted = new ShopSyncError(
           error?.kind || 'network',
@@ -649,11 +692,11 @@ class TokenBucket {
   }
 }
 
-async function takeRequestTokens(laneLimiter, globalLimiter, signal) {
+async function takeRequestTokens(laneLimiter, globalLimiter, signal, deadlineAt = Number.POSITIVE_INFINITY) {
   if (!laneLimiter || typeof laneLimiter.take !== 'function') throw new Error('lane request limiter is required')
   if (!globalLimiter || typeof globalLimiter.take !== 'function') throw new Error('global request limiter is required')
   await laneLimiter.take(signal)
-  await globalLimiter.take(signal)
+  await globalLimiter.take(signal, deadlineAt)
 }
 
 async function initializeProxyPool(proxyPool, startIndex, initialize, options = {}) {
@@ -731,6 +774,10 @@ function workerStatusIsHealthy(status, now = Date.now(), maxStaleMilliseconds = 
   if (['error', 'stopped', 'stopping'].includes(status.state)) return false
   const updatedAt = Date.parse(status.updated_at)
   if (!Number.isFinite(updatedAt) || updatedAt > now + 60_000 || now - updatedAt > maxStaleMilliseconds) return false
+  const adaptiveRate = Number(status.adaptive_rate_per_second)
+  if (!Number.isFinite(adaptiveRate) || adaptiveRate < 0.5 || adaptiveRate > 2) return false
+  if (!['clear', 'pressured', 'recovering', 'silent'].includes(status.global_pressure_state)) return false
+  if (status.quote_concurrency_global !== 2) return false
   const lanes = Array.isArray(status.lanes) ? status.lanes : []
   const challengeRecoveryActive = status.challenge_auto_solve_enabled === true && lanes.some((lane) => (
     ['queued', 'detecting', 'solving'].includes(lane?.challenge_state)
@@ -760,22 +807,39 @@ class Semaphore {
     this.queue = []
   }
 
-  async acquire() {
+  async acquire(signal) {
+    throwIfAborted(signal)
     if (this.active < this.limit) {
       this.active += 1
       return
     }
-    await new Promise((resolve) => this.queue.push(resolve))
+    await new Promise((resolve, reject) => {
+      const entry = { resolve, reject, signal, onAbort: null }
+      if (signal) {
+        entry.onAbort = () => {
+          const index = this.queue.indexOf(entry)
+          if (index >= 0) this.queue.splice(index, 1)
+          reject(abortReason(signal))
+        }
+        signal.addEventListener('abort', entry.onAbort, { once: true })
+      }
+      this.queue.push(entry)
+    })
   }
 
   release() {
-    const next = this.queue.shift()
-    if (next) next()
-    else this.active -= 1
+    while (this.queue.length > 0) {
+      const next = this.queue.shift()
+      next.signal?.removeEventListener('abort', next.onAbort)
+      if (next.signal?.aborted) continue
+      next.resolve()
+      return
+    }
+    this.active -= 1
   }
 
-  async run(task) {
-    await this.acquire()
+  async run(task, signal) {
+    await this.acquire(signal)
     try {
       return await task()
     } finally {
@@ -826,6 +890,7 @@ module.exports = {
   createJobHeartbeat,
   initializeProxyPool,
   isPressureError,
+  isEgressTransportFailure,
   mapWithConcurrency,
   normalizeCatalogProductURL,
   normalizeNonNegativeInteger,
@@ -844,6 +909,7 @@ module.exports = {
   redactURLCredentials,
   selectPaymentChannel,
   shopRequestError,
+  shopClosedForTransactionsMessage,
   shopUnavailableMessage,
   simulatedTokenBucketDuration,
   takeRequestTokens,

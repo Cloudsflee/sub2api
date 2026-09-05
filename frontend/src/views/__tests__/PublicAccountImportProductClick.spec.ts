@@ -165,6 +165,11 @@ describe('PublicAccountImportView product click verification', () => {
     expect(replace).toHaveBeenCalledWith('https://pay.ldxp.cn/item/goods')
     expect(close).not.toHaveBeenCalled()
 		expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toMatchObject({ quantity: 1 })
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      'https://wzyp.cn/shopApi/Shop/goodsInfo',
+      'https://wzyp.cn/shopApi/Shop/getUserChannel',
+      'https://wzyp.cn/shopApi/Shop/getGoodsPrice',
+    ])
     expect(wrapper.text()).toContain('¥4')
     expect(wrapper.text()).not.toContain('¥500')
     wrapper.unmount()

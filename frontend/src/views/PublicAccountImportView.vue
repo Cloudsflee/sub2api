@@ -825,6 +825,7 @@ import {
 	selectLivePublicProductPaymentChannel,
 } from '@/utils/publicProductCatalog'
 import {
+  PUBLIC_SHOP_CANONICAL_ORIGIN,
   publicShopProductRefreshDisabled,
   publicShopProductSyncRetryAfter,
   supportsPublicShopProductSync,
@@ -874,6 +875,13 @@ function unavailableProductSyncWorkerStatus(reason = ''): PublicAccountImportPro
     expected_lane_count: PRODUCT_SYNC_EXPECTED_LANE_COUNT,
     available_lane_count: 0,
     unavailable_lane_count: PRODUCT_SYNC_EXPECTED_LANE_COUNT,
+    adaptive_rate_per_second: 0,
+    global_pressure_state: 'unknown',
+    global_pressure_until: '',
+    global_silence_until: '',
+    last_pressure_kind: '',
+    egress_circuits: [],
+    waf_response_fingerprint: null,
     lanes,
   }
 }
@@ -1538,7 +1546,7 @@ async function handleProductClick(event: MouseEvent, product: PublicAccountImpor
 }
 
 async function postPublicShopAPI(path: string, payload: Record<string, unknown>): Promise<any> {
-  const response = await fetch(`https://pay.ldxp.cn${path}`, {
+  const response = await fetch(`${PUBLIC_SHOP_CANONICAL_ORIGIN}${path}`, {
     method: 'POST',
     mode: 'cors',
     credentials: 'omit',

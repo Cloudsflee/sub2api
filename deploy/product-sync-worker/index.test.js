@@ -18,6 +18,7 @@ const {
   evaluateShopRequestInBrowser,
   laneRecoveryCancellationFailure,
   pressureRecoveryFailure,
+  productSyncPressureBackoffMilliseconds,
   resetChallengeAttemptState,
   shopSessionOriginState,
   shopRequestUsesContextTransport,
@@ -137,27 +138,27 @@ test('a lane fallback receives a fresh per-operation challenge budget', () => {
   assert.deepEqual(state, { attempt: 0, stage: 1, stageAttempt: 0 })
 })
 
-test('shop session accepts the exact ESA callback origin only as a challenge landing page', () => {
+test('shop session treats wzyp.cn as canonical and pay.ldxp.cn as legacy', () => {
   assert.deepEqual(shopSessionOriginState({
     frames: [
       { url: 'https://wzyp.cn/shopApi/Shop/info?u_atoken=redacted' },
       { url: 'https://captcha.example/frame' },
     ],
   }), {
-    reachedShopOrigin: false,
-    reachedChallengeCallbackOrigin: true,
+    reachedShopOrigin: true,
+    reachedLegacyShopOrigin: false,
   })
   assert.deepEqual(shopSessionOriginState({
     frames: [{ url: 'https://pay.ldxp.cn/' }],
   }), {
-    reachedShopOrigin: true,
-    reachedChallengeCallbackOrigin: false,
+    reachedShopOrigin: false,
+    reachedLegacyShopOrigin: true,
   })
   assert.deepEqual(shopSessionOriginState({
     frames: [{ url: 'https://example.com/' }],
   }), {
     reachedShopOrigin: false,
-    reachedChallengeCallbackOrigin: false,
+    reachedLegacyShopOrigin: false,
   })
 })
 
@@ -213,12 +214,27 @@ test('access denial home review retries only the failed API after a solved chall
 
 test('access denial with a clear home page flows into pressure recovery without an API retry', async () => {
   let attempts = 0
+  let confirmed = 0
   const denial = Object.assign(new Error('HTTP 403'), { kind: 'access_denied' })
   await assert.rejects(() => retryAccessDeniedAfterHomeReview(async () => {
     attempts += 1
     throw denial
-  }, async () => ({ challengeDetected: false, challengeSolved: false })), (error) => error === denial)
+  }, async () => ({ challengeDetected: false, challengeSolved: false }), {
+    onAccessDeniedConfirmed: async (error) => {
+      confirmed += 1
+      error.pressureReason = 'esa_cc_access_denied'
+    },
+  }), (error) => error === denial && error.pressureReason === 'esa_cc_access_denied')
   assert.equal(attempts, 1)
+  assert.equal(confirmed, 1)
+})
+
+test('403 fallback and 429 Retry-After override generic pressure backoff', () => {
+  assert.equal(productSyncPressureBackoffMilliseconds({ accessDeniedHomeClear: true }, 3), 60_000)
+  assert.equal(productSyncPressureBackoffMilliseconds({ rotateEgress: true }, 2), 60_000)
+  assert.equal(productSyncPressureBackoffMilliseconds({
+    kind: 'rate_limit', retryAfter: '17.5', retryAfterMilliseconds: 17_500, retryAfterValid: true,
+  }, 2), 17_500)
 })
 
 test('an API operation performs at most one immediate access denial home review', async () => {
@@ -311,16 +327,16 @@ test('shop request form encoding preserves blank, scalar, array, and object fiel
   }), 'token=shop-token&category_key=&quantity=2&tags=a&tags=b&filter=%7B%22active%22%3Atrue%7D')
 })
 
-test('shop requests use the browser-context transport only after an ESA callback changes page origin', () => {
+test('shop requests use browser-context transport only for a restored legacy-origin page', () => {
   const context = { request: { fetch: async () => {} } }
   assert.equal(shopRequestUsesContextTransport({
     context,
     page: { url: () => 'https://pay.ldxp.cn/' },
-  }), false)
+  }), true)
   assert.equal(shopRequestUsesContextTransport({
     context,
     page: { url: () => 'https://wzyp.cn/shopApi/Shop/info?u_atoken=redacted' },
-  }), true)
+  }), false)
   assert.equal(shopRequestUsesContextTransport({
     context: {},
     page: { url: () => 'https://wzyp.cn/' },

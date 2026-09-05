@@ -23,7 +23,7 @@ A candidate qualifies only when all of these checks pass through its listener:
 
 - `https://api.ipify.org` returns a parseable public IP address;
 - primary addresses are different from every already selected primary exit;
-- `https://pay.ldxp.cn/` finishes with HTTP 200;
+- `https://wzyp.cn/` finishes with HTTP 200;
 - the protected shop API returns JSON.
 
 Prefer six primary exits from different node families. Pair the three fallbacks

@@ -139,6 +139,13 @@ function workerStatus(
     expected_lane_count: 6,
     available_lane_count: 6 - unavailableLanes.length,
     unavailable_lane_count: unavailableLanes.length,
+    adaptive_rate_per_second: 1.5,
+    global_pressure_state: 'clear',
+    global_pressure_until: '',
+    global_silence_until: '',
+    last_pressure_kind: '',
+    egress_circuits: [],
+    waf_response_fingerprint: null,
     lanes,
   }
 }

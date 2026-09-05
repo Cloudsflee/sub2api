@@ -89,6 +89,7 @@ export interface PublicAccountImportProduct {
 export type PublicAccountImportProductSyncState = 'idle' | 'queued' | 'refreshing' | 'failed'
 export type PublicAccountImportProductSnapshotState = 'pending' | 'legacy' | 'fresh' | 'stale' | 'expired'
 export type PublicAccountImportProductSyncLaneAvailability = 'available' | 'unavailable'
+export type PublicAccountImportProductSyncPressureState = 'clear' | 'pressured' | 'recovering' | 'silent' | 'unknown'
 
 export interface PublicAccountImportProductSyncWorkerLaneStatus {
   lane: number
@@ -98,6 +99,25 @@ export interface PublicAccountImportProductSyncWorkerLaneStatus {
   updated_at?: string
   retry_at?: string
   challenge_state?: string
+  egress_id?: string
+  egress_circuit_open_until?: string
+}
+
+export interface PublicAccountImportProductSyncEgressCircuit {
+  egress_id: string
+  circuit_open_until: string
+}
+
+export interface PublicAccountImportProductSyncWAFResponseFingerprint {
+  observed_at: string
+  status: number
+  api_path: string
+  server?: string
+  x_tengine_error?: string
+  body_length: number
+  body_sha256: string
+  title?: string
+  egress_id: string
 }
 
 export interface PublicAccountImportProductSyncWorkerStatus {
@@ -108,6 +128,13 @@ export interface PublicAccountImportProductSyncWorkerStatus {
   expected_lane_count: number
   available_lane_count: number
   unavailable_lane_count: number
+  adaptive_rate_per_second: number
+  global_pressure_state: PublicAccountImportProductSyncPressureState
+  global_pressure_until: string
+  global_silence_until: string
+  last_pressure_kind: string
+  egress_circuits: PublicAccountImportProductSyncEgressCircuit[]
+  waf_response_fingerprint: PublicAccountImportProductSyncWAFResponseFingerprint | null
   lanes: PublicAccountImportProductSyncWorkerLaneStatus[]
 }
 
@@ -279,6 +306,10 @@ function normalizePublicAccountImportProductSyncWorkerStatus(
       updated_at: typeof raw?.updated_at === 'string' ? raw.updated_at : '',
       retry_at: typeof raw?.retry_at === 'string' ? raw.retry_at : '',
       challenge_state: typeof raw?.challenge_state === 'string' ? raw.challenge_state : '',
+      egress_id: typeof raw?.egress_id === 'string' ? raw.egress_id : '',
+      egress_circuit_open_until: typeof raw?.egress_circuit_open_until === 'string'
+        ? raw.egress_circuit_open_until
+        : '',
     } satisfies PublicAccountImportProductSyncWorkerLaneStatus
   })
   const availability = value?.availability === 'available' ? 'available' : 'unavailable'
@@ -290,6 +321,18 @@ function normalizePublicAccountImportProductSyncWorkerStatus(
     expected_lane_count: expectedLaneCount,
     available_lane_count: normalizeNonNegativeInteger(value?.available_lane_count),
     unavailable_lane_count: normalizeNonNegativeInteger(value?.unavailable_lane_count),
+    adaptive_rate_per_second: normalizeAdaptiveRate(value?.adaptive_rate_per_second),
+    global_pressure_state: normalizeProductSyncPressureState(value?.global_pressure_state),
+    global_pressure_until: typeof value?.global_pressure_until === 'string' ? value.global_pressure_until : '',
+    global_silence_until: typeof value?.global_silence_until === 'string' ? value.global_silence_until : '',
+    last_pressure_kind: typeof value?.last_pressure_kind === 'string' ? value.last_pressure_kind : '',
+    egress_circuits: Array.isArray(value?.egress_circuits)
+      ? value.egress_circuits
+        .filter((circuit) => typeof circuit?.egress_id === 'string' && typeof circuit?.circuit_open_until === 'string')
+        .slice(0, 12)
+        .map((circuit) => ({ egress_id: circuit.egress_id, circuit_open_until: circuit.circuit_open_until }))
+      : [],
+    waf_response_fingerprint: normalizeWAFResponseFingerprint(value?.waf_response_fingerprint),
     lanes,
   }
 }
@@ -331,6 +374,37 @@ function normalizePublicAccountImportProductSyncStatus(
 function normalizeNonNegativeInteger(value: unknown): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0
+}
+
+function normalizeAdaptiveRate(value: unknown): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0.1 && parsed <= 10
+    ? Math.round(parsed * 100) / 100
+    : 0
+}
+
+function normalizeProductSyncPressureState(value: unknown): PublicAccountImportProductSyncPressureState {
+  return value === 'clear' || value === 'pressured' || value === 'recovering' || value === 'silent'
+    ? value
+    : 'unknown'
+}
+
+function normalizeWAFResponseFingerprint(
+  value: Partial<PublicAccountImportProductSyncWAFResponseFingerprint> | null | undefined
+): PublicAccountImportProductSyncWAFResponseFingerprint | null {
+  if (!value || Number(value.status) !== 403 || typeof value.api_path !== 'string'
+    || typeof value.body_sha256 !== 'string' || typeof value.egress_id !== 'string') return null
+  return {
+    observed_at: typeof value.observed_at === 'string' ? value.observed_at : '',
+    status: 403,
+    api_path: value.api_path,
+    server: typeof value.server === 'string' ? value.server : '',
+    x_tengine_error: typeof value.x_tengine_error === 'string' ? value.x_tengine_error : '',
+    body_length: normalizeNonNegativeInteger(value.body_length),
+    body_sha256: value.body_sha256,
+    title: typeof value.title === 'string' ? value.title : '',
+    egress_id: value.egress_id,
+  }
 }
 
 function normalizePositiveInteger(value: unknown, fallback: number): number {

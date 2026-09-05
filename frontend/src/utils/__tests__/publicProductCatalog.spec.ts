@@ -192,7 +192,8 @@ describe('filterAndSortPublicProducts', () => {
 })
 
 describe('publicProductGoodsKey', () => {
-  it('extracts a pay.ldxp.cn item key', () => {
+  it('extracts canonical and legacy item keys', () => {
+    expect(publicProductGoodsKey('https://wzyp.cn/item/abc123')).toBe('abc123')
     expect(publicProductGoodsKey('https://pay.ldxp.cn/item/abc123')).toBe('abc123')
   })
 

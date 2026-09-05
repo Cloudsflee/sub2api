@@ -122,8 +122,22 @@ describe('public account import product API', () => {
           expected_lane_count: 6,
           available_lane_count: 4,
           unavailable_lane_count: 2,
+          adaptive_rate_per_second: 0.75,
+          global_pressure_state: 'silent',
+          global_pressure_until: '2026-08-04T04:02:00Z',
+          global_silence_until: '2026-08-04T04:02:00Z',
+          last_pressure_kind: 'access_denied',
+          egress_circuits: [{ egress_id: 'egress-one', circuit_open_until: '2026-08-04T04:10:00Z' }],
+          waf_response_fingerprint: {
+            observed_at: '2026-08-04T04:00:00Z',
+            status: 403,
+            api_path: '/shopApi/Shop/getGoodsPrice',
+            body_length: 431,
+            body_sha256: 'a'.repeat(64),
+            egress_id: 'egress-one',
+          },
           lanes: [
-            { lane: 1, availability: 'available', state: 'idle' },
+            { lane: 1, availability: 'available', state: 'idle', egress_id: 'egress-one', egress_circuit_open_until: '2026-08-04T04:10:00Z' },
             { lane: 2, availability: 'invalid', reason: 'VerifyCode=F001', state: 'error' },
           ],
         },
@@ -136,9 +150,20 @@ describe('public account import product API', () => {
       availability: 'unavailable',
       reason: '2 of 6 product sync lanes are unavailable',
       expected_lane_count: 6,
+      adaptive_rate_per_second: 0.75,
+      global_pressure_state: 'silent',
+      last_pressure_kind: 'access_denied',
     })
     expect(catalog.worker_status?.lanes).toHaveLength(6)
     expect(catalog.worker_status?.lanes[0]).toMatchObject({ lane: 1, availability: 'available' })
+    expect(catalog.worker_status?.egress_circuits).toEqual([
+      { egress_id: 'egress-one', circuit_open_until: '2026-08-04T04:10:00Z' },
+    ])
+    expect(catalog.worker_status?.waf_response_fingerprint).toMatchObject({
+      status: 403,
+      api_path: '/shopApi/Shop/getGoodsPrice',
+      body_sha256: 'a'.repeat(64),
+    })
     expect(catalog.worker_status?.lanes[1]).toMatchObject({
       lane: 2,
       availability: 'unavailable',

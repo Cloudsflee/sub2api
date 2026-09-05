@@ -732,7 +732,7 @@ test('ESA callback redirect rewrite restores the protected POST body and visitor
   assert.equal(continued.method, 'POST')
   assert.equal(continued.postData, 'token=shop-token&category_key=')
   assert.equal(continued.headers.visitorid, 'visitor-1')
-  assert.equal(continued.headers.origin, 'https://pay.ldxp.cn')
+  assert.equal(continued.headers.origin, 'https://wzyp.cn')
   assert.equal(continued.headers['content-type'], 'application/x-www-form-urlencoded;charset=UTF-8')
   assert.equal(continued.headers['content-length'], undefined)
   await installed.cleanup()
@@ -1877,6 +1877,42 @@ test('session files are opaque, atomic, private, restorable, and isolated by pro
     assert.equal(fs.statSync(directory).mode & 0o777, 0o700)
     assert.equal(fs.statSync(file).mode & 0o777, 0o600)
   }
+})
+
+test('canonical manager reuses a legacy-origin session with valid wzyp.cn clearance', (t) => {
+  const directory = temporaryDirectory()
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const proxy = {
+    server: 'http://proxy.internal:17891',
+    username: 'private-user',
+    password: 'private-password',
+  }
+  const storageState = {
+    cookies: [
+      {
+        name: 'acw_sc__v3', value: 'legacy', domain: 'pay.ldxp.cn', path: '/', expires: 4_000_000_000,
+      },
+      {
+        name: 'acw_sc__v3', value: 'canonical', domain: 'wzyp.cn', path: '/', expires: 4_000_000_000,
+      },
+    ],
+    origins: [
+      { origin: 'https://pay.ldxp.cn', localStorage: [] },
+      { origin: 'https://wzyp.cn', localStorage: [] },
+    ],
+  }
+  writeStoredSession(directory, 'aliyun-esa', 'https://pay.ldxp.cn', proxy, storageState)
+  const manager = new ChallengeManager({
+    enabled: true,
+    sessionDirectory: directory,
+    providers: [{ id: 'aliyun-esa' }],
+  })
+
+  assert.deepEqual(manager.loadSession(proxy), {
+    provider: 'aliyun-esa',
+    storageState,
+    migratedFromOrigin: 'https://pay.ldxp.cn',
+  })
 })
 
 test('expired Alibaba ESA session is ignored and removed before browser startup', (t) => {

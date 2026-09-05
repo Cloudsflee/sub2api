@@ -77,7 +77,7 @@ COPY --from=camoufox /opt/camoufox /opt/camoufox
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
-COPY index.js challenge-manager.js catalog-sync.js worker-utils.js healthcheck.js start-worker.sh ./
+COPY index.js adaptive-rate.js challenge-manager.js catalog-sync.js shop-origins.js worker-utils.js healthcheck.js start-worker.sh ./
 
 RUN mkdir -p /data/challenge-sessions /data/browser-profiles \
     && chmod 0755 /app/start-worker.sh \

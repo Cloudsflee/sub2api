@@ -4,7 +4,12 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { collectAuthoritativeSnapshot } = require('./catalog-sync')
 const {
-  ALIYUN_CALLBACK_ORIGIN,
+  AdaptiveRateLimiter,
+  buildWAFResponseFingerprint,
+  proxyEgressID,
+  redactDiagnosticValue,
+} = require('./adaptive-rate')
+const {
   ChallengeManager,
   MAX_TOTAL_DRAG_ATTEMPTS,
   challengeBackoffMilliseconds,
@@ -18,6 +23,11 @@ const {
   shouldBlockResource,
 } = require('./challenge-manager')
 const {
+  SHOP_CANONICAL_ORIGIN,
+  SHOP_LEGACY_ORIGIN,
+  isTrustedShopOrigin,
+} = require('./shop-origins')
+const {
   JobLeaseLostError,
   Semaphore,
   ShopSyncError,
@@ -30,6 +40,7 @@ const {
   camoufoxFirefoxUserPrefs,
   createJobHeartbeat,
   initializeProxyPool,
+  isEgressTransportFailure,
   isPressureError,
   parseBoolean,
   parsePositiveMilliseconds,
@@ -50,7 +61,7 @@ const {
 
 const backendURL = process.env.BACKEND_URL || 'http://sub2api:8080'
 const backendToken = String(process.env.PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN || '').trim()
-const shopOrigin = 'https://pay.ldxp.cn'
+const shopOrigin = SHOP_CANONICAL_ORIGIN
 const shopHomeURL = `${shopOrigin}/`
 const idlePollMilliseconds = 10_000
 const activePollMilliseconds = 10_000
@@ -101,8 +112,9 @@ const configuredFallbackProxies = parseProxyConfigurations(
 const laneProxyPools = proxyPoolsForConcurrency(syncConcurrency, configuredProxies, configuredFallbackProxies)
 const laneProxies = laneProxyPools.map((pool) => pool[0])
 const configuredProxyCount = configuredProxies.length + configuredFallbackProxies.length
-const globalRequestRate = Number((syncConcurrency * requestRatePerLane).toFixed(10))
-const globalRequestLimiter = new TokenBucket(globalRequestRate, 1)
+const globalRequestLimiter = new AdaptiveRateLimiter()
+const globalQuoteConcurrency = 2
+const globalQuoteSemaphore = new Semaphore(globalQuoteConcurrency)
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 const workerStopController = new AbortController()
 const challengeManager = new ChallengeManager({
@@ -121,7 +133,8 @@ let workerStatus = {
   browser_engine: browserEngine,
   sync_concurrency: syncConcurrency,
   request_rate_per_second_per_lane: requestRatePerLane,
-  request_rate_per_second_global: globalRequestRate,
+  request_rate_per_second_global: globalRequestLimiter.snapshot().adaptive_rate_per_second,
+  quote_concurrency_global: globalQuoteConcurrency,
   challenge_auto_solve_enabled: challengeAutoSolveEnabled,
   challenge_native_drag_enabled: challengeNativeDragEnabled,
   started_at: new Date().toISOString(),
@@ -147,13 +160,19 @@ function ensureStatusFileDirectory() {
 
 function publishStatus(values) {
   const resources = browserResourceCounts(activeBrowserContexts)
+  const adaptiveStatus = globalRequestLimiter.snapshot()
   const lanes = laneStatuses.map((status, index) => ({
     ...status,
+    egress_circuit_open_until: status.egress_id && globalRequestLimiter.isCircuitOpen(status.egress_id)
+      ? new Date(globalRequestLimiter.circuitUntil(status.egress_id)).toISOString()
+      : '',
     context_ready: browserContextIsReady(activeBrowserContexts[index]),
   }))
   workerStatus = {
     ...workerStatus,
     ...values,
+    ...adaptiveStatus,
+    request_rate_per_second_global: adaptiveStatus.adaptive_rate_per_second,
     lanes,
     browser_context_count: resources.contextCount,
     browser_page_count: resources.pageCount,
@@ -202,7 +221,7 @@ function publishLaneStatus(lane, values) {
 }
 
 function errorMessage(error) {
-  return redactURLCredentials(error?.message || error).replace(/[\r\n]+/g, ' ').slice(0, 500)
+  return redactDiagnosticValue(error?.message || error).slice(0, 500)
 }
 
 class BackendHTTPError extends Error {
@@ -269,7 +288,7 @@ function laneContextIsReady(lane) {
 }
 
 function shopSessionOriginState(snapshot) {
-  const state = { reachedShopOrigin: false, reachedChallengeCallbackOrigin: false }
+  const state = { reachedShopOrigin: false, reachedLegacyShopOrigin: false }
   for (const frame of snapshot?.frames || []) {
     let origin
     try {
@@ -278,7 +297,7 @@ function shopSessionOriginState(snapshot) {
       continue
     }
     if (origin === shopOrigin) state.reachedShopOrigin = true
-    if (origin === ALIYUN_CALLBACK_ORIGIN) state.reachedChallengeCallbackOrigin = true
+    if (origin === SHOP_LEGACY_ORIGIN) state.reachedLegacyShopOrigin = true
   }
   return state
 }
@@ -308,7 +327,8 @@ function shopRequestUsesContextTransport(lane) {
   if (!lane?.context?.request || typeof lane.context.request.fetch !== 'function') return false
   if (!lane?.page || typeof lane.page.url !== 'function') return false
   try {
-    return new URL(lane.page.url()).origin === ALIYUN_CALLBACK_ORIGIN
+    const pageOrigin = new URL(lane.page.url()).origin
+    return pageOrigin !== shopOrigin && isTrustedShopOrigin(pageOrigin)
   } catch {
     return false
   }
@@ -354,7 +374,7 @@ async function evaluateShopRequestWithContext(context, args, timeoutMilliseconds
         const trustedRedirect = [301, 302, 303, 307, 308].includes(status)
           && redirectCount < 4
           && redirectURL
-          && [shopOrigin, ALIYUN_CALLBACK_ORIGIN].includes(redirectURL.origin)
+          && isTrustedShopOrigin(redirectURL.origin)
           && redirectURL.pathname === requestURL.pathname
         if (!trustedRedirect) break
         await response.dispose?.()
@@ -364,6 +384,8 @@ async function evaluateShopRequestWithContext(context, args, timeoutMilliseconds
       }
       const contentType = String(headers['content-type'] || headers['Content-Type'] || '')
       const text = String(await response.text())
+      const bodyLength = Buffer.byteLength(text)
+      const bodySHA256 = crypto.createHash('sha256').update(text).digest('hex')
       let payload = null
       if (contentType.toLowerCase().includes('application/json')) {
         try { payload = JSON.parse(text) } catch {}
@@ -374,8 +396,11 @@ async function evaluateShopRequestWithContext(context, args, timeoutMilliseconds
         contentType,
         payload,
         text: text.slice(0, contentType.toLowerCase().includes('application/json') ? 2_000 : 512_000),
+        bodyLength,
+        bodySHA256,
         responseURL: String(rawURL || args.requestPath),
         responseError: String(headers['x-tengine-error'] || headers['X-Tengine-Error'] || ''),
+        server: String(headers.server || headers.Server || ''),
         retryAfter: String(headers['retry-after'] || headers['Retry-After'] || ''),
         redirectCount,
       }
@@ -412,9 +437,39 @@ async function evaluateShopRequestWithContext(context, args, timeoutMilliseconds
   }
 }
 
+const accessDeniedFallbackDelayMilliseconds = 60_000
+
+function productSyncPressureBackoffMilliseconds(error, failureCount, random = Math.random) {
+  if (error?.accessDeniedHomeClear || error?.rotateEgress) return accessDeniedFallbackDelayMilliseconds
+  if (error?.kind === 'rate_limit' && error.retryAfterValid === true) {
+    return Math.max(0, Number(error.retryAfterMilliseconds) || 0)
+  }
+  return pressureBackoffMilliseconds(failureCount, random)
+}
+
+function recordEgressTransportFailure(lane, error) {
+  if (!isEgressTransportFailure(error)) return
+  const egressID = lane.egressID || proxyEgressID(lane.proxy)
+  const failure = globalRequestLimiter.recordTransportFailure(egressID)
+  error.egressTransportFailureCount = failure.failureCount
+  error.rotateEgress = failure.rotate
+  publishLaneStatus(lane, {
+    egress_id: egressID,
+    transport_failure_count: failure.failureCount,
+  })
+}
+
 async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
   ensureJobDeadline(deadlineAt, signal)
-  await takeRequestTokens(lane.requestLimiter, globalRequestLimiter, signal)
+  const egressID = lane.egressID || proxyEgressID(lane.proxy)
+  if (globalRequestLimiter.isCircuitOpen(egressID)) {
+    const error = new ShopSyncError('access_denied', 'product sync egress circuit is open')
+    error.accessDeniedHomeClear = true
+    error.rotateEgress = true
+    error.circuitOpenUntil = globalRequestLimiter.circuitUntil(egressID)
+    throw error
+  }
+  await takeRequestTokens(lane.requestLimiter, globalRequestLimiter, signal, deadlineAt)
   ensureJobDeadline(deadlineAt, signal)
   const requestURL = new URL(path, shopHomeURL)
   if (requestURL.origin !== shopOrigin) throw new Error(`shop API path escapes ${shopOrigin}`)
@@ -444,20 +499,40 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
     // fetch/body timeouts are returned as structured results and remain
     // ordinary pressure errors so a single stuck response does not discard
     // the persistent context.
+    globalRequestLimiter.recordFailure()
     if (error?.restartLane) throw error
-    throw shopRequestError(path, error)
+    const wrapped = shopRequestError(path, error)
+    recordEgressTransportFailure(lane, wrapped)
+    throw wrapped
   }
   throwIfAborted(signal)
   if (result && typeof result === 'object') result.requestPath = path
   try {
-    return parseShopHTTPResponse(result)
+    const payload = parseShopHTTPResponse(result)
+    const success = globalRequestLimiter.recordSuccess(egressID)
+    laneStatuses[lane.index].transport_failure_count = 0
+    if (success.rateChanged) publishStatus({})
+    return payload
   } catch (error) {
+    globalRequestLimiter.recordFailure()
     if (error?.kind === 'verification') {
       error.challengeRequest = { formBody: requestFormBody, visitorID }
       console.warn(`${new Date().toISOString()} lane ${lane.index + 1} shop API ${path} classified as known_verification (HTTP ${error.challengeResponse?.status || 'unknown'})`)
     } else if (error?.kind === 'access_denied') {
+      error.wafResponseFingerprint = buildWAFResponseFingerprint(result, { path, egressID })
       console.warn(`${new Date().toISOString()} lane ${lane.index + 1} shop API ${path} classified as access_denied (non-JSON HTTP 403)`)
+    } else if (error?.kind === 'rate_limit') {
+      const pressure = globalRequestLimiter.recordRatePressure('rate_limit', {
+        egressID,
+        retryAfterMilliseconds: error.retryAfterMilliseconds,
+      })
+      error.adaptiveRatePerSecond = pressure.adaptive_rate_per_second
+      publishLaneStatus(lane, {
+        egress_id: egressID,
+        last_pressure_kind: 'rate_limit',
+      })
     }
+    recordEgressTransportFailure(lane, error)
     throw error
   }
 }
@@ -472,7 +547,10 @@ async function retryAccessDeniedAfterHomeReview(task, review, options = {}) {
     await options.onReviewStart?.(error)
     const result = await review(error)
     await options.onReviewResult?.(result, error)
-    if (!result?.challengeDetected) throw error
+    if (!result?.challengeDetected) {
+      await options.onAccessDeniedConfirmed?.(error, result)
+      throw error
+    }
     return task()
   }
 }
@@ -538,6 +616,12 @@ async function evaluateShopRequestInBrowser({ requestPath, requestBody, requestF
     }), 'fetch')
     const contentType = response.headers.get('content-type') || ''
     const text = await waitForPhase(response.text(), 'response_body')
+    const bodyBytes = new TextEncoder().encode(text)
+    let bodySHA256 = ''
+    try {
+      const digest = await globalThis.crypto.subtle.digest('SHA-256', bodyBytes)
+      bodySHA256 = Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('')
+    } catch {}
     let payload = null
     if (contentType.toLowerCase().includes('application/json')) {
       try {
@@ -551,8 +635,11 @@ async function evaluateShopRequestInBrowser({ requestPath, requestBody, requestF
       contentType,
       payload,
       text: text.slice(0, contentType.toLowerCase().includes('application/json') ? 2_000 : 512_000),
+      bodyLength: bodyBytes.byteLength,
+      bodySHA256,
       responseURL: response.url || requestPath,
       responseError: response.headers.get('x-tengine-error') || '',
+      server: response.headers.get('server') || '',
       retryAfter: response.headers.get('retry-after') || '',
     }
   } catch (error) {
@@ -718,6 +805,24 @@ async function postShopAPIWithChallengeRecovery(lane, shopToken, path, body, dea
         const result = review?.challengeDetected ? 'challenge_detected' : 'home_clear'
         console.log(`${new Date().toISOString()} lane ${lane.index + 1} access_denied home review result=${result} for ${path}`)
       },
+      onAccessDeniedConfirmed: async (error) => {
+        const egressID = lane.egressID || proxyEgressID(lane.proxy)
+        const pressure = globalRequestLimiter.recordRatePressure('access_denied', {
+          egressID,
+          fingerprint: error.wafResponseFingerprint,
+        })
+        error.accessDeniedHomeClear = true
+        error.pressureReason = 'esa_cc_access_denied'
+        error.rotateEgress = true
+        error.circuitOpenUntil = pressure.circuitUntil
+        error.globalSilenceUntil = pressure.global_silence_until
+        publishLaneStatus(lane, {
+          egress_id: egressID,
+          egress_circuit_open_until: new Date(pressure.circuitUntil).toISOString(),
+          last_pressure_kind: 'access_denied',
+        })
+        console.warn(`${new Date().toISOString()} lane ${lane.index + 1} confirmed esa_cc_access_denied for ${path} waf=${JSON.stringify(error.wafResponseFingerprint)}`)
+      },
     }
   )
   const result = await retryChallengeOperationAcrossProxyPool({
@@ -771,6 +876,9 @@ async function postShopAPIWithPressureRecovery(lane, shopToken, path, body, dead
       state: lane.pressureState,
       deadlineAt,
       signal,
+      backoffMilliseconds: ({ error, failureCount, random }) => (
+        productSyncPressureBackoffMilliseconds(error, failureCount, random)
+      ),
       onBackoff: async ({ error, failureCount, waitMilliseconds }) => {
         publishLaneStatus(lane, {
           state: 'blocked',
@@ -782,9 +890,9 @@ async function postShopAPIWithPressureRecovery(lane, shopToken, path, body, dead
         })
         console.log(`${new Date().toISOString()} lane ${lane.index + 1} pressure backoff level=${Math.min(failureCount, 3)} kind=${error?.kind || 'network'} wait_seconds=${Math.round(waitMilliseconds / 1000)}`)
       },
-      recover: async ({ failureCount }) => {
+      recover: async ({ error, failureCount }) => {
         if (stopping) throw new Error('product sync worker is stopping')
-        await recoverLaneAfterPressure(lane, failureCount, signal)
+        await recoverLaneAfterPressure(lane, failureCount, signal, error)
         publishLaneStatus(lane, {
           state: 'syncing',
           retry_at: '',
@@ -823,8 +931,8 @@ async function initializeShopPage(
       }
     }
     const snapshot = await collectChallengeSnapshot(page, response)
-    const { reachedShopOrigin, reachedChallengeCallbackOrigin } = shopSessionOriginState(snapshot)
-    if (!reachedShopOrigin && !reachedChallengeCallbackOrigin) {
+    const { reachedShopOrigin, reachedLegacyShopOrigin } = shopSessionOriginState(snapshot)
+    if (!reachedShopOrigin && !reachedLegacyShopOrigin) {
       throw new ShopSyncError('network', `shop session navigation did not reach ${shopOrigin}`)
     }
     throwIfAborted(signal)
@@ -840,14 +948,14 @@ async function initializeShopPage(
       if (recovery) console.log(`${new Date().toISOString()} lane ${lane.index + 1} shop session recovered after verification`)
       return { challengeDetected: true, challengeSolved: true }
     } else {
-      // A completed ESA callback leaves the page on the exact callback origin
-      // with a JSON document. That is a usable steady state now that later
-      // requests use BrowserContext.request and preserve POST redirects.
+      // A legacy saved session can still land on the retired origin. Keep it
+      // usable through BrowserContext.request while all new navigation and
+      // published links use the canonical origin.
       publishChallengeState(lane, { state: 'clear' })
       return {
         challengeDetected: false,
         challengeSolved: false,
-        callbackOriginReady: !reachedShopOrigin && reachedChallengeCallbackOrigin,
+        callbackOriginReady: !reachedShopOrigin && reachedLegacyShopOrigin,
       }
     }
   } catch (error) {
@@ -893,6 +1001,8 @@ async function reportJobFailure(job, error) {
         shop_id: job.shop_id,
         attempt_id: job.attempt_id,
         error: errorMessage(error),
+        kind: String(error?.kind || '').slice(0, 32),
+        retry_after_seconds: Math.max(0, Math.ceil((Number(error?.retryAfterMilliseconds) || 0) / 1000)),
       }),
     })
   } catch (reportError) {
@@ -908,7 +1018,8 @@ async function syncJob(lane, job) {
     ensureLaneContextReady(lane)
     const snapshot = await collectAuthoritativeSnapshot({
       shopToken: job.token,
-      quoteSemaphore: lane.quoteSemaphore,
+      quoteSemaphore: globalQuoteSemaphore,
+      signal: controller.signal,
       post: (path, body) => postShopAPIWithPressureRecovery(
         lane,
         job.token,
@@ -1198,10 +1309,10 @@ function createLane(index, proxyPool) {
     proxyPool,
     proxyIndex: 0,
     proxy: proxyPool[0],
+    egressID: proxyEgressID(proxyPool[0]),
     pressureState: { failureCount: 0 },
     challengeState: { failureCount: 0 },
     challengeResourcesAllowed: false,
-    quoteSemaphore: new Semaphore(1),
     requestLimiter: new TokenBucket(requestRatePerLane, 1),
   }
 }
@@ -1312,6 +1423,8 @@ async function replaceLaneContext(lane, proxyIndex, recovery = false, signal = w
     lane.page = page
     lane.proxyIndex = proxyIndex
     lane.proxy = proxy
+    lane.egressID = proxyEgressID(proxy)
+    laneStatuses[lane.index].egress_id = lane.egressID
     activeBrowserContexts[lane.index] = context
     publishStatus({})
   } catch (error) {
@@ -1379,11 +1492,40 @@ function pressureRecoveryFailure(lane, error, signal) {
 async function recoverLaneAfterPressure(
   lane,
   failureCount = lane.pressureState.failureCount,
-  signal = workerStopController.signal
+  signal = workerStopController.signal,
+  pressureError
 ) {
   try {
     throwIfAborted(signal)
     const failures = Math.max(1, Number(failureCount) || 1)
+    const egressID = lane.egressID || proxyEgressID(lane.proxy)
+    const circuitOpen = globalRequestLimiter.isCircuitOpen(egressID)
+    if (pressureError?.rotateEgress || circuitOpen) {
+      const nextProxyIndex = globalRequestLimiter.nextAvailableProxyIndex(lane.proxyPool, lane.proxyIndex)
+      if (nextProxyIndex < 0) {
+        const unavailable = new ShopSyncError(
+          pressureError?.kind || 'network',
+          'no lane fallback egress is available while the active egress circuit is open'
+        )
+        unavailable.noAvailableEgress = true
+        unavailable.circuitOpenUntil = globalRequestLimiter.circuitUntil(egressID)
+        throw unavailable
+      }
+      const previousEgressID = egressID
+      await replaceLaneContext(lane, nextProxyIndex, true, signal)
+      throwIfAborted(signal)
+      console.log(`${new Date().toISOString()} lane ${lane.index + 1} switched product sync egress after pressure: ${previousEgressID} -> ${lane.egressID}`)
+      publishLaneStatus(lane, {
+        egress_id: lane.egressID,
+        proxy_server: lane.proxy?.server || '',
+        proxy_pool_position: nextProxyIndex + 1,
+        proxy_rotated_at: new Date().toISOString(),
+        pressure_recovery: 'switch_available_fallback',
+        pressure_recovery_at: new Date().toISOString(),
+        transport_failure_count: 0,
+      })
+      return
+    }
     // Keep the persistent browser/profile on the first pressure failure. A
     // fresh navigation clears a half-read response and avoids needless
     // Camoufox process churn; rotate to the lane fallback only after the
@@ -1413,6 +1555,7 @@ async function recoverLaneAfterPressure(
       pressure_recovery_at: new Date().toISOString(),
     })
   } catch (error) {
+    if (error?.noAvailableEgress) throw error
     throw pressureRecoveryFailure(lane, error, signal)
   }
 }
@@ -1491,7 +1634,7 @@ async function runLane(lane) {
         } else {
           console.error(`${new Date().toISOString()} lane ${lane.index + 1} sync failed for ${job.shop_name}: ${errorMessage(error)}`)
           lane.pressureState.failureCount += 1
-          const waitMilliseconds = pressureBackoffMilliseconds(lane.pressureState.failureCount)
+          const waitMilliseconds = productSyncPressureBackoffMilliseconds(error, lane.pressureState.failureCount)
           publishLaneStatus(lane, {
             state: 'blocked',
             active_shop_id: '',
@@ -1509,7 +1652,7 @@ async function runLane(lane) {
           })
           if (!stopping) {
             try {
-              await recoverLaneAfterPressure(lane, lane.pressureState.failureCount, workerStopController.signal)
+              await recoverLaneAfterPressure(lane, lane.pressureState.failureCount, workerStopController.signal, error)
             } catch (recoveryError) {
               console.error(`${new Date().toISOString()} lane ${lane.index + 1} pressure recovery failed: ${errorMessage(recoveryError)}`)
               if (recoveryError?.restartLane || recoveryError?.restartBrowser) throw recoveryError
@@ -1569,12 +1712,12 @@ async function runLaneLifecycle(lane, browser) {
         const challengeFailure = isChallengeError(error)
         if (challengeFailure) lane.challengeState.failureCount += 1
         else initializationFailures += 1
-        const waitMilliseconds = error?.kind === 'lease_lost'
-          ? 1_000
+          const waitMilliseconds = error?.kind === 'lease_lost'
+            ? 1_000
           : challengeFailure
             ? challengeBackoffMilliseconds(lane.challengeState.failureCount, error.challengeState)
             : isPressureError(error)
-              ? pressureBackoffMilliseconds(initializationFailures)
+              ? productSyncPressureBackoffMilliseconds(error, initializationFailures)
               : Math.min(60_000, 5_000 * (2 ** Math.min(initializationFailures - 1, 4)))
         console.error(`${new Date().toISOString()} lane ${lane.index + 1} restarting independently in ${Math.round(waitMilliseconds / 1000)} seconds: ${errorMessage(error)}`)
         publishLaneStatus(lane, {
@@ -1584,6 +1727,7 @@ async function runLaneLifecycle(lane, browser) {
           retry_at: new Date(Date.now() + waitMilliseconds).toISOString(),
           last_error_at: new Date().toISOString(),
           last_error: error?.kind === 'lease_lost' ? '' : errorMessage(error),
+          egress_id: lane.egressID || proxyEgressID(lane.proxy),
           ...(challengeFailure ? {
             challenge_state: error.challengeState || 'failed',
             challenge_failure_count: lane.challengeState.failureCount,
@@ -1624,6 +1768,7 @@ async function runBrowser() {
       publishLaneStatus(lane, {
         state: 'starting',
         proxy_server: laneProxies[index]?.server || '',
+        egress_id: lane.egressID,
         proxy_pool_position: 1,
         proxy_pool_size: laneProxyPools[index].length,
       })
@@ -1631,9 +1776,9 @@ async function runBrowser() {
     publishStatus({
       browser_engine: browserEngine,
       sync_concurrency: syncConcurrency,
-      quote_concurrency_per_lane: 1,
+      quote_concurrency_global: globalQuoteConcurrency,
       request_rate_per_second_per_lane: requestRatePerLane,
-      request_rate_per_second_global: globalRequestRate,
+      request_rate_per_second_global: globalRequestLimiter.snapshot().adaptive_rate_per_second,
       browser_started_at: new Date().toISOString(),
     })
     await Promise.all(lanes.map((lane) => runLaneLifecycle(lane, browser)))
@@ -1648,7 +1793,7 @@ async function runBrowser() {
 async function main() {
   if (!backendToken) throw new Error('PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN is required')
   publishStatus({ state: 'starting' })
-  console.log(`${new Date().toISOString()} product sync worker starting; proxy_lanes=${configuredProxies.length}; proxy_endpoints=${configuredProxyCount}; challenge_auto_solve=${challengeAutoSolveEnabled}`)
+  console.log(`${new Date().toISOString()} product sync worker starting; proxy_lanes=${configuredProxies.length}; proxy_endpoints=${configuredProxyCount}; adaptive_rate=${globalRequestLimiter.snapshot().adaptive_rate_per_second}; quote_concurrency=${globalQuoteConcurrency}; challenge_auto_solve=${challengeAutoSolveEnabled}`)
   let browserPressureFailures = 0
   while (!stopping) {
     try {
@@ -1707,6 +1852,7 @@ module.exports = {
   laneRecoveryCancellationFailure,
   publishJobSnapshot,
   pressureRecoveryFailure,
+  productSyncPressureBackoffMilliseconds,
   resetChallengeAttemptState,
   shopSessionOriginState,
   shopRequestUsesContextTransport,

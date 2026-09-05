@@ -51,6 +51,7 @@ APP_CANDIDATE=
 WORKER_CANDIDATE=
 WORKER_BUILD_PATHS=(
   deploy/product-sync-worker/.dockerignore
+  deploy/product-sync-worker/adaptive-rate.js
   deploy/product-sync-worker/Dockerfile
   deploy/product-sync-worker/catalog-sync.js
   deploy/product-sync-worker/challenge-manager.js
@@ -58,6 +59,7 @@ WORKER_BUILD_PATHS=(
   deploy/product-sync-worker/index.js
   deploy/product-sync-worker/package-lock.json
   deploy/product-sync-worker/package.json
+  deploy/product-sync-worker/shop-origins.js
   deploy/product-sync-worker/start-worker.sh
   deploy/product-sync-worker/worker-utils.js
 )

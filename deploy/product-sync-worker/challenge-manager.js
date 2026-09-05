@@ -4,9 +4,15 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { performance } = require('node:perf_hooks')
 const { promisify } = require('node:util')
+const {
+  SHOP_CANONICAL_ORIGIN,
+  SHOP_LEGACY_ORIGIN,
+  isTrustedShopHandoff,
+  isTrustedShopOrigin,
+} = require('./shop-origins')
 
-const DEFAULT_ORIGIN = 'https://pay.ldxp.cn'
-const ALIYUN_CALLBACK_ORIGIN = 'https://wzyp.cn'
+const DEFAULT_ORIGIN = SHOP_CANONICAL_ORIGIN
+const ALIYUN_CALLBACK_ORIGIN = SHOP_CANONICAL_ORIGIN
 const MAX_DRAG_ATTEMPTS = 2
 const MAX_CHALLENGE_STAGES = 2
 const MAX_TOTAL_DRAG_ATTEMPTS = MAX_DRAG_ATTEMPTS * MAX_CHALLENGE_STAGES
@@ -305,8 +311,7 @@ async function captureChallengeSubmissionResponse(response, stagedResponse, opti
   }
   const trustedOrigin = actualURL.origin === expectedURL.origin
     || (options.callbackRewritten === true
-      && expectedURL.origin === DEFAULT_ORIGIN
-      && actualURL.origin === ALIYUN_CALLBACK_ORIGIN)
+      && isTrustedShopHandoff(expectedURL.origin, actualURL.origin))
   if (!trustedOrigin || actualURL.pathname !== expectedURL.pathname) return null
 
   const rawStatus = typeof response.status === 'function' ? response.status() : response.status
@@ -374,7 +379,7 @@ async function installChallengeCallbackRewrite(page, stagedResponse, challengeRe
   } catch {
     return disabled
   }
-  if (expectedURL.origin !== DEFAULT_ORIGIN && expectedURL.origin !== ALIYUN_CALLBACK_ORIGIN) return disabled
+  if (!isTrustedShopOrigin(expectedURL.origin)) return disabled
 
   const pattern = '**/*'
   const handler = async (route, routedRequest) => {
@@ -393,12 +398,10 @@ async function installChallengeCallbackRewrite(page, stagedResponse, challengeRe
       // also produce more than one signed navigation. Rewrite every matching
       // request instead of consuming only the first one, otherwise a later
       // redirect silently loses the protected form body again.
-      const signedOriginRequest = (method === 'GET' || method === 'POST')
-        && expectedURL.origin === DEFAULT_ORIGIN
-        && targetURL.origin === DEFAULT_ORIGIN
-      const redirectedCallback = (method === 'GET' || method === 'POST')
-        && targetURL.origin === ALIYUN_CALLBACK_ORIGIN
-      if ((!signedOriginRequest && !redirectedCallback) || !navigation
+      const signedShopRequest = (method === 'GET' || method === 'POST')
+        && isTrustedShopOrigin(expectedURL.origin)
+        && isTrustedShopOrigin(targetURL.origin)
+      if (!signedShopRequest || !navigation
         || targetURL.pathname !== expectedURL.pathname
         || !targetURL.searchParams.has('u_atoken')
         || !targetURL.searchParams.has('u_asig')) {
@@ -415,8 +418,8 @@ async function installChallengeCallbackRewrite(page, stagedResponse, challengeRe
       delete rewrittenHeaders['content-length']
       rewrittenHeaders.accept = 'application/json'
       rewrittenHeaders['content-type'] = 'application/x-www-form-urlencoded;charset=UTF-8'
-      rewrittenHeaders.origin = DEFAULT_ORIGIN
-      rewrittenHeaders.referer = `${DEFAULT_ORIGIN}/`
+      rewrittenHeaders.origin = targetURL.origin
+      rewrittenHeaders.referer = `${targetURL.origin}/`
       rewrittenHeaders.visitorid = request.visitorID
       const rewrittenRequest = {
         // Preserve the signed request at the origin that ESA selected. The
@@ -446,7 +449,7 @@ async function installChallengeCallbackRewrite(page, stagedResponse, challengeRe
         } catch {}
         const trustedRedirect = [301, 302, 303].includes(status)
           && redirectURL
-          && redirectURL.origin === ALIYUN_CALLBACK_ORIGIN
+          && isTrustedShopHandoff(targetURL.origin, redirectURL.origin)
           && redirectURL.pathname === expectedURL.pathname
           && redirectURL.searchParams.has('u_atoken')
           && redirectURL.searchParams.has('u_asig')
@@ -1417,8 +1420,7 @@ function normalizeStagedChallengeResponse(value, origin) {
     throw new ChallengeError('failed', 'shop API verification response has an invalid URL')
   }
   const configuredOrigin = new URL(origin).origin
-  const trustedOrigin = url.origin === configuredOrigin
-    || (configuredOrigin === DEFAULT_ORIGIN && url.origin === ALIYUN_CALLBACK_ORIGIN)
+  const trustedOrigin = isTrustedShopHandoff(configuredOrigin, url.origin)
   if (!trustedOrigin) {
     throw new ChallengeError('failed', 'shop API verification response escaped the configured origin')
   }
@@ -1443,8 +1445,7 @@ async function captureFollowupChallengeResponse(response, stagedResponse) {
   } catch {
     return null
   }
-  const trustedOrigin = actualURL.origin === expectedURL.origin
-    || (expectedURL.origin === DEFAULT_ORIGIN && actualURL.origin === ALIYUN_CALLBACK_ORIGIN)
+  const trustedOrigin = isTrustedShopHandoff(expectedURL.origin, actualURL.origin)
   if (!trustedOrigin || actualURL.pathname !== expectedURL.pathname) return null
 
   const contentType = await responseHeaderValue(response, 'content-type')
@@ -1470,7 +1471,7 @@ async function captureFollowupChallengeResponse(response, stagedResponse) {
     contentType: contentType || 'text/html; charset=utf-8',
     responseError,
     text,
-  }, DEFAULT_ORIGIN)
+  }, expectedURL.origin)
 }
 
 async function stageChallengeResponse(page, origin, value, timeoutMilliseconds) {
@@ -1588,7 +1589,13 @@ class ChallengeManager {
 
   loadSession(proxy) {
     if (!this.enabled) return null
-    return readStoredSession(this.sessionDirectory, this.providers, this.origin, proxy)
+    const current = readStoredSession(this.sessionDirectory, this.providers, this.origin, proxy)
+    if (current || this.origin !== SHOP_CANONICAL_ORIGIN) return current
+
+    const legacy = readStoredSession(this.sessionDirectory, this.providers, SHOP_LEGACY_ORIGIN, proxy)
+    return legacy && storedSessionIsUsable(legacy.provider, legacy.storageState, this.origin, this.now())
+      ? { ...legacy, migratedFromOrigin: SHOP_LEGACY_ORIGIN }
+      : null
   }
 
   async saveSession(context, providerID, proxy) {

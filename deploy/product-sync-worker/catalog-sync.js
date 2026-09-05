@@ -6,6 +6,7 @@ const {
   normalizeNonNegativeInteger,
   quoteResult,
   selectPaymentChannel,
+  shopClosedForTransactionsMessage,
   shopUnavailableMessage,
 } = require('./worker-utils')
 
@@ -14,6 +15,7 @@ const GOODS_TYPES = ['card', 'article', 'resource', 'equity']
 const PAGE_SIZE = 100
 const MAX_PRODUCTS = 1000
 const QUOTE_CONCURRENCY = 1
+const CLOSED_SHOP_RETRY_MILLISECONDS = 60 * 60_000
 
 function requireSuccessfulPayload(payload, label) {
   if (!payload || payload.code !== 1 || !payload.data || typeof payload.data !== 'object') {
@@ -34,12 +36,18 @@ async function collectAuthoritativeSnapshot(options) {
     post,
     now = () => new Date(),
     quoteSemaphore = new Semaphore(QUOTE_CONCURRENCY),
+    signal,
   } = options || {}
   if (!String(shopToken || '').trim() || typeof post !== 'function') {
     throw new Error('shopToken and post are required')
   }
 
   const infoPayload = await post('/shopApi/Shop/info', { token: shopToken, category_key: null })
+  if (infoPayload?.code !== 1 && shopClosedForTransactionsMessage(infoPayload?.msg)) {
+    const error = new ShopSyncError('shop_closed', String(infoPayload?.msg || 'shop transactions are closed'))
+    error.retryAfterMilliseconds = CLOSED_SHOP_RETRY_MILLISECONDS
+    throw error
+  }
   if (infoPayload?.code !== 1 && shopUnavailableMessage(infoPayload?.msg)) {
     return {
       schema_version: PRODUCT_SCHEMA_VERSION,
@@ -146,7 +154,7 @@ async function collectAuthoritativeSnapshot(options) {
       payable_price: quote.totalAmount,
       quote_verified_at: verifiedAtISO(now),
     }
-  }))
+  }, signal))
   const products = quotedProducts.filter(Boolean)
   if (products.length + unavailableCount !== sourceProductCount) {
     throw new ShopSyncError('unknown', 'quoted product counts do not cover the complete catalog')
@@ -162,6 +170,7 @@ async function collectAuthoritativeSnapshot(options) {
 
 module.exports = {
   GOODS_TYPES,
+  CLOSED_SHOP_RETRY_MILLISECONDS,
   MAX_PRODUCTS,
   PRODUCT_SCHEMA_VERSION,
   QUOTE_CONCURRENCY,

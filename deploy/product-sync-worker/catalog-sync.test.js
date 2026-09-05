@@ -4,7 +4,12 @@ const path = require('node:path')
 const test = require('node:test')
 
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'shop-api.json'), 'utf8'))
-const { GOODS_TYPES, collectAuthoritativeSnapshot } = require('./catalog-sync')
+const {
+  CLOSED_SHOP_RETRY_MILLISECONDS,
+  GOODS_TYPES,
+  collectAuthoritativeSnapshot,
+} = require('./catalog-sync')
+const { Semaphore } = require('./worker-utils')
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value))
@@ -41,7 +46,7 @@ test('collectAuthoritativeSnapshot uses goodsList totals and publishes one compl
     products: [{
       goods_key: 'available-card',
       name: 'Available card',
-      url: 'https://pay.ldxp.cn/item/available-card',
+      url: 'https://wzyp.cn/item/available-card',
       image: 'https://qn.ldxp.cn/example.png',
       category: 'Accounts',
       goods_type: 'card',
@@ -119,6 +124,25 @@ test('collectAuthoritativeSnapshot publishes an empty snapshot when the shop exp
   assert.deepEqual(calls, [{
     path: '/shopApi/Shop/info',
     body: { token: 'deleted-shop-token', category_key: null },
+  }])
+})
+
+test('collectAuthoritativeSnapshot defers a transaction-closed shop without publishing an empty snapshot', async () => {
+  const calls = []
+  await assert.rejects(async () => collectAuthoritativeSnapshot({
+    shopToken: 'closed-shop-token',
+    post: async (requestPath, body) => {
+      calls.push({ path: requestPath, body })
+      return { code: 0, msg: '商家已被关闭交易，有疑问请联系平台客服', data: null }
+    },
+  }), (error) => {
+    assert.equal(error.kind, 'shop_closed')
+    assert.equal(error.retryAfterMilliseconds, CLOSED_SHOP_RETRY_MILLISECONDS)
+    return true
+  })
+  assert.deepEqual(calls, [{
+    path: '/shopApi/Shop/info',
+    body: { token: 'closed-shop-token', category_key: null },
   }])
 })
 
@@ -274,4 +298,61 @@ test('collectAuthoritativeSnapshot rejects a list total that changes during pagi
       return { code: 1, data: { total: 100, list: [] } }
     },
   }), /count changed during synchronization/)
+})
+
+test('56-shop deterministic load covers 1596 source and 877 sellable products with two global quotes', async () => {
+  const shopCount = 56
+  const sourceTotal = 1596
+  const sellableTotal = 877
+  const baseAvailable = fixture.goodsList.data.list[0]
+  const baseUnavailable = fixture.goodsList.data.list[1]
+  const quoteSemaphore = new Semaphore(2)
+  let activeQuotes = 0
+  let maximumActiveQuotes = 0
+
+  const sourceCounts = Array.from({ length: shopCount }, (_, index) => (
+    Math.floor(sourceTotal / shopCount) + (index < sourceTotal % shopCount ? 1 : 0)
+  ))
+  const sellableCounts = Array.from({ length: shopCount }, (_, index) => (
+    Math.floor(sellableTotal / shopCount) + (index < sellableTotal % shopCount ? 1 : 0)
+  ))
+
+  const snapshots = await Promise.all(sourceCounts.map(async (sourceCount, shopIndex) => {
+    const sellableCount = sellableCounts[shopIndex]
+    const items = Array.from({ length: sourceCount }, (_, productIndex) => {
+      const available = productIndex < sellableCount
+      const goodsKey = `shop-${shopIndex}-goods-${productIndex}`
+      return {
+        ...clone(available ? baseAvailable : baseUnavailable),
+        goods_key: goodsKey,
+        link: `https://pay.ldxp.cn/item/${goodsKey}`,
+      }
+    })
+    return collectAuthoritativeSnapshot({
+      shopToken: `shop-${shopIndex}`,
+      quoteSemaphore,
+      post: async (requestPath, body) => {
+        if (requestPath.endsWith('/info')) return fixture.info
+        if (requestPath.endsWith('/goodsList')) {
+          if (body.goods_type !== 'card') return goodsListForType(body)
+          const offset = (body.current - 1) * body.pageSize
+          return { code: 1, data: { total: sourceCount, list: items.slice(offset, offset + body.pageSize) } }
+        }
+        if (requestPath.endsWith('/getUserChannel')) return fixture.channels
+        if (requestPath.endsWith('/getGoodsPrice')) {
+          activeQuotes += 1
+          maximumActiveQuotes = Math.max(maximumActiveQuotes, activeQuotes)
+          await new Promise((resolve) => setImmediate(resolve))
+          activeQuotes -= 1
+          return fixture.quote
+        }
+        throw new Error(`unexpected request ${requestPath}`)
+      },
+    })
+  }))
+
+  assert.equal(snapshots.reduce((sum, snapshot) => sum + snapshot.source_product_count, 0), sourceTotal)
+  assert.equal(snapshots.reduce((sum, snapshot) => sum + snapshot.sellable_product_count, 0), sellableTotal)
+  assert.equal(maximumActiveQuotes, 2)
+  assert.ok(snapshots.every((snapshot) => snapshot.source_product_count > 0))
 })

@@ -1,4 +1,5 @@
 import type { PublicAccountImportProduct } from '@/api/publicAccountImport'
+import { isPublicShopHostname } from '@/utils/publicShopProductSync'
 
 const productNameCollator = new Intl.Collator(undefined, { numeric: true })
 const inventorylessGoodsTypes = new Set(['article', 'resource', 'equity'])
@@ -180,7 +181,7 @@ export function selectLivePublicProductPaymentChannel(channels: any[]): any | nu
 export function publicProductGoodsKey(productURL: string): string {
   try {
     const parsed = new URL(productURL)
-    const match = parsed.hostname.toLocaleLowerCase() === 'pay.ldxp.cn'
+    const match = isPublicShopHostname(parsed.hostname)
       ? parsed.pathname.match(/^\/item\/([^/]+)\/?$/)
       : null
     return match ? decodeURIComponent(match[1]) : ''

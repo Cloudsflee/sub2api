@@ -41,7 +41,7 @@ func TestPublicAccountImportProductCacheIsFresh(t *testing.T) {
 
 func TestSupportedPublicAccountImportProductShopsFiltersNonProductLinks(t *testing.T) {
 	shops := []PublicAccountImportShop{
-		{ID: "supported", URL: "https://pay.ldxp.cn/shop/shop-token"},
+		{ID: "supported", URL: "https://wzyp.cn/shop/shop-token"},
 		{ID: "category", URL: "https://pay.ldxp.cn/shop/7HZ37ZCG/g47fr5"},
 		{ID: "other-host", URL: "https://example.com/shop/shop-token"},
 		{ID: "item", URL: "https://pay.ldxp.cn/item/goods-key"},
@@ -55,6 +55,9 @@ func TestSupportedPublicAccountImportProductShopsFiltersNonProductLinks(t *testi
 	token, err := publicAccountImportShopToken(shops[1].URL)
 	require.NoError(t, err)
 	require.Equal(t, "7HZ37ZCG", token)
+	token, err = publicAccountImportShopToken(shops[0].URL)
+	require.NoError(t, err)
+	require.Equal(t, "shop-token", token)
 }
 
 func TestPublicAccountImportProductSnapshotKeepsSoftStaleLegacyProducts(t *testing.T) {
@@ -102,6 +105,12 @@ func TestNormalizePublicProductSyncItemRequiresEnoughStockForMinimumQuantity(t *
 	require.Equal(t, 50, product.MinimumQuantity)
 	require.Equal(t, 50.0, *product.PayablePrice)
 	require.Equal(t, 1.0, *product.UnitPrice)
+	require.Equal(t, "https://wzyp.cn/item/goods", product.URL)
+
+	item.URL = "https://wzyp.cn/item/goods?legacy_query=removed#fragment"
+	product, err = normalizePublicProductSyncItem(shop, item, "2026-07-24T00:00:00Z")
+	require.NoError(t, err)
+	require.Equal(t, "https://wzyp.cn/item/goods", product.URL)
 
 	stock = 49
 	_, err = normalizePublicProductSyncItem(shop, item, "2026-07-24T00:00:00Z")
@@ -598,6 +607,7 @@ func TestPublicAccountImportProductSingleShopRefreshFlow(t *testing.T) {
 	require.Empty(t, completedCache.RefreshRequestedAt)
 	require.Empty(t, completedCache.Error)
 	require.Len(t, completedCache.Products, 1)
+	require.Equal(t, "https://wzyp.cn/item/new-product", completedCache.Products[0].URL)
 	publicProductCacheMu.Unlock()
 
 	cooldown := performPublicProductRequest(t, router, http.MethodPost, "/products/refresh", PublicAccountImportProductRefreshRequest{ShopID: "manual"})
@@ -616,6 +626,39 @@ func TestPublicAccountImportProductSingleShopRefreshFlow(t *testing.T) {
 	afterCooldownData := decodePublicProductResponse[PublicAccountImportProductRefreshResponse](t, afterCooldown.Body.Bytes())
 	require.True(t, afterCooldownData.Accepted)
 	require.Equal(t, "queued", afterCooldownData.State)
+}
+
+func TestPublicAccountImportProductFailureReportDefersClosedShopForOneHour(t *testing.T) {
+	now := time.Now().UTC()
+	shop := PublicAccountImportShop{ID: "closed", Name: "Closed", URL: "https://pay.ldxp.cn/shop/closed-token"}
+	cached := authoritativeProductCache(shop.ID, now.Add(-5*time.Minute), 1.25)
+	cached.LastAttempt = now.Format(time.RFC3339Nano)
+	cached.SyncStartedAt = now.Format(time.RFC3339Nano)
+	cached.SyncHeartbeatAt = now.Format(time.RFC3339Nano)
+	cached.SyncAttemptID = "closed-attempt"
+	router := newPublicProductTestRouter(t, []PublicAccountImportShop{shop}, publicAccountImportProductStore{
+		Version: publicAccountImportProductStoreVersion,
+		Shops:   map[string]publicAccountImportProductShopCache{shop.ID: cached},
+	})
+
+	result := performPublicProductRequest(t, router, http.MethodPost, "/products/sync-failure", PublicAccountImportProductSyncFailureRequest{
+		ShopID: shop.ID, AttemptID: cached.SyncAttemptID, Error: "shop transactions are closed",
+		Kind: "shop_closed",
+	})
+	require.Equal(t, http.StatusOK, result.Code, result.Body.String())
+
+	publicProductCacheMu.RLock()
+	failed := publicProductCache.Shops[shop.ID]
+	publicProductCacheMu.RUnlock()
+	require.Equal(t, "shop transactions are closed", failed.Error)
+	require.Len(t, failed.Products, 1)
+	require.Equal(t, cached.Products[0].ID, failed.Products[0].ID)
+	require.Empty(t, failed.SyncAttemptID)
+	retryAt := parsePublicAccountImportProductTimestamp(failed.RetryNotBeforeAt)
+	require.WithinDuration(t, now.Add(time.Hour), retryAt, 2*time.Second)
+	require.Empty(t, selectPublicAccountImportProductSyncShops([]PublicAccountImportShop{shop}, publicAccountImportProductStore{
+		Shops: map[string]publicAccountImportProductShopCache{shop.ID: failed},
+	}, now.Add(59*time.Minute), 1))
 }
 
 func TestPublicAccountImportProductSyncStatusAllowsExpiredRequestRetry(t *testing.T) {
@@ -767,6 +810,27 @@ func TestPublicAccountImportProductFailureRetryBoundariesByTrustLevel(t *testing
 			require.Equal(t, []PublicAccountImportShop{shop}, selectPublicAccountImportProductSyncShops([]PublicAccountImportShop{shop}, store, now, 1))
 		})
 	}
+}
+
+func TestPublicAccountImportProductFailureRetryNotBeforePreservesSnapshot(t *testing.T) {
+	t.Setenv(publicAccountImportProductStrictModeEnv, "true")
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	shop := PublicAccountImportShop{ID: "closed", TrustLevel: publicAccountImportShopTrusted}
+	cached := authoritativeProductCache(shop.ID, now.Add(-time.Hour), 1.25)
+	cached.Error = "shop transactions are closed"
+	cached.LastAttempt = now.Add(-time.Hour).Format(time.RFC3339Nano)
+	cached.RetryNotBeforeAt = now.Add(time.Hour).Format(time.RFC3339Nano)
+	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{shop.ID: cached}}
+
+	retryStatus := publicAccountImportProductSyncStatusForShop(shop, cached, now)
+	require.Equal(t, "failed", retryStatus.State)
+	require.Equal(t, 3600, retryStatus.RetryAfterSeconds)
+	require.Empty(t, selectPublicAccountImportProductSyncShops([]PublicAccountImportShop{shop}, store, now.Add(59*time.Minute+59*time.Second), 1))
+	require.Equal(t, []PublicAccountImportShop{shop}, selectPublicAccountImportProductSyncShops([]PublicAccountImportShop{shop}, store, now.Add(time.Hour), 1))
+
+	products, _, _, _, _, _ := publicAccountImportProductSnapshot([]PublicAccountImportShop{shop}, store, now)
+	require.Len(t, products, 1)
+	require.Equal(t, shop.ID+"-product", products[0].ID)
 }
 
 func TestPublicAccountImportProductManualRefreshCooldownBoundariesByTrustLevel(t *testing.T) {
@@ -1031,11 +1095,25 @@ func TestPublicAccountImportProductsExposeAnonymousWorkerLaneAvailability(t *tes
 	statusPath := filepath.Join(t.TempDir(), "status.json")
 	t.Setenv(publicAccountImportProductSyncStatusFileEnv, statusPath)
 	status := publicAccountImportProductSyncWorkerStatusFile{
-		State:           "degraded",
-		UpdatedAt:       now.Format(time.RFC3339Nano),
-		SyncConcurrency: 6,
+		State:                 "degraded",
+		UpdatedAt:             now.Format(time.RFC3339Nano),
+		SyncConcurrency:       6,
+		AdaptiveRatePerSecond: 0.75,
+		GlobalPressureState:   "silent",
+		GlobalPressureUntil:   now.Add(2 * time.Minute).Format(time.RFC3339Nano),
+		GlobalSilenceUntil:    now.Add(2 * time.Minute).Format(time.RFC3339Nano),
+		LastPressureKind:      "access_denied",
+		EgressCircuits: []PublicAccountImportProductSyncEgressCircuit{{
+			EgressID: "egress-one", CircuitOpenUntil: now.Add(10 * time.Minute).Format(time.RFC3339Nano),
+		}},
+		WAFResponseFingerprint: &PublicAccountImportProductSyncWAFResponseFingerprint{
+			ObservedAt: now.Format(time.RFC3339Nano), Status: http.StatusForbidden,
+			APIPath: "/shopApi/Shop/getGoodsPrice", Server: "Tengine token=server-secret",
+			XTengineError: "denied signature=secret", BodyLength: 431, BodySHA256: strings.Repeat("a", 64),
+			Title: "Access denied Cookie: session-secret", EgressID: "egress-one",
+		},
 		Lanes: []publicAccountImportProductSyncWorkerLaneStatusFile{
-			{Index: 0, State: "idle", ContextReady: true, UpdatedAt: now.Format(time.RFC3339Nano)},
+			{Index: 0, State: "idle", ContextReady: true, UpdatedAt: now.Format(time.RFC3339Nano), EgressID: "egress-one", CircuitOpenUntil: now.Add(10 * time.Minute).Format(time.RFC3339Nano)},
 			{Index: 1, State: "error", LastError: "shop API failed via http://user:secret@proxy.example:17892 VerifyCode=F001"},
 		},
 	}
@@ -1056,6 +1134,18 @@ func TestPublicAccountImportProductsExposeAnonymousWorkerLaneAvailability(t *tes
 	require.NotContains(t, result.Lanes[1].Reason, "secret")
 	require.Equal(t, "unavailable", result.Lanes[5].Availability)
 	require.Contains(t, result.Lanes[5].Reason, "lane 6")
+	require.Equal(t, 0.75, result.AdaptiveRatePerSecond)
+	require.Equal(t, "silent", result.GlobalPressureState)
+	require.Equal(t, "access_denied", result.LastPressureKind)
+	require.Len(t, result.EgressCircuits, 1)
+	require.Equal(t, "egress-one", result.Lanes[0].EgressID)
+	require.NotEmpty(t, result.Lanes[0].CircuitOpenUntil)
+	require.NotNil(t, result.WAFResponseFingerprint)
+	require.Equal(t, "/shopApi/Shop/getGoodsPrice", result.WAFResponseFingerprint.APIPath)
+	require.Equal(t, strings.Repeat("a", 64), result.WAFResponseFingerprint.BodySHA256)
+	require.NotContains(t, result.WAFResponseFingerprint.Server, "server-secret")
+	require.NotContains(t, result.WAFResponseFingerprint.XTengineError, "secret")
+	require.NotContains(t, result.WAFResponseFingerprint.Title, "session-secret")
 }
 
 func TestPublicAccountImportProductsMarkStaleWorkerStatusUnavailable(t *testing.T) {

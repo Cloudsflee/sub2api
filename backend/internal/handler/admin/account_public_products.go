@@ -53,9 +53,16 @@ const (
 	publicAccountImportProductSyncStatusMaxBody        = 1 << 20
 	publicAccountImportProductExpectedLaneCount        = 6
 	publicAccountImportProductSyncStatusStaleAge       = 2 * time.Minute
+	publicAccountImportProductFailureRetryMaxAge       = 60 * time.Minute
+	publicAccountImportProductCanonicalShopHostname    = "wzyp.cn"
+	publicAccountImportProductLegacyShopHostname       = "pay.ldxp.cn"
 )
 
 var publicAccountImportProductSyncStatusCredentialPattern = regexp.MustCompile(`(?i)\b(https?|socks5):\/\/[^\s/@]+(?::[^\s/@]*)?@`)
+var publicAccountImportProductSyncStatusHeaderSecretPattern = regexp.MustCompile(`(?i)\b(cookie|authorization|proxy-authorization)\s*[:=]\s*.*$`)
+var publicAccountImportProductSyncStatusSecretPattern = regexp.MustCompile(`(?i)\b(cookie|authorization|proxy-authorization|access_?token|token|api_?key|signature|sign|sig)\s*[:=]\s*[^\s,;]+`)
+var publicAccountImportProductEgressIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,64}$`)
+var publicAccountImportProductBodyHashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 type PublicAccountImportProduct struct {
 	ID              string   `json:"id"`
@@ -101,42 +108,77 @@ type PublicAccountImportProductSyncStatus struct {
 }
 
 type PublicAccountImportProductSyncWorkerLaneStatus struct {
-	Lane           int    `json:"lane"`
-	Availability   string `json:"availability"`
-	Reason         string `json:"reason,omitempty"`
-	State          string `json:"state"`
-	UpdatedAt      string `json:"updated_at,omitempty"`
-	RetryAt        string `json:"retry_at,omitempty"`
-	ChallengeState string `json:"challenge_state,omitempty"`
+	Lane             int    `json:"lane"`
+	Availability     string `json:"availability"`
+	Reason           string `json:"reason,omitempty"`
+	State            string `json:"state"`
+	UpdatedAt        string `json:"updated_at,omitempty"`
+	RetryAt          string `json:"retry_at,omitempty"`
+	ChallengeState   string `json:"challenge_state,omitempty"`
+	EgressID         string `json:"egress_id,omitempty"`
+	CircuitOpenUntil string `json:"egress_circuit_open_until,omitempty"`
+}
+
+type PublicAccountImportProductSyncEgressCircuit struct {
+	EgressID         string `json:"egress_id"`
+	CircuitOpenUntil string `json:"circuit_open_until"`
+}
+
+type PublicAccountImportProductSyncWAFResponseFingerprint struct {
+	ObservedAt    string `json:"observed_at"`
+	Status        int    `json:"status"`
+	APIPath       string `json:"api_path"`
+	Server        string `json:"server,omitempty"`
+	XTengineError string `json:"x_tengine_error,omitempty"`
+	BodyLength    int    `json:"body_length"`
+	BodySHA256    string `json:"body_sha256"`
+	Title         string `json:"title,omitempty"`
+	EgressID      string `json:"egress_id"`
 }
 
 type PublicAccountImportProductSyncWorkerStatus struct {
-	Availability         string                                           `json:"availability"`
-	Reason               string                                           `json:"reason,omitempty"`
-	UpdatedAt            string                                           `json:"updated_at,omitempty"`
-	ConfiguredLaneCount  int                                              `json:"configured_lane_count"`
-	ExpectedLaneCount    int                                              `json:"expected_lane_count"`
-	AvailableLaneCount   int                                              `json:"available_lane_count"`
-	UnavailableLaneCount int                                              `json:"unavailable_lane_count"`
-	Lanes                []PublicAccountImportProductSyncWorkerLaneStatus `json:"lanes"`
+	Availability           string                                                `json:"availability"`
+	Reason                 string                                                `json:"reason,omitempty"`
+	UpdatedAt              string                                                `json:"updated_at,omitempty"`
+	ConfiguredLaneCount    int                                                   `json:"configured_lane_count"`
+	ExpectedLaneCount      int                                                   `json:"expected_lane_count"`
+	AvailableLaneCount     int                                                   `json:"available_lane_count"`
+	UnavailableLaneCount   int                                                   `json:"unavailable_lane_count"`
+	AdaptiveRatePerSecond  float64                                               `json:"adaptive_rate_per_second"`
+	GlobalPressureState    string                                                `json:"global_pressure_state"`
+	GlobalPressureUntil    string                                                `json:"global_pressure_until,omitempty"`
+	GlobalSilenceUntil     string                                                `json:"global_silence_until,omitempty"`
+	LastPressureKind       string                                                `json:"last_pressure_kind,omitempty"`
+	EgressCircuits         []PublicAccountImportProductSyncEgressCircuit         `json:"egress_circuits"`
+	WAFResponseFingerprint *PublicAccountImportProductSyncWAFResponseFingerprint `json:"waf_response_fingerprint,omitempty"`
+	Lanes                  []PublicAccountImportProductSyncWorkerLaneStatus      `json:"lanes"`
 }
 
 type publicAccountImportProductSyncWorkerStatusFile struct {
-	State           string                                               `json:"state"`
-	UpdatedAt       string                                               `json:"updated_at"`
-	SyncConcurrency int                                                  `json:"sync_concurrency"`
-	LastError       string                                               `json:"last_error"`
-	Lanes           []publicAccountImportProductSyncWorkerLaneStatusFile `json:"lanes"`
+	State                  string                                                `json:"state"`
+	UpdatedAt              string                                                `json:"updated_at"`
+	SyncConcurrency        int                                                   `json:"sync_concurrency"`
+	LastError              string                                                `json:"last_error"`
+	AdaptiveRatePerSecond  float64                                               `json:"adaptive_rate_per_second"`
+	GlobalPressureState    string                                                `json:"global_pressure_state"`
+	GlobalPressureUntil    string                                                `json:"global_pressure_until"`
+	GlobalSilenceUntil     string                                                `json:"global_silence_until"`
+	LastPressureKind       string                                                `json:"last_pressure_kind"`
+	EgressCircuits         []PublicAccountImportProductSyncEgressCircuit         `json:"egress_circuits"`
+	WAFResponseFingerprint *PublicAccountImportProductSyncWAFResponseFingerprint `json:"waf_response_fingerprint"`
+	Lanes                  []publicAccountImportProductSyncWorkerLaneStatusFile  `json:"lanes"`
 }
 
 type publicAccountImportProductSyncWorkerLaneStatusFile struct {
-	Index          int    `json:"index"`
-	State          string `json:"state"`
-	ContextReady   bool   `json:"context_ready"`
-	UpdatedAt      string `json:"updated_at"`
-	RetryAt        string `json:"retry_at"`
-	LastError      string `json:"last_error"`
-	ChallengeState string `json:"challenge_state"`
+	Index            int    `json:"index"`
+	State            string `json:"state"`
+	ContextReady     bool   `json:"context_ready"`
+	UpdatedAt        string `json:"updated_at"`
+	RetryAt          string `json:"retry_at"`
+	LastError        string `json:"last_error"`
+	ChallengeState   string `json:"challenge_state"`
+	EgressID         string `json:"egress_id"`
+	CircuitOpenUntil string `json:"egress_circuit_open_until"`
 }
 
 type PublicAccountImportProductRefreshRequest struct {
@@ -193,9 +235,11 @@ type PublicAccountImportProductSyncRequest struct {
 }
 
 type PublicAccountImportProductSyncFailureRequest struct {
-	ShopID    string `json:"shop_id"`
-	AttemptID string `json:"attempt_id"`
-	Error     string `json:"error"`
+	ShopID            string `json:"shop_id"`
+	AttemptID         string `json:"attempt_id"`
+	Error             string `json:"error"`
+	Kind              string `json:"kind"`
+	RetryAfterSeconds int    `json:"retry_after_seconds"`
 }
 
 type PublicAccountImportProductSyncHeartbeatRequest struct {
@@ -217,6 +261,7 @@ type publicAccountImportProductShopCache struct {
 	RefreshRequestedAt       string                       `json:"refresh_requested_at,omitempty"`
 	ManualRefreshCompletedAt string                       `json:"manual_refresh_completed_at,omitempty"`
 	Error                    string                       `json:"error,omitempty"`
+	RetryNotBeforeAt         string                       `json:"retry_not_before_at,omitempty"`
 	Products                 []PublicAccountImportProduct `json:"products"`
 }
 
@@ -325,6 +370,7 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 			continue
 		}
 		cached.Error = ""
+		cached.RetryNotBeforeAt = ""
 		cached.SyncStartedAt = cached.LastAttempt
 		cached.SyncHeartbeatAt = cached.LastAttempt
 		cached.SyncAttemptID = publicAccountImportProductSyncAttemptID(shop.ID, now)
@@ -518,6 +564,7 @@ func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
 	cached.SellableProductCount = *req.SellableProductCount
 	cached.UnavailableProductCount = *req.UnavailableProductCount
 	cached.Error = ""
+	cached.RetryNotBeforeAt = ""
 	cached.SyncStartedAt = ""
 	cached.SyncHeartbeatAt = ""
 	cached.SyncAttemptID = ""
@@ -554,6 +601,7 @@ func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 	}
 	req.ShopID = strings.TrimSpace(req.ShopID)
 	req.AttemptID = strings.TrimSpace(req.AttemptID)
+	req.Kind = strings.TrimSpace(req.Kind)
 	if req.ShopID == "" || req.AttemptID == "" {
 		response.BadRequest(c, "Product sync shop and attempt are required")
 		return
@@ -570,7 +618,16 @@ func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 		response.Success(c, gin.H{"accepted": false})
 		return
 	}
+	now := time.Now().UTC()
+	retryAfterSeconds := min(max(req.RetryAfterSeconds, 0), int(publicAccountImportProductFailureRetryMaxAge.Seconds()))
+	if req.Kind == "shop_closed" {
+		retryAfterSeconds = int(publicAccountImportProductFailureRetryMaxAge.Seconds())
+	}
 	cached.Error = publicAccountImportProductSyncError(req.Error)
+	cached.RetryNotBeforeAt = ""
+	if retryAfterSeconds > 0 {
+		cached.RetryNotBeforeAt = now.Add(time.Duration(retryAfterSeconds) * time.Second).Format(time.RFC3339Nano)
+	}
 	cached.SyncStartedAt = ""
 	cached.SyncHeartbeatAt = ""
 	cached.SyncAttemptID = ""
@@ -688,7 +745,8 @@ func normalizePublicProductSyncItem(shop PublicAccountImportShop, item PublicAcc
 		return PublicAccountImportProduct{}, errors.New("quote verification timestamp is invalid")
 	}
 	productURL, err := url.Parse(strings.TrimSpace(item.URL))
-	if err != nil || productURL.Scheme != "https" || !strings.EqualFold(productURL.Hostname(), "pay.ldxp.cn") {
+	if err != nil || productURL.Scheme != "https" || productURL.User != nil ||
+		!publicAccountImportProductShopHostnameSupported(productURL.Hostname()) {
 		return PublicAccountImportProduct{}, errors.New("product URL is invalid")
 	}
 	pathParts := strings.Split(strings.Trim(productURL.EscapedPath(), "/"), "/")
@@ -699,10 +757,14 @@ func normalizePublicProductSyncItem(shop PublicAccountImportShop, item PublicAcc
 	if err != nil || pathGoodsKey != item.GoodsKey {
 		return PublicAccountImportProduct{}, errors.New("product URL does not match its goods key")
 	}
+	productURL.Host = publicAccountImportProductCanonicalShopHostname
+	productURL.RawQuery = ""
+	productURL.Fragment = ""
+	productURL.RawFragment = ""
 	image := strings.TrimSpace(item.Image)
 	if image != "" {
 		imageURL, err := url.Parse(image)
-		allowedImageHost := err == nil && imageURL.Scheme == "https" && (strings.EqualFold(imageURL.Hostname(), "qn.ldxp.cn") || strings.EqualFold(imageURL.Hostname(), "www.ldxp.cn") || strings.EqualFold(imageURL.Hostname(), "pay.ldxp.cn"))
+		allowedImageHost := err == nil && imageURL.Scheme == "https" && (strings.EqualFold(imageURL.Hostname(), "qn.ldxp.cn") || strings.EqualFold(imageURL.Hostname(), "www.ldxp.cn") || publicAccountImportProductShopHostnameSupported(imageURL.Hostname()))
 		if !allowedImageHost {
 			image = ""
 		}
@@ -850,6 +912,9 @@ func publicAccountImportProductSnapshotState(shop PublicAccountImportShop, cache
 	if now.Sub(updatedAt) <= publicAccountImportProductRefreshAgeForShop(shop) {
 		return "fresh"
 	}
+	if publicAccountImportProductFailureRetryAfter(cached, now) > 0 {
+		return "stale"
+	}
 	if strictMode && now.Sub(updatedAt) > publicAccountImportProductMaxCacheAgeForShop(shop) {
 		return "expired"
 	}
@@ -992,6 +1057,9 @@ func selectPublicAccountImportProductSyncShops(shops []PublicAccountImportShop, 
 	for i := range shops {
 		cached := store.Shops[shops[i].ID]
 		if publicAccountImportProductSyncIsActive(cached, now) {
+			continue
+		}
+		if publicAccountImportProductFailureRetryAfter(cached, now) > 0 {
 			continue
 		}
 		manual := publicAccountImportProductRefreshIsPending(cached, now)
@@ -1183,7 +1251,7 @@ func publicAccountImportProductSyncWorkerStatus(now time.Time) PublicAccountImpo
 			})
 			continue
 		}
-		lanes = append(lanes, publicAccountImportProductSyncWorkerLaneStatus(reportedLanes[index], index+1))
+		lanes = append(lanes, publicAccountImportProductSyncWorkerLaneStatus(reportedLanes[index], index+1, now))
 	}
 
 	availableCount := 0
@@ -1194,13 +1262,20 @@ func publicAccountImportProductSyncWorkerStatus(now time.Time) PublicAccountImpo
 	}
 	unavailableCount := len(lanes) - availableCount
 	status := PublicAccountImportProductSyncWorkerStatus{
-		Availability:         "available",
-		UpdatedAt:            file.UpdatedAt,
-		ConfiguredLaneCount:  configuredLaneCount,
-		ExpectedLaneCount:    publicAccountImportProductExpectedLaneCount,
-		AvailableLaneCount:   availableCount,
-		UnavailableLaneCount: unavailableCount,
-		Lanes:                lanes,
+		Availability:           "available",
+		UpdatedAt:              file.UpdatedAt,
+		ConfiguredLaneCount:    configuredLaneCount,
+		ExpectedLaneCount:      publicAccountImportProductExpectedLaneCount,
+		AvailableLaneCount:     availableCount,
+		UnavailableLaneCount:   unavailableCount,
+		AdaptiveRatePerSecond:  sanitizePublicAccountImportProductAdaptiveRate(file.AdaptiveRatePerSecond),
+		GlobalPressureState:    sanitizePublicAccountImportProductPressureState(file.GlobalPressureState),
+		GlobalPressureUntil:    sanitizePublicAccountImportProductFutureTimestamp(file.GlobalPressureUntil, now),
+		GlobalSilenceUntil:     sanitizePublicAccountImportProductFutureTimestamp(file.GlobalSilenceUntil, now),
+		LastPressureKind:       sanitizePublicAccountImportProductPressureKind(file.LastPressureKind),
+		EgressCircuits:         sanitizePublicAccountImportProductEgressCircuits(file.EgressCircuits, now),
+		WAFResponseFingerprint: sanitizePublicAccountImportProductWAFResponseFingerprint(file.WAFResponseFingerprint, now),
+		Lanes:                  lanes,
 	}
 	if unavailableCount > 0 {
 		status.Availability = "unavailable"
@@ -1230,14 +1305,17 @@ func publicAccountImportProductSyncWorkerStatus(now time.Time) PublicAccountImpo
 func publicAccountImportProductSyncWorkerLaneStatus(
 	lane publicAccountImportProductSyncWorkerLaneStatusFile,
 	position int,
+	now time.Time,
 ) PublicAccountImportProductSyncWorkerLaneStatus {
 	status := PublicAccountImportProductSyncWorkerLaneStatus{
-		Lane:           position,
-		Availability:   "unavailable",
-		State:          strings.TrimSpace(lane.State),
-		UpdatedAt:      strings.TrimSpace(lane.UpdatedAt),
-		RetryAt:        strings.TrimSpace(lane.RetryAt),
-		ChallengeState: strings.TrimSpace(lane.ChallengeState),
+		Lane:             position,
+		Availability:     "unavailable",
+		State:            strings.TrimSpace(lane.State),
+		UpdatedAt:        strings.TrimSpace(lane.UpdatedAt),
+		RetryAt:          strings.TrimSpace(lane.RetryAt),
+		ChallengeState:   strings.TrimSpace(lane.ChallengeState),
+		EgressID:         sanitizePublicAccountImportProductEgressID(lane.EgressID),
+		CircuitOpenUntil: sanitizePublicAccountImportProductFutureTimestamp(lane.CircuitOpenUntil, now),
 	}
 	if status.State == "" {
 		status.State = "unknown"
@@ -1304,11 +1382,116 @@ func sanitizePublicAccountImportProductSyncWorkerReason(value string) string {
 		return ""
 	}
 	value = publicAccountImportProductSyncStatusCredentialPattern.ReplaceAllString(value, "$1://***@")
+	value = publicAccountImportProductSyncStatusHeaderSecretPattern.ReplaceAllString(value, "$1=***")
+	value = publicAccountImportProductSyncStatusSecretPattern.ReplaceAllString(value, "$1=***")
 	runes := []rune(value)
 	if len(runes) > 240 {
 		return string(runes[:240])
 	}
 	return value
+}
+
+func truncatePublicAccountImportProductStatusValue(value string, maximum int) string {
+	runes := []rune(value)
+	if len(runes) > maximum {
+		runes = runes[:maximum]
+	}
+	return string(runes)
+}
+
+func sanitizePublicAccountImportProductAdaptiveRate(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0.1 || value > 10 {
+		return 0
+	}
+	return math.Round(value*100) / 100
+}
+
+func sanitizePublicAccountImportProductPressureState(value string) string {
+	value = strings.TrimSpace(value)
+	if slices.Contains([]string{"clear", "pressured", "recovering", "silent"}, value) {
+		return value
+	}
+	return "unknown"
+}
+
+func sanitizePublicAccountImportProductPressureKind(value string) string {
+	value = strings.TrimSpace(value)
+	if slices.Contains([]string{"", "access_denied", "rate_limit"}, value) {
+		return value
+	}
+	return ""
+}
+
+func sanitizePublicAccountImportProductEgressID(value string) string {
+	value = strings.TrimSpace(value)
+	if publicAccountImportProductEgressIDPattern.MatchString(value) {
+		return value
+	}
+	return ""
+}
+
+func sanitizePublicAccountImportProductFutureTimestamp(value string, now time.Time) string {
+	parsed := parsePublicAccountImportProductTimestamp(value)
+	if parsed.IsZero() || parsed.Before(now.Add(-time.Minute)) || parsed.After(now.Add(24*time.Hour)) {
+		return ""
+	}
+	return parsed.UTC().Format(time.RFC3339Nano)
+}
+
+func sanitizePublicAccountImportProductEgressCircuits(
+	values []PublicAccountImportProductSyncEgressCircuit,
+	now time.Time,
+) []PublicAccountImportProductSyncEgressCircuit {
+	result := make([]PublicAccountImportProductSyncEgressCircuit, 0, min(len(values), 12))
+	seen := make(map[string]struct{}, min(len(values), 12))
+	for _, value := range values {
+		egressID := sanitizePublicAccountImportProductEgressID(value.EgressID)
+		until := sanitizePublicAccountImportProductFutureTimestamp(value.CircuitOpenUntil, now)
+		if egressID == "" || until == "" {
+			continue
+		}
+		if _, ok := seen[egressID]; ok {
+			continue
+		}
+		seen[egressID] = struct{}{}
+		result = append(result, PublicAccountImportProductSyncEgressCircuit{EgressID: egressID, CircuitOpenUntil: until})
+		if len(result) == 12 {
+			break
+		}
+	}
+	return result
+}
+
+func sanitizePublicAccountImportProductWAFResponseFingerprint(
+	value *PublicAccountImportProductSyncWAFResponseFingerprint,
+	now time.Time,
+) *PublicAccountImportProductSyncWAFResponseFingerprint {
+	if value == nil || value.Status != http.StatusForbidden || value.BodyLength < 0 || value.BodyLength > 16<<20 {
+		return nil
+	}
+	observedAt := parsePublicAccountImportProductTimestamp(value.ObservedAt)
+	egressID := sanitizePublicAccountImportProductEgressID(value.EgressID)
+	bodyHash := strings.ToLower(strings.TrimSpace(value.BodySHA256))
+	apiPath := strings.TrimSpace(value.APIPath)
+	if observedAt.IsZero() || observedAt.After(now.Add(time.Minute)) || now.Sub(observedAt) > 24*time.Hour ||
+		egressID == "" || !publicAccountImportProductBodyHashPattern.MatchString(bodyHash) ||
+		!strings.HasPrefix(apiPath, "/") || strings.ContainsAny(apiPath, "?#") {
+		return nil
+	}
+	server := sanitizePublicAccountImportProductSyncWorkerReason(value.Server)
+	tengineError := sanitizePublicAccountImportProductSyncWorkerReason(value.XTengineError)
+	title := sanitizePublicAccountImportProductSyncWorkerReason(value.Title)
+	return &PublicAccountImportProductSyncWAFResponseFingerprint{
+		ObservedAt:    observedAt.UTC().Format(time.RFC3339Nano),
+		Status:        http.StatusForbidden,
+		APIPath:       truncatePublicAccountImportProductStatusValue(apiPath, 160),
+		Server:        truncatePublicAccountImportProductStatusValue(server, 120),
+		XTengineError: truncatePublicAccountImportProductStatusValue(tengineError, 160),
+		BodyLength:    value.BodyLength,
+		BodySHA256:    bodyHash,
+		Title:         truncatePublicAccountImportProductStatusValue(title, 160),
+		EgressID:      egressID,
+	}
 }
 
 func unavailablePublicAccountImportProductSyncWorkerStatus(reason string) PublicAccountImportProductSyncWorkerStatus {
@@ -1343,7 +1526,11 @@ func publicAccountImportProductSyncStatusForShop(shop PublicAccountImportShop, c
 	snapshotState := publicAccountImportProductSnapshotState(shop, cached, now, publicAccountImportProductStrictMode())
 	expiresAt := ""
 	if updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt); !updatedAt.IsZero() {
-		expiresAt = updatedAt.Add(publicAccountImportProductMaxCacheAgeForShop(shop)).Format(time.RFC3339Nano)
+		expiresAtValue := updatedAt.Add(publicAccountImportProductMaxCacheAgeForShop(shop))
+		if retryAt := parsePublicAccountImportProductTimestamp(cached.RetryNotBeforeAt); retryAt.After(expiresAtValue) {
+			expiresAtValue = retryAt
+		}
+		expiresAt = expiresAtValue.Format(time.RFC3339Nano)
 	}
 	return PublicAccountImportProductSyncStatus{
 		ShopID: shop.ID, State: state, UpdatedAt: cached.UpdatedAt,
@@ -1353,6 +1540,7 @@ func publicAccountImportProductSyncStatusForShop(shop PublicAccountImportShop, c
 }
 
 func publicAccountImportProductRefreshRetryAfter(shop PublicAccountImportShop, cached publicAccountImportProductShopCache, now time.Time) int {
+	failureRetryAfter := publicAccountImportProductFailureRetryAfter(cached, now)
 	completedAt := parsePublicAccountImportProductTimestamp(cached.ManualRefreshCompletedAt)
 	if normalizePublicAccountImportShopTrustLevel(shop.TrustLevel) == publicAccountImportShopUntrusted {
 		updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt)
@@ -1361,9 +1549,21 @@ func publicAccountImportProductRefreshRetryAfter(shop PublicAccountImportShop, c
 		}
 	}
 	if completedAt.IsZero() || completedAt.After(now) {
-		return 0
+		return failureRetryAfter
 	}
 	remaining := completedAt.Add(publicAccountImportProductRefreshCooldownForShop(shop)).Sub(now)
+	if remaining <= 0 {
+		return failureRetryAfter
+	}
+	return max(failureRetryAfter, int((remaining+time.Second-1)/time.Second))
+}
+
+func publicAccountImportProductFailureRetryAfter(cached publicAccountImportProductShopCache, now time.Time) int {
+	retryAt := parsePublicAccountImportProductTimestamp(cached.RetryNotBeforeAt)
+	if retryAt.IsZero() || retryAt.After(now.Add(publicAccountImportProductFailureRetryMaxAge+time.Minute)) {
+		return 0
+	}
+	remaining := retryAt.Sub(now)
 	if remaining <= 0 {
 		return 0
 	}
@@ -1458,26 +1658,31 @@ func publicAccountImportProductSyncStatusPath() string {
 
 func publicAccountImportShopToken(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Hostname(), "pay.ldxp.cn") {
-		return "", errors.New("product sync supports pay.ldxp.cn shop links only")
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || !publicAccountImportProductShopHostnameSupported(parsed.Hostname()) {
+		return "", errors.New("product sync supports wzyp.cn and legacy pay.ldxp.cn shop links only")
 	}
 	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
 	if (len(parts) != 2 && len(parts) != 3) || parts[0] != "shop" {
-		return "", errors.New("invalid pay.ldxp.cn shop link")
+		return "", errors.New("invalid supported shop link")
 	}
 	token, err := url.PathUnescape(parts[1])
 	token = strings.TrimSpace(token)
 	if err != nil || token == "" || strings.Contains(token, "/") {
-		return "", errors.New("invalid pay.ldxp.cn shop link")
+		return "", errors.New("invalid supported shop link")
 	}
 	if len(parts) == 3 {
 		categoryKey, err := url.PathUnescape(parts[2])
 		categoryKey = strings.TrimSpace(categoryKey)
 		if err != nil || categoryKey == "" || strings.Contains(categoryKey, "/") {
-			return "", errors.New("invalid pay.ldxp.cn shop link")
+			return "", errors.New("invalid supported shop link")
 		}
 	}
 	return token, nil
+}
+
+func publicAccountImportProductShopHostnameSupported(hostname string) bool {
+	return strings.EqualFold(hostname, publicAccountImportProductCanonicalShopHostname) ||
+		strings.EqualFold(hostname, publicAccountImportProductLegacyShopHostname)
 }
 
 func publicAccountImportProductID(shopID, goodsKey string) string {

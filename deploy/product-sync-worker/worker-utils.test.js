@@ -9,6 +9,7 @@ const workloadFixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixture
 const {
   JobLeaseLostError,
   ShopSyncError,
+  Semaphore,
   TokenBucket,
   browserFingerprintSeed,
   browserProfileProcessInfo,
@@ -19,6 +20,7 @@ const {
   closeContextThenCreate,
   createJobHeartbeat,
   initializeProxyPool,
+  isEgressTransportFailure,
   isPressureError,
   normalizeCatalogProductURL,
   parseBoolean,
@@ -36,6 +38,7 @@ const {
   redactURLCredentials,
   selectPaymentChannel,
   shopRequestError,
+  shopClosedForTransactionsMessage,
   shopUnavailableMessage,
   simulatedTokenBucketDuration,
   takeRequestTokens,
@@ -62,14 +65,15 @@ test('catalogProductState validates status, stock, and minimum quantity from rea
   assert.equal(catalogProductState({ ...available, price: '' }, 'card').state, 'unknown')
 })
 
-test('catalog product URLs from the exact ESA callback origin are canonicalized to the shop origin', () => {
+test('catalog product URLs from either trusted origin are canonicalized to wzyp.cn', () => {
   const available = fixture.goodsList.data.list[0]
   const callbackURL = available.link.replace('https://pay.ldxp.cn', 'https://wzyp.cn')
   const state = catalogProductState({ ...available, link: `${callbackURL}?u_atoken=opaque#fragment` }, 'card')
 
   assert.equal(state.state, 'candidate')
-  assert.equal(state.product.url, available.link)
-  assert.equal(normalizeCatalogProductURL(callbackURL, available.goods_key), available.link)
+  assert.equal(state.product.url, callbackURL)
+  assert.equal(normalizeCatalogProductURL(available.link, available.goods_key), callbackURL)
+  assert.equal(normalizeCatalogProductURL(callbackURL, available.goods_key), callbackURL)
   assert.equal(normalizeCatalogProductURL(
     callbackURL.replace('/item/', '/other/'),
     available.goods_key
@@ -116,6 +120,13 @@ test('shopUnavailableMessage accepts only explicit permanent shop failures', () 
   assert.equal(shopUnavailableMessage('This shop does not exist'), true)
   assert.equal(shopUnavailableMessage('店铺接口请求失败'), false)
   assert.equal(shopUnavailableMessage('系统繁忙，请稍后重试'), false)
+})
+
+test('transaction-closed shop detection is separate from permanent shop deletion', () => {
+  assert.equal(shopClosedForTransactionsMessage('商家已被关闭交易，有疑问请联系平台客服'), true)
+  assert.equal(shopClosedForTransactionsMessage('shop transactions are disabled'), true)
+  assert.equal(shopClosedForTransactionsMessage('店铺链接不存在'), false)
+  assert.equal(shopUnavailableMessage('商家已被关闭交易，有疑问请联系平台客服'), false)
 })
 
 test('parseShopHTTPResponse separates verification pages from HTTP 429/502/520 pressure errors', () => {
@@ -219,6 +230,23 @@ test('parseShopHTTPResponse separates verification pages from HTTP 429/502/520 p
   ))
 })
 
+test('parseShopHTTPResponse preserves Retry-After on JSON and non-JSON 429 responses', () => {
+  for (const contentType of ['application/json', 'text/html']) {
+    assert.throws(() => parseShopHTTPResponse({
+      status: 429,
+      contentType,
+      retryAfter: '12.5',
+      payload: contentType === 'application/json' ? { error: 'limited' } : null,
+      text: contentType === 'application/json' ? '{}' : 'busy',
+    }), (error) => (
+      error.kind === 'rate_limit'
+      && error.retryAfter === '12.5'
+      && error.retryAfterMilliseconds === 12_500
+      && error.retryAfterValid === true
+    ))
+  }
+})
+
 test('parseShopHTTPResponse turns a browser body timeout into pressure without restarting the lane', () => {
   assert.throws(() => parseShopHTTPResponse({
     browserTimeout: true,
@@ -253,6 +281,19 @@ test('shopRequestError classifies browser transport failures as pressure errors'
   const applicationError = shopRequestError('/shopApi/Shop/goodsList', new Error('catalog item validation failed'))
   assert.equal(applicationError.kind, 'unknown')
   assert.equal(isPressureError(applicationError), false)
+})
+
+test('TLS and connection timeouts are isolated egress transport failures', () => {
+  for (const message of [
+    'apiRequestContext.fetch: Client network socket disconnected before secure TLS connection was established',
+    'apiRequestContext.fetch: Timeout 20000ms exceeded',
+    'connect ETIMEDOUT 203.0.113.1:443',
+  ]) {
+    const error = shopRequestError('/shopApi/Shop/getGoodsPrice', new Error(message))
+    assert.equal(error.kind, 'network')
+    assert.equal(isEgressTransportFailure(error), true)
+  }
+  assert.equal(isEgressTransportFailure(new ShopSyncError('network', 'shop API returned HTTP 502')), false)
 })
 
 test('waitForPromiseOrAbort consumes a late rejection when the signal is already aborted', async () => {
@@ -398,6 +439,19 @@ test('requests take the lane token before the shared global token', async () => 
     { take: async () => calls.push('global') }
   )
   assert.deepEqual(calls, ['lane', 'global'])
+})
+
+test('queued semaphore work is cancelled without consuming the released slot', async () => {
+  const semaphore = new Semaphore(1)
+  await semaphore.acquire()
+  const controller = new AbortController()
+  const queued = semaphore.acquire(controller.signal)
+  controller.abort(new Error('lease lost'))
+  await assert.rejects(queued, /lease lost/)
+  semaphore.release()
+  assert.equal(semaphore.active, 0)
+  await semaphore.run(async () => {})
+  assert.equal(semaphore.active, 0)
 })
 
 test('six-lane 53-shop workload completes between 20 and 21 minutes without pressure', () => {
@@ -722,6 +776,9 @@ test('worker health requires a fresh status and at least one ready browser lane'
   const healthy = {
     state: 'degraded',
     updated_at: '2026-07-30T09:59:30Z',
+    adaptive_rate_per_second: 1.5,
+    global_pressure_state: 'clear',
+    quote_concurrency_global: 2,
     browser_context_count: 5,
     browser_page_count: 5,
     lanes: [
@@ -733,6 +790,9 @@ test('worker health requires a fresh status and at least one ready browser lane'
   assert.equal(workerStatusIsHealthy({ ...healthy, state: 'error' }, now), false)
   assert.equal(workerStatusIsHealthy({ ...healthy, browser_context_count: 0 }, now), false)
   assert.equal(workerStatusIsHealthy({ ...healthy, updated_at: '2026-07-30T09:57:00Z' }, now), false)
+  assert.equal(workerStatusIsHealthy({ ...healthy, adaptive_rate_per_second: 2.1 }, now), false)
+  assert.equal(workerStatusIsHealthy({ ...healthy, global_pressure_state: 'unknown' }, now), false)
+  assert.equal(workerStatusIsHealthy({ ...healthy, quote_concurrency_global: 3 }, now), false)
   assert.equal(workerStatusIsHealthy({ ...healthy, lanes: [{ state: 'restarting', context_ready: false }] }, now), false)
 })
 
@@ -742,6 +802,9 @@ test('worker health accepts active challenge recovery and intentional challenge 
     state: 'starting',
     challenge_auto_solve_enabled: true,
     updated_at: '2026-07-30T09:59:30Z',
+    adaptive_rate_per_second: 0.5,
+    global_pressure_state: 'silent',
+    quote_concurrency_global: 2,
     browser_context_count: 0,
     browser_page_count: 0,
   }
