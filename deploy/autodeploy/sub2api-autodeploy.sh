@@ -377,6 +377,7 @@ prepare_release_worktree() {
 
 check_migration_compatibility() {
   local baseline=$1 target=$2 status path previous_path normalized remaining failed=0
+  local reviewed_hash actual_hash
 
   if [[ -z "$baseline" ]]; then
     log "migration gate cannot determine the deployed commit"
@@ -395,6 +396,33 @@ check_migration_compatibility() {
     [[ -n "$status" ]] || continue
     if [[ "$status" != A ]]; then
       log "migration gate rejected modified existing migration: $status $path${previous_path:+ -> $previous_path}"
+      failed=1
+      continue
+    fi
+
+    # v0.2.4 ships four reviewed, idempotent repair/constraint migrations.
+    # Their SQL intentionally contains guarded RENAME/DROP operations inside
+    # DO blocks, which the generic lexical gate cannot prove safe. Pin the
+    # exact reviewed contents instead of weakening the destructive-operation
+    # rule globally; any edit to one of these files falls back to rejection.
+    reviewed_hash=''
+    case "$path" in
+      backend/migrations/235_group_model_allowlist.sql)
+        reviewed_hash=4959c4e24a504d0d8fa1345137c1a3715adc6572477dec7a318cf453b4321f9d ;;
+      backend/migrations/236_group_model_allowlist_repair.sql)
+        reviewed_hash=752809cf1d3812ce241606ba8b015dac48bd6c04ab1cde9ef204d138cffb1025 ;;
+      backend/migrations/237_add_minimax_platform.sql)
+        reviewed_hash=9bf4623f1f82f7b18f8ebc25f7205be6eebd5ed221e4c4be94b531131e479b64 ;;
+      backend/migrations/238_opencode_go_platform.sql)
+        reviewed_hash=35ce9b168aef3fdf29ac1ab02041abf6ce568d41b9dc18f32924d6fde67cb093 ;;
+    esac
+    if [[ -n "$reviewed_hash" ]]; then
+      actual_hash=$(git -C "$REPO_DIR" show "$target:$path" | sha256sum | awk '{print $1}')
+      if [[ "$actual_hash" == "$reviewed_hash" ]]; then
+        log "migration gate accepted reviewed v0.2.4 migration: $path"
+        continue
+      fi
+      log "migration gate rejected modified reviewed migration: $path"
       failed=1
       continue
     fi
@@ -967,7 +995,7 @@ case "$MODE" in
   *) die "usage: $PROGRAM [--deploy|--force|--check|--build-only|--status|--rollback|--switch-same-image]" ;;
 esac
 
-for command_name in git docker curl flock awk grep systemctl ss; do
+for command_name in git docker curl flock awk grep systemctl ss sha256sum; do
   require_command "$command_name"
 done
 
