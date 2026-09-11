@@ -7,6 +7,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/utils/__tests__/versionDisplay.spec.ts \
 	src/components/common/__tests__/VersionBadge.spec.ts \
 	src/stores/__tests__/app.spec.ts \
+	src/i18n/__tests__/localeKeyCompleteness.spec.ts \
 	src/api/__tests__/client.spec.ts \
 	src/api/__tests__/tokenRefresh.spec.ts \
 	src/api/__tests__/channelMonitorV2.spec.ts \

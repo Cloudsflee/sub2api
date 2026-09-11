@@ -33,7 +33,7 @@ vi.mock('@/api/admin', () => ({
       delete: vi.fn(),
       duplicate: vi.fn(),
       updateSortOrder: vi.fn(),
-      getModelsListCandidates,
+      getModelAllowlistCandidates: getModelsListCandidates,
       getUsageSummary,
       getCapacitySummary,
       getLiveCapability,
@@ -47,6 +47,10 @@ vi.mock('@/api/admin', () => ({
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({ showSuccess: vi.fn(), showError: vi.fn() }),
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ isSimpleMode: false }),
 }))
 
 vi.mock('@/stores/onboarding', () => ({

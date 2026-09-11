@@ -195,6 +195,7 @@ func (h *GrokOAuthHandler) scheduleGrokImportProbe(account *service.Account) {
 // ProvideAccountHandler injects the Grok active prober for production while
 // keeping NewAccountHandler convenient for focused unit tests.
 func ProvideAccountHandler(
+	cfg *config.Config,
 	adminService service.AdminService,
 	oauthService *service.OAuthService,
 	openaiOAuthService *service.OpenAIOAuthService,
@@ -211,7 +212,6 @@ func ProvideAccountHandler(
 	tokenCacheInvalidator service.TokenCacheInvalidator,
 	grokQuotaService *service.GrokQuotaService,
 	openAI5hWakeService *service.OpenAI5hWakeService,
-	urlPolicyConfig *config.Config,
 ) *AccountHandler {
 	handler := NewAccountHandler(
 		adminService,
@@ -231,6 +231,7 @@ func ProvideAccountHandler(
 	)
 	handler.grokImportProber = grokQuotaService
 	handler.SetOpenAI5hWakeService(openAI5hWakeService)
-	handler.SetURLPolicyConfig(urlPolicyConfig)
+	handler.SetURLPolicyConfig(cfg)
+	handler.cfg = cfg
 	return handler
 }
