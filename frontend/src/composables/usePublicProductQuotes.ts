@@ -52,7 +52,9 @@ class PressureError extends Error {
 }
 
 function visitorID(): string {
-  const key = 'sub2api-public-product-visitor'
+  // Match the shop's own browser client so its WAF/session bucket sees the
+  // same visitor identity across the catalog and product page.
+  const key = 'visitorId'
   try {
     const existing = localStorage.getItem(key)
     if (existing) return existing
@@ -182,7 +184,7 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
           let response: Response
           try {
             response = await fetch(`${PUBLIC_SHOP_CANONICAL_ORIGIN}${path}`, {
-              method: 'POST', mode: 'cors', credentials: 'omit', signal,
+              method: 'POST', mode: 'cors', credentials: 'include', signal,
               headers: { 'Content-Type': 'application/json', Accept: 'application/json', Visitorid: visitorID() },
               body: JSON.stringify(payload),
             })
@@ -212,7 +214,7 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
     const url = publicProductHref(task.product.url)
     try {
       const detail = await post(task, '/shopApi/Shop/goodsInfo', {
-        goods_key: publicProductGoodsKey(url), trade_no: null,
+        goods_key: publicProductGoodsKey(url), trade_no: '',
       })
       if (task.done) return
       const availability = livePublicProductAvailability(detail)

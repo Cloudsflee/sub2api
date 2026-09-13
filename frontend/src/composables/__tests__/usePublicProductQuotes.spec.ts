@@ -57,6 +57,8 @@ describe('browser product quotes', () => {
       quote_verified_at: '2026-09-13T00:00:01.334Z',
     })
     expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toMatchObject({ quantity: 3, coupon_code: '', channel_id: 7 })
+    expect(fetchMock.mock.calls.every(([, options]) => options?.credentials === 'include')).toBe(true)
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ trade_no: '' })
     expect(q.status(q.products.value[0])).toBe('verified')
     await vi.advanceTimersByTimeAsync(60_000)
     expect(q.status(q.products.value[0])).toBe('historical')
