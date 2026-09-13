@@ -773,7 +773,9 @@
               :aria-label="t('publicAccountImport.refreshProductPriceLabel', { name: product.name })"
               class="mx-4 mb-3 self-start rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:border-primary-400 hover:text-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:text-dark-300"
               @click="handleProductRefresh(product)"
-            >{{ t('publicAccountImport.refreshProductPrice') }}</button>
+            >{{ productQuotes.refreshCooldown(product) > 0
+              ? t('publicAccountImport.priceRefreshCooldown', { seconds: productQuotes.refreshCooldown(product) })
+              : t('publicAccountImport.refreshProductPrice') }}</button>
           </article>
         </div>
 
@@ -1461,15 +1463,13 @@ function shopProductRefreshLabel(shopId: string): string {
     : t('publicAccountImport.shopProductsRefresh')
 }
 
-function scheduleAutomaticQuotes(delay = 0) {
+function scheduleAutomaticQuotes(_delay = 0) {
   clearTimeout(automaticQuoteTimer)
   productQuotes.cancelAutomatic()
-  if (!productCatalogMounted || document.hidden || activeMainTab.value !== 'products') return
-  automaticQuoteTimer = setTimeout(() => {
-    if (productCatalogMounted && !document.hidden && activeMainTab.value === 'products') {
-      productQuotes.startBatch([...pagedProducts.value])
-    }
-  }, delay)
+  // Keep the scheduler hook explicit for callers that resume the catalog;
+  // startBatch currently only clears stale automatic work and never creates
+  // per-product refresh tasks during navigation.
+  productQuotes.startBatch([...pagedProducts.value])
 }
 
 function changeProductPage(delta: number) {

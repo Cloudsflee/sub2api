@@ -87,6 +87,44 @@ export interface PublicAccountImportProduct {
 }
 
 export type PublicAccountImportProductSyncState = 'idle' | 'queued' | 'refreshing' | 'failed'
+export type PublicAccountImportProductRefreshOneState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'unavailable' | 'superseded'
+export interface PublicAccountImportProductRefreshOneResponse {
+  accepted: boolean
+  scope: 'product' | string
+  shop_id: string
+  product_id: string
+  state: PublicAccountImportProductRefreshOneState
+  retry_after_seconds: number
+}
+
+export async function requestPublicAccountImportProductRefreshOne(shopId: string, productId: string): Promise<PublicAccountImportProductRefreshOneResponse> {
+  const { data } = await apiClient.post<PublicAccountImportProductRefreshOneResponse>('/public/account-import/products/refresh-one', { shop_id: shopId, product_id: productId })
+  return normalizePublicAccountImportProductRefreshOneResponse(data, shopId, productId)
+}
+
+export async function getPublicAccountImportProductRefreshOneStatus(shopId: string, productId: string): Promise<PublicAccountImportProductRefreshOneResponse> {
+  const { data } = await apiClient.get<PublicAccountImportProductRefreshOneResponse>('/public/account-import/products/refresh-one/status', { params: { shop_id: shopId, product_id: productId } })
+  return normalizePublicAccountImportProductRefreshOneResponse(data, shopId, productId)
+}
+
+function normalizePublicAccountImportProductRefreshOneResponse(
+  value: Partial<PublicAccountImportProductRefreshOneResponse> | null | undefined,
+  fallbackShopId = '',
+  fallbackProductId = '',
+): PublicAccountImportProductRefreshOneResponse {
+  const state = value?.state
+  return {
+    accepted: Boolean(value?.accepted),
+    scope: typeof value?.scope === 'string' && value.scope ? value.scope : 'product',
+    shop_id: typeof value?.shop_id === 'string' ? value.shop_id : fallbackShopId,
+    product_id: typeof value?.product_id === 'string' ? value.product_id : fallbackProductId,
+    state: state === 'queued' || state === 'running' || state === 'succeeded'
+      || state === 'failed' || state === 'unavailable' || state === 'superseded'
+      ? state
+      : 'idle',
+    retry_after_seconds: normalizeNonNegativeInteger(value?.retry_after_seconds),
+  }
+}
 export type PublicAccountImportProductSnapshotState = 'pending' | 'legacy' | 'fresh' | 'stale' | 'expired'
 export type PublicAccountImportProductSyncLaneAvailability = 'available' | 'unavailable'
 export type PublicAccountImportProductSyncPressureState = 'clear' | 'pressured' | 'recovering' | 'silent' | 'unknown'

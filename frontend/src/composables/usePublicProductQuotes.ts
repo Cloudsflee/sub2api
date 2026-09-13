@@ -1,22 +1,16 @@
 import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
+import { apiClient } from '@/api/client'
 import type { PublicAccountImportProduct } from '@/api/publicAccountImport'
 import {
-  livePublicProductAvailability,
-  livePublicProductMinimumQuantity,
-  livePublicProductQuoteAvailability,
-  parseLivePublicProductQuote,
   publicProductGoodsKey,
   publicProductHref,
   publicProductQuoteTime,
-  selectLivePublicProductPaymentChannel,
   type PublicProductQuote,
 } from '@/utils/publicProductCatalog'
-import { PUBLIC_SHOP_CANONICAL_ORIGIN } from '@/utils/publicShopProductSync'
 
 const SUCCESS_TTL = 60_000
 const ATTEMPT_INTERVAL = 15_000
-const TIMEOUT = 8_000
-const HTTP_INTERVAL = 667
+const TIMEOUT = 120_000
 
 export type PublicProductQuoteResult =
   | { kind: 'success'; url: string }
@@ -33,14 +27,11 @@ interface Task {
   requested: boolean
   controller: AbortController
   timer?: ReturnType<typeof setTimeout>
+  pollTimer?: ReturnType<typeof setTimeout>
   deadline: number
   manualDeadline?: number
   promise: Promise<PublicProductQuoteResult>
   resolve: (result: PublicProductQuoteResult) => void
-}
-interface HTTPJob {
-  task: Task
-  start: () => void
 }
 
 function identity(product: PublicAccountImportProduct): string {
@@ -49,22 +40,6 @@ function identity(product: PublicAccountImportProduct): string {
 
 class PressureError extends Error {
   constructor(message: string, readonly delay = SUCCESS_TTL) { super(message) }
-}
-
-function visitorID(): string {
-  // Match the shop's own browser client so its WAF/session bucket sees the
-  // same visitor identity across the catalog and product page.
-  const key = 'visitorId'
-  try {
-    const existing = localStorage.getItem(key)
-    if (existing) return existing
-    const value = (globalThis.crypto?.randomUUID?.() || `${Date.now()}${Math.random()}`)
-      .replace(/[^a-zA-Z0-9]/g, '').slice(0, 32)
-    localStorage.setItem(key, value)
-    return value
-  } catch {
-    return 'sub2apipubliccatalog'
-  }
 }
 
 /** One scheduler and memory-only quote overlay per mounted catalog page. */
@@ -77,12 +52,9 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
   const busy = ref(new Set<string>())
   const tasks = new Map<string, Task>()
   const attempts = new Map<string, { at: number; result?: PublicProductQuoteResult }>()
-  const httpQueue: HTTPJob[] = []
   const current = computed(() => new Map(catalog.value.map(product => [identity(product), product])))
   let running = 0
   let disposed = false
-  let lastHTTPStart = -Infinity
-  let httpTimer: ReturnType<typeof setTimeout> | undefined
   const clockTimer = setInterval(() => { clock.value = Date.now() }, 1_000)
 
   const products = computed(() => catalog.value.flatMap(product => {
@@ -108,10 +80,17 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
     return Boolean(busy.value.has(key) || (attempt && now - attempt.at < ATTEMPT_INTERVAL))
   }
 
+  function refreshCooldown(product: PublicAccountImportProduct): number {
+    const attempt = attempts.get(identity(product))
+    if (!attempt) return 0
+    return Math.max(0, Math.ceil((ATTEMPT_INTERVAL - (clock.value - attempt.at)) / 1_000))
+  }
+
   function finish(task: Task, result: PublicProductQuoteResult, quote?: PublicProductQuote) {
     if (task.done) return
     task.done = true
     clearTimeout(task.timer)
+    clearTimeout(task.pollTimer)
     task.controller.abort()
     tasks.delete(task.key)
     busy.value.delete(task.key)
@@ -142,103 +121,55 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
     }), Math.max(0, task.deadline - Date.now()))
   }
 
-  function pumpHTTP() {
-    clearTimeout(httpTimer)
-    httpTimer = undefined
-    if (disposed || !httpQueue.length) return
-    const wait = lastHTTPStart + HTTP_INTERVAL - Date.now()
-    if (wait > 0) {
-      httpTimer = setTimeout(pumpHTTP, wait)
-      return
-    }
-    const eligible = (job: HTTPJob) => !job.task.done && current.value.has(job.task.key)
-      && (job.task.manual || Date.now() >= pausedUntil.value)
-    const manual = httpQueue.findIndex(job => job.task.manual && eligible(job))
-    const index = manual < 0 ? httpQueue.findIndex(eligible) : manual
-    if (index < 0) return
-    const job = httpQueue.splice(index, 1)[0]
-    if (!job.task.done) {
-      lastHTTPStart = Date.now()
-      if (!job.task.requested) {
-        job.task.requested = true
-        attempts.set(job.task.key, { at: Date.now() })
-        states.value[job.task.key] = { status: 'checking', at: Date.now() }
-      }
-      job.start()
-    }
-    if (httpQueue.length) pumpHTTP()
-  }
-
-  function post(task: Task, path: string, payload: Record<string, unknown>): Promise<any> {
-    return new Promise((resolve, reject) => {
-      const signal = task.controller.signal
-      const abort = () => {
-        const index = httpQueue.indexOf(job)
-        if (index >= 0) httpQueue.splice(index, 1)
-        signal.removeEventListener('abort', abort)
-        reject(new DOMException('Cancelled', 'AbortError'))
-        pumpHTTP()
-      }
-      const job: HTTPJob = { task, start: () => {
-        void (async () => {
-          let response: Response
-          try {
-            response = await fetch(`${PUBLIC_SHOP_CANONICAL_ORIGIN}${path}`, {
-              method: 'POST', mode: 'cors', credentials: 'include', signal,
-              headers: { 'Content-Type': 'application/json', Accept: 'application/json', Visitorid: visitorID() },
-              body: JSON.stringify(payload),
-            })
-          } catch (error) {
-            if (signal.aborted) throw error
-            throw new PressureError('connection')
-          }
-          if (response.status === 403 || response.status === 429) {
-            const retry = response.status === 429 ? response.headers.get('Retry-After') : null
-            const delay = retry && /^\d+(\.\d+)?$/.test(retry.trim())
-              ? Number(retry) * 1_000 : Date.parse(retry || '') - Date.now()
-            throw new PressureError(`HTTP ${response.status}`, Math.max(SUCCESS_TTL, Number.isFinite(delay) ? delay : 0))
-          }
-          if (!response.ok) throw new Error(`HTTP ${response.status}`)
-          if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('non-json')
-          return response.json()
-        })().then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
-      } }
-      if (signal.aborted) { abort(); return }
-      signal.addEventListener('abort', abort, { once: true })
-      httpQueue.push(job)
-      pumpHTTP()
-    })
-  }
-
   async function execute(task: Task) {
     const url = publicProductHref(task.product.url)
     try {
-      const detail = await post(task, '/shopApi/Shop/goodsInfo', {
-        goods_key: publicProductGoodsKey(url), trade_no: '',
+      // The browser talks only to the same-origin task API.  The worker owns
+      // all upstream requests and publishes the resulting quote to the
+      // catalog consumed below.
+      const accepted = await apiClient.post('/public/account-import/products/refresh-one', {
+        shop_id: task.product.shop_id,
+        product_id: task.product.id,
       })
       if (task.done) return
-      const availability = livePublicProductAvailability(detail)
-      if (availability === 'unavailable') { finish(task, { kind: 'unavailable' }); return }
-      if (availability !== 'available') throw new Error('invalid-details')
-      const minimumQuantity = livePublicProductMinimumQuantity(detail.data)
-      const token = String(detail.data?.user?.token || '').trim()
-      if (!minimumQuantity || !token) throw new Error('invalid-details')
-      const channels = await post(task, '/shopApi/Shop/getUserChannel', { token })
-      if (task.done) return
-      const channel = channels?.code === 1 ? selectLivePublicProductPaymentChannel(channels.data) : null
-      if (!channel) throw new Error('invalid-channels')
-      const response = await post(task, '/shopApi/Shop/getGoodsPrice', {
-        goods_key: publicProductGoodsKey(url), quantity: minimumQuantity, coupon_code: '', channel_id: channel.id,
-      })
-      if (task.done) return
-      if (livePublicProductQuoteAvailability(response) === 'unavailable') {
-        finish(task, { kind: 'unavailable' }); return
+      let state = accepted.data?.state || 'queued'
+      const started = Date.now()
+      while (!task.done && Date.now() - started < 120_000 && (state === 'queued' || state === 'running')) {
+        // Poll once per second through the first ten seconds, then back off
+        // to five-second probes for the remainder of the two-minute window.
+        await new Promise<void>(resolve => {
+          task.pollTimer = setTimeout(() => {
+            task.pollTimer = undefined
+            resolve()
+          }, Date.now() - started <= 10_000 ? 1_000 : 5_000)
+        })
+        if (task.done) return
+        const statusResponse = await apiClient.get('/public/account-import/products/refresh-one/status', {
+          params: { shop_id: task.product.shop_id, product_id: task.product.id },
+        })
+        state = statusResponse.data?.state || 'idle'
       }
-      const quote = parseLivePublicProductQuote(detail.data, response, Date.now())
-      if (!quote) throw new Error('invalid-quote')
-      // Older APIs omit goods_type for card products.
-      if (!quote.goods_type) quote.goods_type = task.product.goods_type
-      finish(task, { kind: 'success', url }, quote)
+      if (state === 'succeeded' || state === 'superseded') {
+        // A successful worker commit and a superseded result both require a
+        // fresh catalog read.  Merge only the requested product so unrelated
+        // cards retain their local overlays and ordering.
+        const catalogResponse = await apiClient.get('/public/account-import/products')
+        const latest = (catalogResponse.data?.products || []).find((item: PublicAccountImportProduct) =>
+          item.id === task.product.id && item.shop_id === task.product.shop_id
+        )
+        if (latest) {
+          const index = catalog.value.findIndex(item => item.id === latest.id && item.shop_id === latest.shop_id)
+          if (index >= 0) catalog.value[index] = latest
+        }
+        if (state === 'superseded') {
+          finish(task, { kind: 'failed', url, reason: 'superseded' })
+          return
+        }
+        finish(task, { kind: 'success', url }); return
+      }
+      if (state === 'unavailable') { finish(task, { kind: 'unavailable' }); return }
+      if (state === 'queued' || state === 'running') { finish(task, { kind: 'failed', url, reason: 'timeout' }); return }
+      finish(task, { kind: 'failed', url, reason: 'query-failed' })
     } catch (error) {
       if (task.done) return
       if (error instanceof PressureError) pausedUntil.value = Math.max(pausedUntil.value, Date.now() + error.delay)
@@ -260,6 +191,11 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
       }
       task.running = true
       running++
+      if (!task.requested) {
+        task.requested = true
+        attempts.set(task.key, { at: Date.now() })
+      }
+      states.value[task.key] = { status: 'checking', at: Date.now() }
       armDeadline(task, Date.now() + TIMEOUT)
       void execute(task)
     }
@@ -281,7 +217,6 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
         existing.manualDeadline = Date.now() + TIMEOUT
         armDeadline(existing, existing.manualDeadline)
         pumpTasks()
-        pumpHTTP()
       }
       return existing.promise
     }
@@ -323,13 +258,11 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
     }
     disposed = previous
     pumpTasks()
-    pumpHTTP()
   }
 
   function startBatch(page: PublicAccountImportProduct[]) {
+    void page
     cancelAutomatic()
-    if (disposed || Date.now() < pausedUntil.value) return
-    for (const product of page.slice(0, 10)) void request(product)
   }
 
   watch(catalog, () => {
@@ -353,11 +286,9 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
   function dispose() {
     disposed = true
     clearInterval(clockTimer)
-    clearTimeout(httpTimer)
     for (const task of [...tasks.values()]) finish(task, { kind: 'cancelled' })
-    httpQueue.length = 0
   }
   onScopeDispose(dispose)
 
-  return { products, status, refreshDisabled, request, startBatch, cancelAutomatic, pausedUntil, dispose }
+  return { products, status, refreshDisabled, refreshCooldown, request, startBatch, cancelAutomatic, pausedUntil, dispose }
 }

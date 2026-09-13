@@ -17,6 +17,62 @@ const MAX_PRODUCTS = 1000
 const QUOTE_CONCURRENCY = 1
 const CLOSED_SHOP_RETRY_MILLISECONDS = 60 * 60_000
 
+async function collectProductQuote(options) {
+  const { shopToken, goodsKey, product = {}, post, now = () => new Date(), quoteSemaphore = new Semaphore(1), signal } = options || {}
+  if (!shopToken || !goodsKey || typeof post !== 'function') throw new Error('shopToken, goodsKey and post are required')
+  const detailPayload = await post('/shopApi/Shop/goodsInfo', { goods_key: goodsKey, trade_no: '' })
+  const data = requireSuccessfulPayload(detailPayload, 'goods info')
+  const item = data.goods || data.item || data.product || data.goods_info || data
+  const detailGoodsKey = String(item.goods_key || data.goods_key || '').trim()
+  if (detailGoodsKey && detailGoodsKey !== String(goodsKey).trim()) {
+    throw new ShopSyncError('unknown', 'goods info identity does not match the requested product')
+  }
+  const merged = {
+    ...product,
+    ...item,
+    goods_key: goodsKey,
+    // Details occasionally omit the public link; preserve the cached identity.
+    link: item.link || item.url || product.link || product.url,
+  }
+  const state = catalogProductState(merged, product.goods_type || item.goods_type || 'card')
+  if (state.state === 'unknown') throw new ShopSyncError('unknown', state.reason)
+  if (state.state === 'unavailable') return { unavailable: true, goods_key: goodsKey }
+  const goodsType = state.product.goods_type || product.goods_type || 'card'
+  const inventoryless = ['article', 'resource', 'equity'].includes(goodsType)
+  const detailMinimum = item.minimum_quantity ?? item.limit_count ?? item.extend?.limit_count
+  const detailStock = item.stock ?? item.stock_count ?? item.extend?.stock_count
+  const minimumRaw = detailMinimum ?? (inventoryless ? 1 : product.minimum_quantity)
+  const parsedMinimum = minimumRaw == null || minimumRaw === '' ? 1 : normalizeNonNegativeInteger(minimumRaw)
+  if (parsedMinimum === null) throw new ShopSyncError('unknown', 'goods info minimum quantity is invalid')
+  const minimum = Math.max(parsedMinimum, 1)
+  const stockRaw = detailStock ?? (inventoryless ? 1 : product.stock)
+  const stock = stockRaw == null || stockRaw === '' ? 1 : normalizeNonNegativeInteger(stockRaw)
+  if (stock === null) throw new ShopSyncError('unknown', 'goods info stock is invalid')
+  if (stock < minimum) return { unavailable: true, goods_key: goodsKey }
+  const token = String(
+    data.user?.token || data.shop?.token || data.user_token || data.shop_token || data.token
+      || item.user?.token || item.shop?.token || item.shop_token || item.token || ''
+  ).trim()
+  if (!token) throw new ShopSyncError('unknown', 'goods info token is missing')
+  const channelsPayload = await post('/shopApi/Shop/getUserChannel', { token })
+  if (!channelsPayload || channelsPayload.code !== 1 || !Array.isArray(channelsPayload.data)) throw new ShopSyncError('unknown', 'payment channel response is invalid')
+  const channel = selectPaymentChannel(channelsPayload.data); if (!channel) throw new ShopSyncError('unknown', 'shop has no valid payment channel')
+  const quotePayload = await quoteSemaphore.run(() => post('/shopApi/Shop/getGoodsPrice', { goods_key: goodsKey, quantity: minimum, coupon_code: '', channel_id: channel.id }), signal)
+  const quote = quoteResult(quotePayload)
+  if (quote.state === 'unavailable') return { unavailable: true, goods_key: goodsKey }
+  if (quote.state !== 'available') throw new ShopSyncError('unknown', quote.reason)
+  const total = Number(quote.totalAmount); if (!Number.isFinite(total) || total < 0) throw new ShopSyncError('unknown', 'quote total is invalid')
+  return {
+    ...state.product,
+    goods_key: goodsKey,
+    goods_type: goodsType,
+    stock,
+    minimum_quantity: minimum,
+    payable_price: total,
+    quote_verified_at: verifiedAtISO(now),
+  }
+}
+
 function requireSuccessfulPayload(payload, label) {
   if (!payload || payload.code !== 1 || !payload.data || typeof payload.data !== 'object') {
     throw new ShopSyncError('unknown', String(payload?.msg || `${label} response is invalid`))
@@ -175,4 +231,5 @@ module.exports = {
   PRODUCT_SCHEMA_VERSION,
   QUOTE_CONCURRENCY,
   collectAuthoritativeSnapshot,
+  collectProductQuote,
 }

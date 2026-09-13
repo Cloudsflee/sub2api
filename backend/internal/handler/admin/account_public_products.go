@@ -30,6 +30,7 @@ const (
 	publicAccountImportProductSyncTokenEnv             = "PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_TOKEN"
 	publicAccountImportProductStrictModeEnv            = "PUBLIC_ACCOUNT_IMPORT_PRODUCT_STRICT_MODE"
 	publicAccountImportProductSyncStatusFileEnv        = "PUBLIC_ACCOUNT_IMPORT_PRODUCT_SYNC_STATUS_FILE"
+	publicAccountImportSingleProductRefreshEnabledEnv  = "PUBLIC_ACCOUNT_IMPORT_SINGLE_PRODUCT_REFRESH_ENABLED"
 	publicAccountImportProductsFile                    = "/app/data/public-account-import-products.json"
 	publicAccountImportProductSyncStatusFile           = "/app/data/product-sync-worker/status.json"
 	publicAccountImportProductStoreVersion             = 1
@@ -39,6 +40,8 @@ const (
 	publicAccountImportProductRefreshAge               = 15 * time.Minute
 	publicAccountImportProductUntrustedRefreshAge      = 60 * time.Minute
 	publicAccountImportProductRefreshCooldown          = 5 * time.Minute
+	publicAccountImportSingleProductCooldown           = 15 * time.Second
+	publicAccountImportSingleProductMaxQueued          = 100
 	publicAccountImportProductUntrustedRefreshCooldown = 60 * time.Minute
 	publicAccountImportProductRetryAge                 = 1 * time.Minute
 	publicAccountImportProductUntrustedRetryAge        = 15 * time.Minute
@@ -197,11 +200,15 @@ type PublicAccountImportProductRefreshResponse struct {
 }
 
 type PublicAccountImportProductSyncJob struct {
-	ShopID    string `json:"shop_id"`
-	ShopName  string `json:"shop_name"`
-	ShopURL   string `json:"shop_url"`
-	Token     string `json:"token"`
-	AttemptID string `json:"attempt_id"`
+	ShopID    string                              `json:"shop_id"`
+	ShopName  string                              `json:"shop_name"`
+	ShopURL   string                              `json:"shop_url"`
+	Token     string                              `json:"token"`
+	AttemptID string                              `json:"attempt_id"`
+	Scope     string                              `json:"scope,omitempty"`
+	ProductID string                              `json:"product_id,omitempty"`
+	GoodsKey  string                              `json:"goods_key,omitempty"`
+	Product   *PublicAccountImportProductSyncItem `json:"product,omitempty"`
 }
 
 type PublicAccountImportProductSyncJobResponse struct {
@@ -233,6 +240,13 @@ type PublicAccountImportProductSyncRequest struct {
 	UnavailableProductCount *int                                 `json:"unavailable_product_count"`
 	Products                []PublicAccountImportProductSyncItem `json:"products"`
 }
+type PublicAccountImportProductSyncOneRequest struct {
+	Scope     string                             `json:"scope"`
+	ShopID    string                             `json:"shop_id"`
+	ProductID string                             `json:"product_id"`
+	AttemptID string                             `json:"attempt_id"`
+	Product   PublicAccountImportProductSyncItem `json:"product"`
+}
 
 type PublicAccountImportProductSyncFailureRequest struct {
 	ShopID            string `json:"shop_id"`
@@ -240,29 +254,60 @@ type PublicAccountImportProductSyncFailureRequest struct {
 	Error             string `json:"error"`
 	Kind              string `json:"kind"`
 	RetryAfterSeconds int    `json:"retry_after_seconds"`
+	Scope             string `json:"scope,omitempty"`
+	ProductID         string `json:"product_id,omitempty"`
 }
 
 type PublicAccountImportProductSyncHeartbeatRequest struct {
 	ShopID    string `json:"shop_id"`
 	AttemptID string `json:"attempt_id"`
+	Scope     string `json:"scope,omitempty"`
+	ProductID string `json:"product_id,omitempty"`
 }
 
 type publicAccountImportProductShopCache struct {
-	ShopID                   string                       `json:"shop_id"`
-	SchemaVersion            int                          `json:"schema_version"`
-	SourceProductCount       int                          `json:"source_product_count"`
-	SellableProductCount     int                          `json:"sellable_product_count"`
-	UnavailableProductCount  int                          `json:"unavailable_product_count"`
-	LastAttempt              string                       `json:"last_attempt"`
-	SyncStartedAt            string                       `json:"sync_started_at,omitempty"`
-	SyncHeartbeatAt          string                       `json:"sync_heartbeat_at,omitempty"`
-	SyncAttemptID            string                       `json:"sync_attempt_id,omitempty"`
-	UpdatedAt                string                       `json:"updated_at,omitempty"`
-	RefreshRequestedAt       string                       `json:"refresh_requested_at,omitempty"`
-	ManualRefreshCompletedAt string                       `json:"manual_refresh_completed_at,omitempty"`
-	Error                    string                       `json:"error,omitempty"`
-	RetryNotBeforeAt         string                       `json:"retry_not_before_at,omitempty"`
-	Products                 []PublicAccountImportProduct `json:"products"`
+	ShopID                   string                                             `json:"shop_id"`
+	SchemaVersion            int                                                `json:"schema_version"`
+	SourceProductCount       int                                                `json:"source_product_count"`
+	SellableProductCount     int                                                `json:"sellable_product_count"`
+	UnavailableProductCount  int                                                `json:"unavailable_product_count"`
+	LastAttempt              string                                             `json:"last_attempt"`
+	SyncStartedAt            string                                             `json:"sync_started_at,omitempty"`
+	SyncHeartbeatAt          string                                             `json:"sync_heartbeat_at,omitempty"`
+	SyncAttemptID            string                                             `json:"sync_attempt_id,omitempty"`
+	UpdatedAt                string                                             `json:"updated_at,omitempty"`
+	RefreshRequestedAt       string                                             `json:"refresh_requested_at,omitempty"`
+	ManualRefreshCompletedAt string                                             `json:"manual_refresh_completed_at,omitempty"`
+	Error                    string                                             `json:"error,omitempty"`
+	RetryNotBeforeAt         string                                             `json:"retry_not_before_at,omitempty"`
+	Products                 []PublicAccountImportProduct                       `json:"products"`
+	ProductRefreshes         map[string]publicAccountImportProductRefreshRecord `json:"product_refreshes,omitempty"`
+}
+
+type publicAccountImportProductRefreshRecord struct {
+	ProductID        string `json:"product_id"`
+	GoodsKey         string `json:"goods_key"`
+	State            string `json:"state"`
+	RequestedAt      string `json:"requested_at"`
+	SyncStartedAt    string `json:"sync_started_at,omitempty"`
+	SyncHeartbeatAt  string `json:"sync_heartbeat_at,omitempty"`
+	SyncAttemptID    string `json:"sync_attempt_id,omitempty"`
+	CompletedAt      string `json:"completed_at,omitempty"`
+	Error            string `json:"error,omitempty"`
+	RetryNotBeforeAt string `json:"retry_not_before_at,omitempty"`
+}
+
+type PublicAccountImportProductRefreshOneRequest struct {
+	ShopID    string `json:"shop_id"`
+	ProductID string `json:"product_id"`
+}
+type PublicAccountImportProductRefreshOneResponse struct {
+	Accepted          bool   `json:"accepted"`
+	Scope             string `json:"scope"`
+	ShopID            string `json:"shop_id"`
+	ProductID         string `json:"product_id"`
+	State             string `json:"state"`
+	RetryAfterSeconds int    `json:"retry_after_seconds"`
 }
 
 type publicAccountImportProductStore struct {
@@ -333,6 +378,68 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 		return
 	}
 	now := time.Now().UTC()
+	// Manual single-product jobs are leased ahead of shop jobs while preserving
+	// the existing poll interval for shop snapshots.
+	if publicAccountImportSingleProductRefreshEnabled() {
+		runningProducts := 0
+		for _, shop := range shops {
+			s := publicProductCache.Shops[shop.ID]
+			for _, r := range s.ProductRefreshes {
+				if publicAccountImportProductRefreshRecordActive(r, now) {
+					runningProducts++
+				}
+			}
+		}
+		for _, shop := range shops {
+			if runningProducts >= 2 {
+				break
+			}
+			cached := publicProductCache.Shops[shop.ID]
+			for productID, rec := range cached.ProductRefreshes {
+				if rec.State != "queued" {
+					continue
+				}
+				productIndex := -1
+				for i := range cached.Products {
+					if cached.Products[i].ID == productID && productGoodsKeyFromURL(cached.Products[i].URL) == rec.GoodsKey {
+						productIndex = i
+						break
+					}
+				}
+				if productIndex < 0 {
+					rec.State = "superseded"
+					rec.Error = "product identity changed"
+					rec.CompletedAt = now.Format(time.RFC3339Nano)
+					cached.ProductRefreshes[productID] = rec
+					publicProductCache.Shops[shop.ID] = cached
+					if err := savePublicProductCacheLocked(); err != nil {
+						response.InternalError(c, "Failed to update product refresh state")
+						return
+					}
+					continue
+				}
+				token, tokenErr := publicAccountImportShopToken(shop.URL)
+				if tokenErr != nil {
+					continue
+				}
+				rec.State = "running"
+				rec.SyncStartedAt = now.Format(time.RFC3339Nano)
+				rec.SyncHeartbeatAt = rec.SyncStartedAt
+				rec.SyncAttemptID = publicAccountImportProductSyncAttemptID(shop.ID+":"+productID, now)
+				rec.Error = ""
+				cached.ProductRefreshes[productID] = rec
+				publicProductCache.Shops[shop.ID] = cached
+				if err := savePublicProductCacheLocked(); err != nil {
+					response.InternalError(c, "Failed to lease product refresh")
+					return
+				}
+				item := cached.Products[productIndex]
+				job := PublicAccountImportProductSyncJob{ShopID: shop.ID, ShopName: shop.Name, ShopURL: shop.URL, Token: token, AttemptID: rec.SyncAttemptID, Scope: "product", ProductID: productID, GoodsKey: rec.GoodsKey, Product: &PublicAccountImportProductSyncItem{GoodsKey: rec.GoodsKey, Name: item.Name, URL: item.URL, Image: item.Image, Category: item.Category, GoodsType: item.GoodsType, Price: &item.Price, MarketPrice: &item.MarketPrice, PayablePrice: item.PayablePrice, Stock: &item.Stock, MinimumQuantity: &item.MinimumQuantity, QuoteVerifiedAt: item.QuoteVerifiedAt}}
+				response.Success(c, PublicAccountImportProductSyncJobResponse{Job: &job, Jobs: []PublicAccountImportProductSyncJob{job}})
+				return
+			}
+		}
+	}
 	if now.Sub(publicProductLastJobAt) < publicAccountImportProductSyncInterval {
 		response.Success(c, PublicAccountImportProductSyncJobResponse{})
 		return
@@ -464,6 +571,151 @@ func (h *AccountHandler) RequestPublicAccountImportProductRefresh(c *gin.Context
 	response.Success(c, publicAccountImportProductRefreshResponse(true, status))
 }
 
+func (h *AccountHandler) RequestPublicAccountImportProductRefreshOne(c *gin.Context) {
+	if !publicAccountImportEnabled() || !publicAccountImportSingleProductRefreshEnabled() {
+		response.NotFound(c, "Public account import is disabled")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, publicAccountImportProductFailureMaxBody)
+	var req PublicAccountImportProductRefreshOneRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid product refresh request")
+		return
+	}
+	req.ShopID, req.ProductID = strings.TrimSpace(req.ShopID), strings.TrimSpace(req.ProductID)
+	if req.ShopID == "" || req.ProductID == "" {
+		response.BadRequest(c, "Shop and product are required")
+		return
+	}
+	shops, err := snapshotPublicAccountImportShops()
+	if err != nil {
+		response.InternalError(c, "Failed to load shop links")
+		return
+	}
+	var shop *PublicAccountImportShop
+	for i := range shops {
+		if shops[i].ID == req.ShopID {
+			shop = &shops[i]
+			break
+		}
+	}
+	if shop == nil {
+		response.BadRequest(c, "Shop is not available")
+		return
+	}
+	if _, err := publicAccountImportShopToken(shop.URL); err != nil {
+		response.BadRequest(c, "Shop is not supported")
+		return
+	}
+	publicProductCacheMu.Lock()
+	defer publicProductCacheMu.Unlock()
+	if err := loadPublicProductCacheLocked(); err != nil {
+		response.InternalError(c, "Failed to load product cache")
+		return
+	}
+	cached := publicProductCache.Shops[req.ShopID]
+	var product *PublicAccountImportProduct
+	for i := range cached.Products {
+		if cached.Products[i].ID == req.ProductID {
+			product = &cached.Products[i]
+			break
+		}
+	}
+	if product == nil {
+		response.BadRequest(c, "Product is not available")
+		return
+	}
+	goodsKey := productGoodsKeyFromURL(product.URL)
+	if goodsKey == "" {
+		response.BadRequest(c, "Product identity is invalid")
+		return
+	}
+	if expectedID := publicAccountImportProductID(req.ShopID, goodsKey); product.ID != expectedID {
+		response.BadRequest(c, "Product identity does not match")
+		return
+	}
+	if cached.ProductRefreshes == nil {
+		cached.ProductRefreshes = map[string]publicAccountImportProductRefreshRecord{}
+	}
+	now := time.Now().UTC()
+	rec := cached.ProductRefreshes[req.ProductID]
+	if rec.State == "queued" || (rec.State == "running" && publicAccountImportProductRefreshRecordActive(rec, now)) {
+		response.Success(c, PublicAccountImportProductRefreshOneResponse{Accepted: true, Scope: "product", ShopID: req.ShopID, ProductID: req.ProductID, State: rec.State})
+		return
+	}
+	if completed := parsePublicAccountImportProductTimestamp(rec.CompletedAt); !completed.IsZero() && now.Sub(completed) < publicAccountImportSingleProductCooldown {
+		response.Success(c, PublicAccountImportProductRefreshOneResponse{Accepted: false, Scope: "product", ShopID: req.ShopID, ProductID: req.ProductID, State: rec.State, RetryAfterSeconds: int((publicAccountImportSingleProductCooldown - now.Sub(completed) + time.Second - 1) / time.Second)})
+		return
+	}
+	queued := 0
+	for _, s := range publicProductCache.Shops {
+		for _, r := range s.ProductRefreshes {
+			if r.State == "queued" {
+				queued++
+			}
+		}
+	}
+	if queued >= publicAccountImportSingleProductMaxQueued {
+		response.Error(c, http.StatusTooManyRequests, "Too many product refreshes queued")
+		return
+	}
+	rec = publicAccountImportProductRefreshRecord{ProductID: req.ProductID, GoodsKey: goodsKey, State: "queued", RequestedAt: now.Format(time.RFC3339Nano)}
+	cached.ShopID = req.ShopID
+	cached.ProductRefreshes[req.ProductID] = rec
+	previous := publicProductCache.Shops
+	publicProductCache.Shops = maps.Clone(previous)
+	publicProductCache.Shops[req.ShopID] = cached
+	if err := savePublicProductCacheLocked(); err != nil {
+		publicProductCache.Shops = previous
+		response.InternalError(c, "Failed to queue product refresh")
+		return
+	}
+	response.Success(c, PublicAccountImportProductRefreshOneResponse{Accepted: true, Scope: "product", ShopID: req.ShopID, ProductID: req.ProductID, State: "queued"})
+}
+
+func (h *AccountHandler) GetPublicAccountImportProductRefreshOneStatus(c *gin.Context) {
+	if !publicAccountImportEnabled() || !publicAccountImportSingleProductRefreshEnabled() {
+		response.NotFound(c, "Public account import is disabled")
+		return
+	}
+	shopID, productID := strings.TrimSpace(c.Query("shop_id")), strings.TrimSpace(c.Query("product_id"))
+	if shopID == "" || productID == "" {
+		response.BadRequest(c, "Shop and product are required")
+		return
+	}
+	store, err := snapshotPublicAccountImportProductStore()
+	if err != nil {
+		response.InternalError(c, "Failed to load product cache")
+		return
+	}
+	rec := store.Shops[shopID].ProductRefreshes[productID]
+	state := rec.State
+	if state == "" {
+		state = "idle"
+	}
+	retry := 0
+	if at := parsePublicAccountImportProductTimestamp(rec.RetryNotBeforeAt); at.After(time.Now().UTC()) {
+		retry = int((at.Sub(time.Now().UTC()) + time.Second - 1) / time.Second)
+	}
+	response.Success(c, PublicAccountImportProductRefreshOneResponse{Accepted: state == "queued" || state == "running", Scope: "product", ShopID: shopID, ProductID: productID, State: state, RetryAfterSeconds: retry})
+}
+
+func productGoodsKeyFromURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(u.EscapedPath(), "/"), "/")
+	if len(parts) != 2 || parts[0] != "item" {
+		return ""
+	}
+	v, err := url.PathUnescape(parts[1])
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(v)
+}
+
 func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
 	if !publicAccountImportEnabled() {
 		response.NotFound(c, "Public account import is disabled")
@@ -585,6 +837,117 @@ func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
 	response.Success(c, gin.H{"accepted": len(products), "schema_version": publicAccountImportProductSchemaVersion})
 }
 
+func (h *AccountHandler) SubmitPublicAccountImportProductSyncOne(c *gin.Context) {
+	if !publicAccountImportEnabled() || !publicAccountImportSingleProductRefreshEnabled() {
+		response.NotFound(c, "Public account import is disabled")
+		return
+	}
+	if !authorizePublicAccountImportProductWorker(c) {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, publicAccountImportProductFailureMaxBody)
+	var req PublicAccountImportProductSyncOneRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid product sync request")
+		return
+	}
+	req.ShopID, req.ProductID, req.AttemptID = strings.TrimSpace(req.ShopID), strings.TrimSpace(req.ProductID), strings.TrimSpace(req.AttemptID)
+	req.Scope = strings.TrimSpace(req.Scope)
+	if req.Scope == "" {
+		req.Scope = "product"
+	}
+	if req.Scope != "product" {
+		response.BadRequest(c, "Product sync scope is invalid")
+		return
+	}
+	if req.ShopID == "" || req.ProductID == "" || req.AttemptID == "" {
+		response.BadRequest(c, "Product sync identity is required")
+		return
+	}
+	shops, err := snapshotPublicAccountImportShops()
+	if err != nil {
+		response.InternalError(c, "Failed to load shop links")
+		return
+	}
+	var shop *PublicAccountImportShop
+	for i := range shops {
+		if shops[i].ID == req.ShopID {
+			shop = &shops[i]
+			break
+		}
+	}
+	if shop == nil {
+		response.BadRequest(c, "Shop is not available")
+		return
+	}
+	publicProductCacheMu.Lock()
+	defer publicProductCacheMu.Unlock()
+	if err := loadPublicProductCacheLocked(); err != nil {
+		response.InternalError(c, "Failed to load product cache")
+		return
+	}
+	cached := publicProductCache.Shops[req.ShopID]
+	rec, ok := cached.ProductRefreshes[req.ProductID]
+	now := time.Now().UTC()
+	if !ok || rec.SyncAttemptID != req.AttemptID || !publicAccountImportProductRefreshRecordActive(rec, now) {
+		response.Error(c, http.StatusConflict, "Product sync job lease expired")
+		return
+	}
+	if productGoodsKeyFromURL(req.Product.URL) != "" && productGoodsKeyFromURL(req.Product.URL) != rec.GoodsKey {
+		response.BadRequest(c, "Product identity does not match")
+		return
+	}
+	idx := -1
+	for i := range cached.Products {
+		if cached.Products[i].ID == req.ProductID && productGoodsKeyFromURL(cached.Products[i].URL) == rec.GoodsKey {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		rec.State = "superseded"
+		rec.CompletedAt = now.Format(time.RFC3339Nano)
+		cached.ProductRefreshes[req.ProductID] = rec
+		publicProductCache.Shops[req.ShopID] = cached
+		_ = savePublicProductCacheLocked()
+		response.Success(c, gin.H{"accepted": false, "state": "superseded"})
+		return
+	}
+	item := req.Product
+	if item.GoodsKey == "" {
+		item.GoodsKey = rec.GoodsKey
+	}
+	normalized, err := normalizePublicProductSyncItem(*shop, item, now.Format(time.RFC3339Nano))
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	old := cached.Products[idx]
+	old.Price, old.PayablePrice, old.UnitPrice, old.MinimumQuantity, old.Stock, old.GoodsType, old.QuoteVerifiedAt = normalized.Price, normalized.PayablePrice, normalized.UnitPrice, normalized.MinimumQuantity, normalized.Stock, normalized.GoodsType, normalized.QuoteVerifiedAt
+	if item.MarketPrice != nil {
+		old.MarketPrice = normalized.MarketPrice
+	}
+	if old.Stock < old.MinimumQuantity {
+		cached.Products = append(cached.Products[:idx], cached.Products[idx+1:]...)
+		cached.SellableProductCount--
+		cached.UnavailableProductCount++
+	}
+	rec.State = "succeeded"
+	rec.CompletedAt = now.Format(time.RFC3339Nano)
+	rec.SyncStartedAt = ""
+	rec.SyncHeartbeatAt = ""
+	rec.SyncAttemptID = ""
+	rec.RetryNotBeforeAt = now.Add(publicAccountImportSingleProductCooldown).Format(time.RFC3339Nano)
+	rec.Error = ""
+	cached.ProductRefreshes[req.ProductID] = rec
+	publicProductCache.Shops[req.ShopID] = cached
+	if err := savePublicProductCacheLocked(); err != nil {
+		response.InternalError(c, "Failed to save product quote")
+		return
+	}
+	response.Success(c, gin.H{"accepted": true, "state": "succeeded"})
+}
+
 func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 	if !publicAccountImportEnabled() {
 		response.NotFound(c, "Public account import is disabled")
@@ -602,6 +965,15 @@ func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 	req.ShopID = strings.TrimSpace(req.ShopID)
 	req.AttemptID = strings.TrimSpace(req.AttemptID)
 	req.Kind = strings.TrimSpace(req.Kind)
+	req.Scope = strings.TrimSpace(req.Scope)
+	if req.Scope != "" && req.Scope != "shop" && req.Scope != "product" {
+		response.BadRequest(c, "Product sync scope is invalid")
+		return
+	}
+	if req.Scope == "product" && !publicAccountImportSingleProductRefreshEnabled() {
+		response.NotFound(c, "Single product refresh is disabled")
+		return
+	}
 	if req.ShopID == "" || req.AttemptID == "" {
 		response.BadRequest(c, "Product sync shop and attempt are required")
 		return
@@ -614,11 +986,63 @@ func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 		return
 	}
 	cached, ok := publicProductCache.Shops[req.ShopID]
+	now := time.Now().UTC()
+	if req.Scope == "product" && req.ProductID != "" {
+		// A deleted shop invalidates any outstanding product lease. This check
+		// keeps late worker callbacks from mutating an orphaned cache entry.
+		shops, shopErr := snapshotPublicAccountImportShops()
+		shopPresent := false
+		if shopErr == nil {
+			for _, shop := range shops {
+				if shop.ID == req.ShopID {
+					shopPresent = true
+					break
+				}
+			}
+		}
+		if !shopPresent {
+			response.Success(c, gin.H{"accepted": false})
+			return
+		}
+		rec, exists := cached.ProductRefreshes[req.ProductID]
+		if !exists || rec.SyncAttemptID != req.AttemptID || !publicAccountImportProductRefreshRecordActive(rec, now) {
+			response.Success(c, gin.H{"accepted": false})
+			return
+		}
+		rec.State = "failed"
+		if req.Kind == "unavailable" {
+			for i := range cached.Products {
+				if cached.Products[i].ID == req.ProductID {
+					cached.Products = append(cached.Products[:i], cached.Products[i+1:]...)
+					cached.SellableProductCount--
+					cached.UnavailableProductCount++
+					break
+				}
+			}
+			rec.State = "unavailable"
+		}
+		rec.Error = publicAccountImportProductSyncError(req.Error)
+		rec.CompletedAt = now.Format(time.RFC3339Nano)
+		rec.SyncAttemptID = ""
+		rec.SyncStartedAt = ""
+		rec.SyncHeartbeatAt = ""
+		rec.RetryNotBeforeAt = now.Add(publicAccountImportSingleProductCooldown).Format(time.RFC3339Nano)
+		cached.ProductRefreshes[req.ProductID] = rec
+		previous := publicProductCache.Shops
+		publicProductCache.Shops = maps.Clone(previous)
+		publicProductCache.Shops[req.ShopID] = cached
+		if err := savePublicProductCacheLocked(); err != nil {
+			publicProductCache.Shops = previous
+			response.InternalError(c, "Failed to save product sync failure")
+			return
+		}
+		response.Success(c, gin.H{"accepted": true})
+		return
+	}
 	if !ok || cached.SyncAttemptID != req.AttemptID {
 		response.Success(c, gin.H{"accepted": false})
 		return
 	}
-	now := time.Now().UTC()
 	retryAfterSeconds := min(max(req.RetryAfterSeconds, 0), int(publicAccountImportProductFailureRetryMaxAge.Seconds()))
 	if req.Kind == "shop_closed" {
 		retryAfterSeconds = int(publicAccountImportProductFailureRetryMaxAge.Seconds())
@@ -658,8 +1082,17 @@ func (h *AccountHandler) HeartbeatPublicAccountImportProductSync(c *gin.Context)
 	}
 	req.ShopID = strings.TrimSpace(req.ShopID)
 	req.AttemptID = strings.TrimSpace(req.AttemptID)
+	req.Scope = strings.TrimSpace(req.Scope)
+	if req.Scope != "" && req.Scope != "shop" && req.Scope != "product" {
+		response.BadRequest(c, "Product sync scope is invalid")
+		return
+	}
 	if req.ShopID == "" || req.AttemptID == "" {
 		response.BadRequest(c, "Product sync shop and attempt are required")
+		return
+	}
+	if req.Scope == "product" && !publicAccountImportSingleProductRefreshEnabled() {
+		response.NotFound(c, "Single product refresh is disabled")
 		return
 	}
 
@@ -671,6 +1104,40 @@ func (h *AccountHandler) HeartbeatPublicAccountImportProductSync(c *gin.Context)
 	}
 	now := time.Now().UTC()
 	cached, ok := publicProductCache.Shops[req.ShopID]
+	if req.Scope == "product" && req.ProductID != "" {
+		shops, shopErr := snapshotPublicAccountImportShops()
+		shopPresent := false
+		if shopErr == nil {
+			for _, shop := range shops {
+				if shop.ID == req.ShopID {
+					shopPresent = true
+					break
+				}
+			}
+		}
+		if !shopPresent {
+			response.Error(c, http.StatusConflict, "Product sync job lease expired")
+			return
+		}
+		rec, exists := cached.ProductRefreshes[req.ProductID]
+		if !exists || rec.SyncAttemptID != req.AttemptID || !publicAccountImportProductRefreshRecordActive(rec, now) {
+			response.Error(c, http.StatusConflict, "Product sync job lease expired")
+			return
+		}
+		now := time.Now().UTC()
+		rec.SyncHeartbeatAt = now.Format(time.RFC3339Nano)
+		cached.ProductRefreshes[req.ProductID] = rec
+		previous := publicProductCache.Shops
+		publicProductCache.Shops = maps.Clone(previous)
+		publicProductCache.Shops[req.ShopID] = cached
+		if err := savePublicProductCacheLocked(); err != nil {
+			publicProductCache.Shops = previous
+			response.InternalError(c, "Failed to renew product sync job")
+			return
+		}
+		response.Success(c, gin.H{"accepted": true, "lease_seconds": int(publicAccountImportProductSyncLeaseAge.Seconds())})
+		return
+	}
 	if !ok || cached.SyncAttemptID != req.AttemptID || !publicAccountImportProductSyncIsActive(cached, now) {
 		response.Error(c, http.StatusConflict, "Product sync job lease expired")
 		return
@@ -1146,6 +1613,21 @@ func publicAccountImportProductSyncWithinMaxAge(cached publicAccountImportProduc
 		return false
 	}
 	return now.Sub(startedAt) <= publicAccountImportProductSyncMaxAge
+}
+
+func publicAccountImportProductRefreshRecordActive(rec publicAccountImportProductRefreshRecord, now time.Time) bool {
+	if rec.State != "running" {
+		return false
+	}
+	started := parsePublicAccountImportProductTimestamp(rec.SyncStartedAt)
+	if started.IsZero() || started.After(now.Add(time.Minute)) || now.Sub(started) > publicAccountImportProductSyncMaxAge {
+		return false
+	}
+	heartbeat := parsePublicAccountImportProductTimestamp(rec.SyncHeartbeatAt)
+	if heartbeat.IsZero() {
+		heartbeat = started
+	}
+	return !heartbeat.After(now.Add(time.Minute)) && now.Sub(heartbeat) <= publicAccountImportProductSyncLeaseAge
 }
 
 func countPublicAccountImportProductActiveSyncs(shops []PublicAccountImportShop, store publicAccountImportProductStore, now time.Time) int {
@@ -1705,4 +2187,16 @@ func publicAccountImportProductSyncError(value string) string {
 		return string(runes[:500])
 	}
 	return value
+}
+
+// publicAccountImportSingleProductRefreshEnabled gates the opt-in product
+// refresh workflow independently from the legacy whole-shop importer. The
+// feature is disabled unless the operator explicitly enables it.
+func publicAccountImportSingleProductRefreshEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(publicAccountImportSingleProductRefreshEnabledEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }

@@ -99,6 +99,7 @@ export default {
     pricePending: 'Pending verification',
     priceVerifiedAt: 'Last verified {time}',
     refreshProductPrice: 'Refresh price',
+    priceRefreshCooldown: 'Available again in {seconds}s',
     refreshProductPriceLabel: 'Refresh price for {name}',
     productLinkInvalid: 'Invalid product link. Please check the product details.',
     priceChecking: 'Checking live price',

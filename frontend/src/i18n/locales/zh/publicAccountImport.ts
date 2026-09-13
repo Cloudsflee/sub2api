@@ -99,6 +99,7 @@ export default {
     pricePending: '待核验',
     priceVerifiedAt: '上次核验于 {time}',
     refreshProductPrice: '刷新价格',
+    priceRefreshCooldown: '{seconds} 秒后可再次刷新',
     refreshProductPriceLabel: '刷新 {name} 的价格',
     productLinkInvalid: '商品链接无效，请检查商品信息。',
     priceChecking: '正在核对实时价格',

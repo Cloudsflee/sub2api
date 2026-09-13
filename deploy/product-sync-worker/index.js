@@ -2,7 +2,7 @@ const { chromium, firefox } = require('playwright-core')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
-const { collectAuthoritativeSnapshot } = require('./catalog-sync')
+const { collectAuthoritativeSnapshot, collectProductQuote } = require('./catalog-sync')
 const {
   AdaptiveRateLimiter,
   buildWAFResponseFingerprint,
@@ -966,13 +966,13 @@ async function initializeShopPage(
   }
 }
 
-function startJobHeartbeat(lane, job, controller) {
+function startJobHeartbeat(lane, job, controller, backendClient = backend) {
   return createJobHeartbeat({
     intervalMilliseconds: heartbeatMilliseconds,
     send: async () => {
-      await backend('/api/v1/public/account-import/products/sync-heartbeat', {
+      await backendClient('/api/v1/public/account-import/products/sync-heartbeat', {
         method: 'POST',
-        body: JSON.stringify({ shop_id: job.shop_id, attempt_id: job.attempt_id }),
+        body: JSON.stringify({ shop_id: job.shop_id, attempt_id: job.attempt_id, scope: job.scope || 'shop', product_id: job.product_id || '' }),
         signal: controller.signal,
       })
       publishLaneStatus(lane, { last_heartbeat_at: new Date().toISOString() })
@@ -993,13 +993,15 @@ function startJobHeartbeat(lane, job, controller) {
   })
 }
 
-async function reportJobFailure(job, error) {
+async function reportJobFailure(job, error, backendClient = backend) {
   try {
-    await backend('/api/v1/public/account-import/products/sync-failure', {
+    await backendClient('/api/v1/public/account-import/products/sync-failure', {
       method: 'POST',
       body: JSON.stringify({
         shop_id: job.shop_id,
         attempt_id: job.attempt_id,
+        scope: job.scope || 'shop',
+        product_id: job.product_id || '',
         error: errorMessage(error),
         kind: String(error?.kind || '').slice(0, 32),
         retry_after_seconds: Math.max(0, Math.ceil((Number(error?.retryAfterMilliseconds) || 0) / 1000)),
@@ -1010,30 +1012,42 @@ async function reportJobFailure(job, error) {
   }
 }
 
-async function syncJob(lane, job) {
+async function syncJob(lane, job, dependencies = {}) {
   const deadlineAt = Date.now() + maxJobMilliseconds
   const controller = new AbortController()
-  const heartbeat = startJobHeartbeat(lane, job, controller)
+  const backendClient = dependencies.backend || backend
+  const collectProduct = dependencies.collectProductQuote || collectProductQuote
+  const collectShop = dependencies.collectAuthoritativeSnapshot || collectAuthoritativeSnapshot
+  const heartbeat = startJobHeartbeat(lane, job, controller, backendClient)
   try {
     ensureLaneContextReady(lane)
-    const snapshot = await collectAuthoritativeSnapshot({
-      shopToken: job.token,
-      quoteSemaphore: globalQuoteSemaphore,
-      signal: controller.signal,
-      post: (path, body) => postShopAPIWithPressureRecovery(
-        lane,
-        job.token,
-        path,
-        body,
-        deadlineAt,
-        controller.signal
-      ),
-    })
+    const snapshot = job.scope === 'product'
+      ? await collectProduct({
+        shopToken: job.token, goodsKey: job.goods_key || job.product?.goods_key, product: job.product || {}, quoteSemaphore: globalQuoteSemaphore, signal: controller.signal,
+        post: (path, body) => postShopAPIWithPressureRecovery(lane, job.token, path, body, deadlineAt, controller.signal),
+      })
+      : await collectShop({
+        shopToken: job.token,
+        quoteSemaphore: globalQuoteSemaphore,
+        signal: controller.signal,
+        post: (path, body) => postShopAPIWithPressureRecovery(
+          lane,
+          job.token,
+          path,
+          body,
+          deadlineAt,
+          controller.signal
+        ),
+      })
     ensureJobDeadline(deadlineAt, controller.signal)
-    const result = await publishJobSnapshot(job, snapshot, controller.signal)
+    const result = job.scope === 'product'
+      ? await publishProductQuote(job, snapshot, controller.signal, backendClient)
+      : await publishJobSnapshot(job, snapshot, controller.signal, backendClient)
     ensureJobDeadline(deadlineAt, controller.signal)
     await heartbeat.stop()
-    console.log(`${new Date().toISOString()} synced ${job.shop_name}: ${result.accepted}/${snapshot.source_product_count} sellable products`)
+    console.log(job.scope === 'product'
+      ? `${new Date().toISOString()} synced ${job.shop_name}/${job.product_id}: ${result?.state || 'succeeded'}`
+      : `${new Date().toISOString()} synced ${job.shop_name}: ${result.accepted}/${snapshot.source_product_count} sellable products`)
     publishStatus({
       last_success_at: new Date().toISOString(),
       last_shop_id: job.shop_id,
@@ -1042,9 +1056,21 @@ async function syncJob(lane, job) {
   } catch (error) {
     await heartbeat.stop()
     const finalError = syncJobFinalError(error, controller.signal)
-    if (finalError?.kind !== 'lease_lost') await reportJobFailure(job, finalError)
+    if (finalError?.kind !== 'lease_lost') await reportJobFailure(job, finalError, backendClient)
     throw finalError
   }
+}
+
+async function publishProductQuote(job, quote, signal, publish = backend) {
+  throwIfAborted(signal)
+  if (quote?.unavailable) {
+    await publish('/api/v1/public/account-import/products/sync-failure', { method: 'POST', body: JSON.stringify({ shop_id: job.shop_id, attempt_id: job.attempt_id, scope: 'product', product_id: job.product_id, error: 'product unavailable', kind: 'unavailable', retry_after_seconds: 0 }), signal })
+    throwIfAborted(signal)
+    return { accepted: false, state: 'unavailable' }
+  }
+  const result = await publish('/api/v1/public/account-import/products/sync-one', { method: 'POST', body: JSON.stringify({ scope: 'product', shop_id: job.shop_id, product_id: job.product_id, attempt_id: job.attempt_id, product: quote }), signal })
+  throwIfAborted(signal)
+  return result
 }
 
 async function publishJobSnapshot(job, snapshot, signal, publish = backend) {
@@ -1851,12 +1877,16 @@ module.exports = {
   laneContextIsReady,
   laneRecoveryCancellationFailure,
   publishJobSnapshot,
+  publishProductQuote,
   pressureRecoveryFailure,
   productSyncPressureBackoffMilliseconds,
   resetChallengeAttemptState,
   shopSessionOriginState,
   shopRequestUsesContextTransport,
   recoverLaneAfterPressure,
+  startJobHeartbeat,
+  reportJobFailure,
   retryAccessDeniedAfterHomeReview,
+  syncJob,
   syncJobFinalError,
 }

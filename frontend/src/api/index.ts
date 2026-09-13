@@ -24,11 +24,15 @@ export { default as announcementsAPI } from './announcements'
 export { channelMonitorUserAPI } from './channelMonitor'
 export {
   getPublicAccountImportGroups,
+  requestPublicAccountImportProductRefreshOne,
+  getPublicAccountImportProductRefreshOneStatus,
   submitPublicAccountImport,
   submitPublicAccountImportUpstream,
   type PublicAccountImportGroup,
   type PublicAccountImportUpstreamPayload,
   type PublicAccountImportResult,
+  type PublicAccountImportProductRefreshOneResponse,
+  type PublicAccountImportProductRefreshOneState,
 } from './publicAccountImport'
 
 // Admin APIs

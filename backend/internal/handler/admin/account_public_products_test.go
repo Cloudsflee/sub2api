@@ -1238,6 +1238,7 @@ func validPublicProductSyncRequest(shopID, attemptID string, quoteTime time.Time
 func newPublicProductTestRouter(t *testing.T, shops []PublicAccountImportShop, store publicAccountImportProductStore) http.Handler {
 	t.Helper()
 	t.Setenv(publicAccountImportEnabledEnv, "true")
+	t.Setenv(publicAccountImportSingleProductRefreshEnabledEnv, "true")
 	t.Setenv(publicAccountImportProductSyncTokenEnv, "test-product-sync-token")
 	t.Setenv(publicAccountImportProductStrictModeEnv, "false")
 	t.Setenv(publicAccountImportProductSyncStatusFileEnv, filepath.Join(t.TempDir(), "status.json"))

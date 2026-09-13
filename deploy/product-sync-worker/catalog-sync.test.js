@@ -8,6 +8,7 @@ const {
   CLOSED_SHOP_RETRY_MILLISECONDS,
   GOODS_TYPES,
   collectAuthoritativeSnapshot,
+  collectProductQuote,
 } = require('./catalog-sync')
 const { Semaphore } = require('./worker-utils')
 
@@ -18,6 +19,39 @@ function clone(value) {
 function goodsListForType(body, lists = {}) {
   return clone(lists[body.goods_type] || fixture.emptyGoodsList)
 }
+
+test('collectProductQuote follows detail, channel, and quote order and preserves zero totals', async () => {
+  const calls = []
+  const result = await collectProductQuote({
+    shopToken: 'shop-token',
+    goodsKey: 'paid-article',
+    product: {
+      goods_key: 'paid-article', name: 'Paid article', url: 'https://wzyp.cn/item/paid-article',
+      goods_type: 'article', price: 5.01, market_price: 0,
+    },
+    now: () => new Date('2026-09-13T00:00:00Z'),
+    post: async (requestPath, body) => {
+      calls.push({ path: requestPath, body })
+      if (requestPath.endsWith('/goodsInfo')) return {
+        code: 1,
+        data: { goods: { goods_key: 'paid-article', goods_type: 'article' }, token: 'detail-token' },
+      }
+      if (requestPath.endsWith('/getUserChannel')) return clone(fixture.channels)
+      return { code: 1, data: { total_amount: 0 } }
+    },
+  })
+
+  assert.deepEqual(calls.map(({ path }) => path), [
+    '/shopApi/Shop/goodsInfo', '/shopApi/Shop/getUserChannel', '/shopApi/Shop/getGoodsPrice',
+  ])
+  assert.deepEqual(calls[0].body, { goods_key: 'paid-article', trade_no: '' })
+  assert.deepEqual(calls[1].body, { token: 'detail-token' })
+  assert.equal(calls[2].body.quantity, 1)
+  assert.equal(result.payable_price, 0)
+  assert.equal(result.stock, 1)
+  assert.equal(result.minimum_quantity, 1)
+  assert.equal(result.url, 'https://wzyp.cn/item/paid-article')
+})
 
 test('collectAuthoritativeSnapshot uses goodsList totals and publishes one complete verified shop snapshot', async () => {
   const calls = []
