@@ -197,6 +197,10 @@ describe('publicProductGoodsKey', () => {
     expect(publicProductGoodsKey('https://pay.ldxp.cn/item/abc123')).toBe('abc123')
   })
 
+  it.each(['http://wzyp.cn/item/key', 'https://wzyp.cn:444/item/key', 'https://user@wzyp.cn/item/key', 'https://wzyp.cn/item/%2Fkey', 'https://wzyp.cn/item/%20', 'https://wzyp.cn/item/%00', 'https://wzyp.cn/item/%5Ckey'])('rejects invalid HTTPS item links: %s', url => {
+    expect(publicProductGoodsKey(url)).toBe('')
+  })
+
   it('rejects other hosts and paths', () => {
     expect(publicProductGoodsKey('https://example.com/item/abc123')).toBe('')
     expect(publicProductGoodsKey('https://pay.ldxp.cn/shop/abc123')).toBe('')

@@ -1,5 +1,5 @@
 import type { PublicAccountImportProduct } from '@/api/publicAccountImport'
-import { isPublicShopHostname } from '@/utils/publicShopProductSync'
+import { isPublicShopHostname, PUBLIC_SHOP_CANONICAL_ORIGIN } from '@/utils/publicShopProductSync'
 
 const productNameCollator = new Intl.Collator(undefined, { numeric: true })
 const inventorylessGoodsTypes = new Set(['article', 'resource', 'equity'])
@@ -20,7 +20,7 @@ function normalizeMinimumQuantity(value: unknown): number {
 }
 
 function normalizeAPINumber(value: unknown): number | null {
-  if (value === null || value === undefined || typeof value === 'boolean') return null
+  if (typeof value !== 'number' && typeof value !== 'string') return null
   if (typeof value === 'string' && value.trim() === '') return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
@@ -40,7 +40,7 @@ function normalizeLiveStatus(value: unknown): LivePublicProductAvailability {
   return 'unknown'
 }
 
-function livePublicProductInventory(data: any): { stock: number; minimumQuantity: number } | null {
+export function livePublicProductInventory(data: any): { stock: number; minimumQuantity: number } | null {
 	const rawStock = data?.extend?.stock_count
 	const rawMinimumQuantity = data?.extend?.limit_count
 	const goodsType = String(data?.goods_type || '').trim().toLocaleLowerCase()
@@ -181,11 +181,51 @@ export function selectLivePublicProductPaymentChannel(channels: any[]): any | nu
 export function publicProductGoodsKey(productURL: string): string {
   try {
     const parsed = new URL(productURL)
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port) return ''
     const match = isPublicShopHostname(parsed.hostname)
       ? parsed.pathname.match(/^\/item\/([^/]+)\/?$/)
       : null
-    return match ? decodeURIComponent(match[1]) : ''
+    const key = match ? decodeURIComponent(match[1]) : ''
+    return key && key.trim() === key && !/[\s/\\?#]/.test(key) && ![...key].some(char => char.charCodeAt(0) < 32) && key !== '.' && key !== '..' ? key : ''
   } catch {
     return ''
   }
+}
+
+export function publicProductHref(productURL: string): string {
+  const key = publicProductGoodsKey(productURL)
+  return key ? `${PUBLIC_SHOP_CANONICAL_ORIGIN}/item/${encodeURIComponent(key)}` : ''
+}
+
+export type PublicProductQuote = Required<Pick<PublicAccountImportProduct,
+  'payable_price' | 'unit_price' | 'minimum_quantity' | 'stock' | 'goods_type' | 'quote_verified_at'
+>> & Pick<PublicAccountImportProduct, 'market_price'>
+
+export function parseLivePublicProductQuote(details: any, response: any, now: number): PublicProductQuote | null {
+  const inventory = livePublicProductInventory(details)
+  if (!inventory || livePublicProductQuoteAvailability(response) !== 'available') return null
+  const total = normalizeAPINumber(response.data.total_amount)
+  if (total === null || total < 0 || inventory.stock < inventory.minimumQuantity) return null
+  const market = normalizeAPINumber(details.market_price)
+  return {
+    payable_price: total,
+    unit_price: total / inventory.minimumQuantity,
+    minimum_quantity: inventory.minimumQuantity,
+    stock: inventory.stock,
+    goods_type: String(details.goods_type || '').trim().toLowerCase(),
+    market_price: market !== null && market >= 0 ? market : undefined,
+    quote_verified_at: new Date(now).toISOString(),
+  }
+}
+
+// A timestamp alone must never make an incomplete snapshot look verified.
+export function publicProductQuoteTime(product: PublicAccountImportProduct): number {
+  const total = normalizeAPINumber(product.payable_price)
+  const unit = normalizeAPINumber(product.unit_price)
+  const time = Date.parse(product.quote_verified_at || '')
+  return total !== null && total >= 0 && unit !== null && unit >= 0
+    && Number.isInteger(product.minimum_quantity) && product.minimum_quantity > 0
+    && Number.isInteger(product.stock) && product.stock >= product.minimum_quantity
+    && Math.abs(unit - total / product.minimum_quantity) <= Number.EPSILON * Math.max(1, total) * 4
+    && Number.isFinite(time) ? time : 0
 }

@@ -694,80 +694,97 @@
           {{ t('publicAccountImport.noProducts') }}
         </div>
         <div v-else class="mt-5 grid gap-4 sm:grid-cols-2">
-          <a
+          <article
             v-for="product in pagedProducts"
             :key="product.id"
-            :href="shopHref(product.url)"
-            target="_blank"
-            rel="noopener noreferrer nofollow"
-            class="flex min-h-32 gap-4 rounded-lg border border-gray-200 bg-white p-4 transition hover:border-primary-300 hover:shadow-sm dark:border-dark-700 dark:bg-dark-900 dark:hover:border-primary-700"
-            :aria-busy="productPriceStatus(product.id) === 'checking'"
-            @click="handleProductClick($event, product)"
+            :data-product-id="product.id"
+            class="flex flex-col rounded-lg border border-gray-200 bg-white transition hover:border-primary-300 hover:shadow-sm dark:border-dark-700 dark:bg-dark-900 dark:hover:border-primary-700"
+            :aria-busy="productPriceStatus(product) === 'checking'"
           >
-            <img
-              v-if="product.image"
-              :src="shopHref(product.image)"
-              alt=""
-              class="h-20 w-20 shrink-0 rounded-md bg-gray-100 object-cover dark:bg-dark-800"
-              loading="lazy"
-              referrerpolicy="no-referrer"
-            />
-            <div class="min-w-0 flex-1">
-              <div class="line-clamp-2 text-sm font-semibold text-gray-900 dark:text-white">{{ product.name }}</div>
-              <div class="mt-1 flex min-w-0 items-center gap-2 text-xs text-gray-500 dark:text-dark-400">
-                <span class="min-w-0 flex-1 truncate">
-                  {{ product.shop_name }}<span v-if="product.category"> · {{ product.category }}</span>
-                </span>
-                <span
-                  class="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[11px] font-semibold"
-                  :class="shopTrustLevelClass(productShopTrustLevel(product.shop_id))"
-                  :data-product-shop-trust-level="productShopTrustLevel(product.shop_id)"
-                >
-                  {{ shopTrustLevelLabel(productShopTrustLevel(product.shop_id)) }}
-                </span>
-              </div>
-              <div class="mt-1 text-xs text-gray-400 dark:text-dark-500" :title="product.updated_at">
-                {{ t('publicAccountImport.productUpdatedAt', { time: formatProductUpdatedAt(product.updated_at) }) }}
-                <span v-if="productPriceStatus(product.id) === 'verified'" class="text-emerald-600 dark:text-emerald-400">
-                  · {{ t('publicAccountImport.priceVerified') }}
-                </span>
-                <span v-else-if="productPriceStatus(product.id) === 'failed'" class="text-amber-600 dark:text-amber-400">
-                  · {{ t('publicAccountImport.priceCheckFailed') }}
-                </span>
-              </div>
-              <div class="mt-3 flex items-end justify-between gap-3">
-                <div>
-                  <span v-if="productPriceStatus(product.id) === 'checking'" class="inline-flex h-7 items-center text-xs font-medium text-gray-500 dark:text-dark-400">
-                    <span class="mr-2 h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-primary-600 dark:border-dark-600 dark:border-t-primary-400"></span>
-                    {{ t('publicAccountImport.priceChecking') }}
+            <a
+              :href="publicProductHref(product.url) || '#'"
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              class="flex min-h-32 flex-1 gap-4 rounded-lg p-4 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              @click="handleProductClick($event, product)"
+            >
+              <img
+                v-if="product.image"
+                :src="shopHref(product.image)"
+                alt=""
+                class="h-20 w-20 shrink-0 rounded-md bg-gray-100 object-cover dark:bg-dark-800"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+              />
+              <div class="min-w-0 flex-1">
+                <div class="line-clamp-2 text-sm font-semibold text-gray-900 dark:text-white">{{ product.name }}</div>
+                <div class="mt-1 flex min-w-0 items-center gap-2 text-xs text-gray-500 dark:text-dark-400">
+                  <span class="min-w-0 flex-1 truncate">
+                      {{ product.shop_name }}<span v-if="product.category"> · {{ product.category }}</span>
                   </span>
-                  <template v-else>
-									<span class="text-lg font-bold text-red-600 dark:text-red-400">¥{{ formatPrice(publicProductPayablePrice(product)) }}</span>
-									<span v-if="product.minimum_quantity === 1 && product.market_price && product.market_price > publicProductPayablePrice(product)" class="ml-2 text-xs text-gray-400 line-through">
+                  <span
+                    class="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[11px] font-semibold"
+                    :class="shopTrustLevelClass(productShopTrustLevel(product.shop_id))"
+                    :data-product-shop-trust-level="productShopTrustLevel(product.shop_id)"
+                  >
+                    {{ shopTrustLevelLabel(productShopTrustLevel(product.shop_id)) }}
+                  </span>
+                </div>
+                <div class="mt-1 text-xs text-gray-400 dark:text-dark-500" :title="product.updated_at">
+                  {{ t('publicAccountImport.productUpdatedAt', { time: formatProductUpdatedAt(product.updated_at) }) }}
+                </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-dark-400" aria-live="polite">
+                  <span v-if="productPriceStatus(product) === 'verified'" class="text-emerald-600 dark:text-emerald-400">
+                    {{ t('publicAccountImport.priceVerified') }}
+                  </span>
+                  <span v-else-if="!publicProductQuoteTime(product)">{{ t('publicAccountImport.pricePending') }}</span>
+                  <span v-if="publicProductQuoteTime(product)" class="block" :title="product.quote_verified_at">
+                    {{ t('publicAccountImport.priceVerifiedAt', { time: formatProductUpdatedAt(product.quote_verified_at || '') }) }}
+                  </span>
+                  <span v-if="productPriceStatus(product) === 'failed'" class="block text-amber-600 dark:text-amber-400">
+                    {{ t('publicAccountImport.priceCheckFailed') }}
+                  </span>
+                </div>
+                <div class="mt-3 flex items-end justify-between gap-3">
+                  <div>
+                    <span v-if="productPriceStatus(product) === 'checking'" class="inline-flex h-7 items-center text-xs font-medium text-gray-500 dark:text-dark-400">
+                      <span class="mr-2 h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-primary-600 dark:border-dark-600 dark:border-t-primary-400"></span>
+                      {{ t('publicAccountImport.priceChecking') }}
+                    </span>
+                    <span class="text-lg font-bold text-red-600 dark:text-red-400">¥{{ formatPrice(publicProductPayablePrice(product)) }}</span>
+                    <span v-if="product.minimum_quantity === 1 && product.market_price && product.market_price > publicProductPayablePrice(product)" class="ml-2 text-xs text-gray-400 line-through">
                       ¥{{ formatPrice(product.market_price) }}
                     </span>
-									<div class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
-										{{ t('publicAccountImport.productUnitPrice', { price: formatPrice(publicProductUnitPrice(product)) }) }}
-										· {{ t('publicAccountImport.productMinimumQuantity', { count: product.minimum_quantity }) }}
-									</div>
-                  </template>
+                    <div class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
+                      {{ t('publicAccountImport.productUnitPrice', { price: formatPrice(publicProductUnitPrice(product)) }) }}
+                      · {{ t('publicAccountImport.productMinimumQuantity', { count: product.minimum_quantity }) }}
+                    </div>
+                  </div>
+                  <span v-if="product.goods_type === 'card'" class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
+                    {{ t('publicAccountImport.productStock', { count: product.stock }) }}
+                  </span>
                 </div>
-                <span v-if="product.goods_type === 'card'" class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
-                  {{ t('publicAccountImport.productStock', { count: product.stock }) }}
-                </span>
               </div>
-            </div>
-          </a>
+            </a>
+            <button
+              type="button"
+              :data-product-refresh="product.id"
+              :disabled="productQuotes.refreshDisabled(product)"
+              :aria-label="t('publicAccountImport.refreshProductPriceLabel', { name: product.name })"
+              class="mx-4 mb-3 self-start rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:border-primary-400 hover:text-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:text-dark-300"
+              @click="handleProductRefresh(product)"
+            >{{ t('publicAccountImport.refreshProductPrice') }}</button>
+          </article>
         </div>
 
         <div v-if="productPageCount > 1" class="flex items-center justify-between py-5 text-sm">
-          <button type="button" class="btn btn-secondary" :disabled="productPage <= 1" @click="productPage--">
+          <button type="button" class="btn btn-secondary" :disabled="productPage <= 1" @click="changeProductPage(-1)">
             {{ t('publicAccountImport.previousPage') }}
           </button>
           <span class="text-gray-500 dark:text-dark-400">
             {{ t('publicAccountImport.pageStatus', { page: productPage, total: productPageCount }) }}
           </span>
-          <button type="button" class="btn btn-secondary" :disabled="productPage >= productPageCount" @click="productPage++">
+          <button type="button" class="btn btn-secondary" :disabled="productPage >= productPageCount" @click="changeProductPage(1)">
             {{ t('publicAccountImport.nextPage') }}
           </button>
         </div>
@@ -816,16 +833,12 @@ import {
 } from '@/api/publicAccountImport'
 import {
   filterAndSortPublicProducts,
-  livePublicProductAvailability,
-	livePublicProductMinimumQuantity,
-	livePublicProductQuoteAvailability,
-	publicProductPayablePrice,
-	publicProductGoodsKey,
-	publicProductUnitPrice,
-	selectLivePublicProductPaymentChannel,
+  publicProductHref,
+  publicProductQuoteTime,
+  publicProductPayablePrice,
+  publicProductUnitPrice,
 } from '@/utils/publicProductCatalog'
 import {
-  PUBLIC_SHOP_CANONICAL_ORIGIN,
   publicShopProductRefreshDisabled,
   publicShopProductSyncRetryAfter,
   supportsPublicShopProductSync,
@@ -833,6 +846,7 @@ import {
   type TrackedPublicAccountImportProductSyncStatus,
 } from '@/utils/publicShopProductSync'
 import { sanitizeUrl } from '@/utils/url'
+import { usePublicProductQuotes } from '@/composables/usePublicProductQuotes'
 
 const MAX_FILE_BYTES = 512 * 1024
 const MAX_TOTAL_JSON_BYTES = 2 * 1024 * 1024
@@ -840,17 +854,7 @@ const MAX_UPSTREAM_NAME_RUNES = 100
 const MAX_UPSTREAM_URL_BYTES = 2048
 const MAX_UPSTREAM_KEY_BYTES = 8192
 const CATALOG_PAGE_SIZE = 10
-const PRODUCT_PRICE_VERIFICATION_TTL_MS = 60_000
-const PRODUCT_PRICE_FAILURE_RETRY_MS = 15_000
-const PRODUCT_UNAVAILABLE_TTL_MS = 15 * 60_000
 const PRODUCT_SYNC_EXPECTED_LANE_COUNT = 6
-
-type ProductPriceStatus = 'checking' | 'verified' | 'unavailable' | 'failed'
-
-interface ProductPriceVerification {
-  status: ProductPriceStatus
-  checkedAt: number
-}
 
 type ImportMode = 'json' | 'upstream'
 
@@ -914,11 +918,13 @@ const shopErrorMessage = ref('')
 const shopNoticeMessage = ref('')
 const activeMainTab = ref<'import' | 'shops' | 'products'>('import')
 const shopPage = ref(1)
-const products = ref<PublicAccountImportProduct[]>([])
+const catalogProducts = ref<PublicAccountImportProduct[]>([])
+const productQuotes = usePublicProductQuotes(catalogProducts)
+const { products, status: productPriceStatus } = productQuotes
+const deletedShopIDs = new Set<string>()
 const loadingProducts = ref(true)
 const productErrorMessage = ref('')
 const productVerificationMessage = ref('')
-const productPriceVerifications = ref<Record<string, ProductPriceVerification>>({})
 const productSyncWorkerStatus = ref<PublicAccountImportProductSyncWorkerStatus>(unavailableProductSyncWorkerStatus())
 const queuedProductShops = ref(0)
 const refreshingProductShops = ref(0)
@@ -931,6 +937,7 @@ const deletingShop = ref<PublicAccountImportShop | null>(null)
 const deletingShopRequest = ref(false)
 const shopProductSyncClock = ref(Date.now())
 const productSearch = ref('')
+const appliedProductSearch = ref('')
 const productPriceOrder = ref<'desc' | 'asc'>('asc')
 const productPage = ref(1)
 let shopRefreshTimer: number | undefined
@@ -939,7 +946,11 @@ let shopProductSyncClockTimer: number | undefined
 let productCatalogETag: string | null = null
 let productCatalogRequestInFlight = false
 let productCatalogMounted = false
-const productVerificationPromises = new Map<string, Promise<boolean>>()
+const pendingProductWindows = new Map<string, Window | null>()
+let automaticQuoteTimer: ReturnType<typeof setTimeout> | undefined
+let productSearchTimer: ReturnType<typeof setTimeout> | undefined
+let catalogLoaded = false
+let lastProductReturnAt = -Infinity
 
 const dragActive = computed(() => dragDepth.value > 0)
 const siteName = computed(() => appStore.siteName || 'Sub2API')
@@ -975,7 +986,7 @@ const productSyncWorkerAvailableLaneCount = computed(() => productSyncWorkerStat
 ).length)
 const filteredProducts = computed(() => filterAndSortPublicProducts(
   products.value,
-  productSearch.value,
+  appliedProductSearch.value,
 	productPriceOrder.value
 ))
 const productPageCount = computed(() => Math.max(1, Math.ceil(filteredProducts.value.length / CATALOG_PAGE_SIZE)))
@@ -1008,6 +1019,11 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   productCatalogMounted = false
+  clearTimeout(automaticQuoteTimer)
+  clearTimeout(productSearchTimer)
+  productQuotes.dispose()
+  for (const popup of pendingProductWindows.values()) popup?.close()
+  pendingProductWindows.clear()
   if (shopRefreshTimer !== undefined) window.clearInterval(shopRefreshTimer)
 	if (productRefreshTimer !== undefined) window.clearTimeout(productRefreshTimer)
   if (shopProductSyncClockTimer !== undefined) window.clearInterval(shopProductSyncClockTimer)
@@ -1017,8 +1033,21 @@ onBeforeUnmount(() => {
 
 watch(selectedGroupIds, resetSubmissionState, { deep: true })
 watch(importMode, resetSubmissionState)
-watch(productSearch, () => { productPage.value = 1 })
-watch(productPriceOrder, () => { productPage.value = 1 })
+watch(productSearch, () => {
+  clearTimeout(productSearchTimer)
+  clearTimeout(automaticQuoteTimer)
+  productQuotes.cancelAutomatic()
+  productSearchTimer = setTimeout(() => {
+    appliedProductSearch.value = productSearch.value
+    productPage.value = 1
+    scheduleAutomaticQuotes()
+  }, 300)
+})
+watch(productPriceOrder, () => {
+  productPage.value = 1
+  scheduleAutomaticQuotes()
+})
+watch(activeMainTab, () => scheduleAutomaticQuotes())
 watch(shopPageCount, (count) => { shopPage.value = Math.min(shopPage.value, count) })
 watch(productPageCount, (count) => { productPage.value = Math.min(productPage.value, count) })
 
@@ -1279,9 +1308,12 @@ async function loadPublicProducts(showLoading: boolean) {
 			return
 		}
 		const catalog = result.data
-    const nextProducts = catalog.products
-      .filter((product) => !recentProductVerification(product.id, 'unavailable'))
-    products.value = nextProducts
+    if (!productCatalogMounted) return
+    catalogProducts.value = catalog.products.filter(product => !deletedShopIDs.has(product.shop_id))
+    if (!catalogLoaded) {
+      catalogLoaded = true
+      scheduleAutomaticQuotes()
+    }
     productSyncWorkerStatus.value = catalog.worker_status || unavailableProductSyncWorkerStatus(
       t('publicAccountImport.productSyncStatusUnavailable')
     )
@@ -1317,6 +1349,8 @@ function scheduleProductCatalogRefresh() {
 }
 
 function handleProductCatalogVisibilityChange() {
+  if (document.hidden) scheduleAutomaticQuotes()
+  else resumeAutomaticQuotes()
 	if (document.hidden) {
 		if (productRefreshTimer !== undefined) window.clearTimeout(productRefreshTimer)
 		productRefreshTimer = undefined
@@ -1326,6 +1360,7 @@ function handleProductCatalogVisibilityChange() {
 }
 
 function handleProductCatalogFocus() {
+  resumeAutomaticQuotes()
 	if (!document.hidden) void loadPublicProducts(false)
 }
 
@@ -1426,154 +1461,60 @@ function shopProductRefreshLabel(shopId: string): string {
     : t('publicAccountImport.shopProductsRefresh')
 }
 
-function productPriceStatus(productId: string): ProductPriceStatus | 'idle' {
-  return productPriceVerifications.value[productId]?.status || 'idle'
-}
-
-function recentProductVerification(productId: string, status?: ProductPriceStatus): ProductPriceVerification | null {
-  const verification = productPriceVerifications.value[productId]
-  if (!verification || (status && verification.status !== status)) return null
-  const maxAge = verification.status === 'failed'
-    ? PRODUCT_PRICE_FAILURE_RETRY_MS
-    : verification.status === 'unavailable'
-      ? PRODUCT_UNAVAILABLE_TTL_MS
-      : PRODUCT_PRICE_VERIFICATION_TTL_MS
-  return Date.now() - verification.checkedAt <= maxAge ? verification : null
-}
-
-function setProductPriceVerification(productId: string, verification: ProductPriceVerification) {
-  productPriceVerifications.value = {
-    ...productPriceVerifications.value,
-    [productId]: verification,
-  }
-}
-
-function markPublicProductUnavailable(productId: string) {
-  setProductPriceVerification(productId, { status: 'unavailable', checkedAt: Date.now() })
-  products.value = products.value.filter((item) => item.id !== productId)
-}
-
-async function verifyPublicProduct(product: PublicAccountImportProduct, force = false): Promise<boolean> {
-  const inProgress = productVerificationPromises.get(product.id)
-  if (inProgress) return inProgress
-
-  const recent = recentProductVerification(product.id)
-  if (!force && recent) return recent.status === 'verified'
-
-  const task = (async () => {
-    setProductPriceVerification(product.id, { status: 'checking', checkedAt: Date.now() })
-    try {
-      const goodsKey = publicProductGoodsKey(product.url)
-      if (!goodsKey) {
-        setProductPriceVerification(product.id, { status: 'failed', checkedAt: Date.now() })
-        return false
-      }
-      const response = await postPublicShopAPI('/shopApi/Shop/goodsInfo', {
-        goods_key: goodsKey,
-        trade_no: null,
-      })
-			const availability = livePublicProductAvailability(response)
-      if (availability === 'unavailable') {
-        markPublicProductUnavailable(product.id)
-        return false
-      }
-      if (availability !== 'available') throw new Error(response?.msg || 'Invalid product response')
-
-			const minimumQuantity = livePublicProductMinimumQuantity(response.data)
-			if (!minimumQuantity) throw new Error('Invalid product details')
-
-      const shopToken = String(response.data?.user?.token || '').trim()
-      if (!shopToken) throw new Error('Invalid product shop')
-      const channelResponse = await postPublicShopAPI('/shopApi/Shop/getUserChannel', {
-        token: shopToken,
-      })
-      if (channelResponse?.code !== 1 || !Array.isArray(channelResponse.data)) {
-        throw new Error(channelResponse?.msg || 'Invalid payment channels')
-      }
-			const channel = selectLivePublicProductPaymentChannel(channelResponse.data)
-			if (!channel) throw new Error('No payment channel is available')
-      const quoteResponse = await postPublicShopAPI('/shopApi/Shop/getGoodsPrice', {
-        goods_key: goodsKey,
-				quantity: minimumQuantity,
-        coupon_code: '',
-				channel_id: channel.id,
-      })
-			const quoteAvailability = livePublicProductQuoteAvailability(quoteResponse)
-      if (quoteAvailability === 'unavailable') {
-        markPublicProductUnavailable(product.id)
-        return false
-      }
-      if (quoteAvailability !== 'available') {
-        throw new Error(quoteResponse?.msg || 'Invalid product quote')
-      }
-
-      const verification: ProductPriceVerification = {
-        status: 'verified',
-        checkedAt: Date.now(),
-      }
-      setProductPriceVerification(product.id, verification)
-      return true
-		} catch {
-			setProductPriceVerification(product.id, { status: 'verified', checkedAt: Date.now() })
-			return true
-    } finally {
-      productVerificationPromises.delete(product.id)
+function scheduleAutomaticQuotes(delay = 0) {
+  clearTimeout(automaticQuoteTimer)
+  productQuotes.cancelAutomatic()
+  if (!productCatalogMounted || document.hidden || activeMainTab.value !== 'products') return
+  automaticQuoteTimer = setTimeout(() => {
+    if (productCatalogMounted && !document.hidden && activeMainTab.value === 'products') {
+      productQuotes.startBatch([...pagedProducts.value])
     }
-  })()
-  productVerificationPromises.set(product.id, task)
-  return task
+  }, delay)
+}
+
+function changeProductPage(delta: number) {
+  productPage.value = Math.max(1, Math.min(productPageCount.value, productPage.value + delta))
+  scheduleAutomaticQuotes()
+}
+
+function resumeAutomaticQuotes() {
+  if (document.hidden || Date.now() - lastProductReturnAt < 500) return
+  lastProductReturnAt = Date.now()
+  scheduleAutomaticQuotes(100)
+}
+
+async function handleProductRefresh(product: PublicAccountImportProduct) {
+  const result = await productQuotes.request(product, 'refresh')
+  if (!productCatalogMounted) return
+  if (result.kind === 'unavailable') productVerificationMessage.value = t('publicAccountImport.productUnavailable')
+  else if (result.kind === 'invalid') productVerificationMessage.value = t('publicAccountImport.productLinkInvalid')
 }
 
 async function handleProductClick(event: MouseEvent, product: PublicAccountImportProduct) {
   event.preventDefault()
+  if (pendingProductWindows.has(product.id)) return
   productVerificationMessage.value = ''
-  const popup = window.open('about:blank', '_blank')
-  if (popup) popup.opener = null
-  const verified = await verifyPublicProduct(product, true)
-	if (verified) {
-		const destination = shopHref(product.url)
-    productVerificationMessage.value = ''
-    if (popup) popup.location.replace(destination)
-    else window.location.assign(destination)
+  const destination = publicProductHref(product.url)
+  if (!destination) {
+    productVerificationMessage.value = t('publicAccountImport.productLinkInvalid')
     return
   }
-
-	const unavailable = productPriceVerifications.value[product.id]?.status === 'unavailable'
-  productVerificationMessage.value = unavailable
-    ? t('publicAccountImport.productUnavailable')
-    : t('publicAccountImport.productVerificationFailed')
-	popup?.close()
-}
-
-async function postPublicShopAPI(path: string, payload: Record<string, unknown>): Promise<any> {
-  const response = await fetch(`${PUBLIC_SHOP_CANONICAL_ORIGIN}${path}`, {
-    method: 'POST',
-    mode: 'cors',
-    credentials: 'omit',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      Visitorid: publicProductVisitorID(),
-    },
-    body: JSON.stringify(payload),
-  })
-  if (!response.ok) throw new Error(`Shop API returned HTTP ${response.status}`)
-  const contentType = response.headers.get('content-type') || ''
-  if (!contentType.includes('application/json')) throw new Error('Shop API returned a verification page')
-  return response.json()
-}
-
-function publicProductVisitorID(): string {
-  const key = 'sub2api-public-product-visitor'
-  try {
-    const existing = window.localStorage.getItem(key)
-    if (existing) return existing
-    const value = createIdempotencyKey().replace(/[^a-zA-Z0-9]/g, '').slice(0, 32)
-    window.localStorage.setItem(key, value)
-    return value
-  } catch {
-    return 'sub2apipubliccatalog'
+  const popup = window.open('about:blank', '_blank')
+  if (popup) popup.opener = null
+  pendingProductWindows.set(product.id, popup)
+  const result = await productQuotes.request(product, 'click')
+  if (!productCatalogMounted || !pendingProductWindows.has(product.id)) return
+  pendingProductWindows.delete(product.id)
+  if (result.kind === 'success' || result.kind === 'failed') {
+    if (result.kind === 'failed') productVerificationMessage.value = t('publicAccountImport.productVerificationFailed')
+    if (popup) {
+      if (!popup.closed) popup.location.replace(destination)
+    } else window.location.assign(destination)
+    return
   }
+  popup?.close()
+  if (result.kind !== 'cancelled') productVerificationMessage.value = t(result.kind === 'unavailable'
+    ? 'publicAccountImport.productUnavailable' : 'publicAccountImport.productLinkInvalid')
 }
 
 function clearShopMessages() {
@@ -1653,12 +1594,9 @@ async function confirmShopDelete() {
   try {
     const deletion = await deletePublicAccountImportShop(shop.id)
     const deletedShopID = deletion.id === shop.id ? deletion.id : shop.id
-    const removedProductIDs = products.value
-      .filter((product) => product.shop_id === deletedShopID)
-      .map((product) => product.id)
-
+    deletedShopIDs.add(deletedShopID)
     shops.value = shops.value.filter((item) => item.id !== deletedShopID)
-    products.value = products.value.filter((product) => product.shop_id !== deletedShopID)
+    catalogProducts.value = catalogProducts.value.filter((product) => product.shop_id !== deletedShopID)
 
     const nextStatuses = { ...shopProductSyncStatuses.value }
     delete nextStatuses[deletedShopID]
@@ -1670,12 +1608,6 @@ async function confirmShopDelete() {
     delete nextTrustUpdates[deletedShopID]
     shopTrustUpdates.value = nextTrustUpdates
 
-    const nextVerifications = { ...productPriceVerifications.value }
-    for (const productID of removedProductIDs) {
-      delete nextVerifications[productID]
-      productVerificationPromises.delete(productID)
-    }
-    productPriceVerifications.value = nextVerifications
     updateProductSyncCountersFromStatuses()
 
     deletingShop.value = null

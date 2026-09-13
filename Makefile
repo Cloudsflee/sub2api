@@ -1,6 +1,8 @@
 .PHONY: build build-backend build-frontend test test-backend test-frontend test-worker test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
+	src/composables/__tests__/usePublicProductQuotes.spec.ts \
+	src/views/__tests__/PublicAccountImportShopRefresh.spec.ts \
 	src/utils/__tests__/publicProductCatalog.spec.ts \
 	src/views/__tests__/PublicAccountImportView.spec.ts \
 	src/views/__tests__/PublicAccountImportProductClick.spec.ts \
