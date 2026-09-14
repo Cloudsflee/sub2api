@@ -948,7 +948,6 @@ let shopProductSyncClockTimer: number | undefined
 let productCatalogETag: string | null = null
 let productCatalogRequestInFlight = false
 let productCatalogMounted = false
-const pendingProductWindows = new Map<string, Window | null>()
 let automaticQuoteTimer: ReturnType<typeof setTimeout> | undefined
 let productSearchTimer: ReturnType<typeof setTimeout> | undefined
 let catalogLoaded = false
@@ -1024,8 +1023,6 @@ onBeforeUnmount(() => {
   clearTimeout(automaticQuoteTimer)
   clearTimeout(productSearchTimer)
   productQuotes.dispose()
-  for (const popup of pendingProductWindows.values()) popup?.close()
-  pendingProductWindows.clear()
   if (shopRefreshTimer !== undefined) window.clearInterval(shopRefreshTimer)
 	if (productRefreshTimer !== undefined) window.clearTimeout(productRefreshTimer)
   if (shopProductSyncClockTimer !== undefined) window.clearInterval(shopProductSyncClockTimer)
@@ -1490,31 +1487,33 @@ async function handleProductRefresh(product: PublicAccountImportProduct) {
   else if (result.kind === 'invalid') productVerificationMessage.value = t('publicAccountImport.productLinkInvalid')
 }
 
-async function handleProductClick(event: MouseEvent, product: PublicAccountImportProduct) {
-  event.preventDefault()
-  if (pendingProductWindows.has(product.id)) return
+function handleProductClick(event: MouseEvent, product: PublicAccountImportProduct) {
   productVerificationMessage.value = ''
   const destination = publicProductHref(product.url)
   if (!destination) {
+    event.preventDefault()
     productVerificationMessage.value = t('publicAccountImport.productLinkInvalid')
     return
   }
-  const popup = window.open('about:blank', '_blank')
-  if (popup) popup.opener = null
-  pendingProductWindows.set(product.id, popup)
-  const result = await productQuotes.request(product, 'click')
-  if (!productCatalogMounted || !pendingProductWindows.has(product.id)) return
-  pendingProductWindows.delete(product.id)
-  if (result.kind === 'success' || result.kind === 'failed') {
-    if (result.kind === 'failed') productVerificationMessage.value = t('publicAccountImport.productVerificationFailed')
-    if (popup) {
-      if (!popup.closed) popup.location.replace(destination)
-    } else window.location.assign(destination)
-    return
-  }
-  popup?.close()
-  if (result.kind !== 'cancelled') productVerificationMessage.value = t(result.kind === 'unavailable'
-    ? 'publicAccountImport.productUnavailable' : 'publicAccountImport.productLinkInvalid')
+
+  // Keep the anchor's native navigation independent from quote refresh. The
+  // target tab opens the real product URL immediately; the same-origin task
+  // runs in the background and can update this catalog without ever holding
+  // the user on a placeholder tab.
+  void productQuotes.request(product, 'click').then((result) => {
+    if (!productCatalogMounted) return
+    if (result.kind === 'unavailable') {
+      productVerificationMessage.value = t('publicAccountImport.productUnavailable')
+    } else if (result.kind === 'invalid') {
+      productVerificationMessage.value = t('publicAccountImport.productLinkInvalid')
+    } else if (result.kind === 'failed') {
+      productVerificationMessage.value = t('publicAccountImport.productVerificationFailed')
+    }
+  }).catch(() => {
+    // Navigation has already been handed to the browser. A refresh transport
+    // error is shown in the catalog only and must never cancel that navigation.
+    if (productCatalogMounted) productVerificationMessage.value = t('publicAccountImport.productVerificationFailed')
+  })
 }
 
 function clearShopMessages() {

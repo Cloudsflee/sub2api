@@ -39,6 +39,14 @@ describe('PublicAccountImportView product synchronization', () => {
     expect(source).toContain('productQuotes.startBatch([...pagedProducts.value])')
   })
 
+  it('keeps native product navigation independent from the background refresh task', () => {
+    expect(source).toContain('target="_blank"')
+    expect(source).toContain('void productQuotes.request(product, \'click\')')
+    expect(source).not.toContain('about:blank')
+    expect(source).not.toContain('pendingProductWindows')
+    expect(source).not.toContain('event.preventDefault()\n  if (pendingProductWindows')
+  })
+
   it('provides exclusion syntax help beside the product search field', () => {
     expect(source).toContain('<HelpTooltip trigger="click"')
     expect(source).toContain('productSearchHelpDescription')
