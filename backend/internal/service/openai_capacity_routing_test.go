@@ -105,7 +105,7 @@ func TestOpenAIStreamingPassthrough_ServerOverloadAfterOutputDoesNotCoolAccount(
 		require.Contains(t, recorder.Body.String(), "partial")
 		require.Contains(t, recorder.Body.String(), "Our servers are currently overloaded")
 
-		require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.6-sol"))
+		require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.6-sol", false))
 	}
 }
 
@@ -139,13 +139,13 @@ func TestReportOpenAIAccountScheduleResult_CapacityCoolsOAuthAccountModel(t *tes
 	account := &Account{ID: 31, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 
 	svc.ReportOpenAIAccountScheduleResult(account, "gpt-5.5", false, nil, failoverErr)
-	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5"))
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5", false))
 	svc.ReportOpenAIAccountScheduleResult(account, "gpt-5.5", false, nil, failoverErr)
-	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5"))
-	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.6"))
+	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5", false))
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.6", false))
 
 	svc.ReportOpenAIAccountScheduleResult(account, "gpt-5.5", true, nil)
-	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5"))
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.5", false))
 }
 
 func TestOpenAIAccountDistributionAvoidsImmediateRepeat(t *testing.T) {
