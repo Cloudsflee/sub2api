@@ -101,6 +101,35 @@ func TestApplyOpenAICodexTicket_DoesNotReuseOtherModelOrAccount(t *testing.T) {
 	require.Empty(t, h.Get(openAICodexTurnStateHeader))
 }
 
+func TestOpenAICodexTicketAccountAllowlistScopesHarvestAndInjection(t *testing.T) {
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{
+		Enabled:    true,
+		AccountIDs: []int64{41},
+		FailClosed: true,
+	}, nil)
+	allowed := ticketTestAccount(41)
+	other := ticketTestAccount(42)
+	state := fakeCodexTicketState(292)
+	svc.storeOpenAICodexTicket(context.Background(), allowed, &openAICodexTicket{
+		AccountID:  41,
+		Model:      "gpt-6-astra",
+		State:      state,
+		Length:     292,
+		CapturedAt: time.Now(),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	})
+
+	header := http.Header{}
+	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), allowed, "gpt-6-astra", header))
+	require.Equal(t, state, header.Get(openAICodexTurnStateHeader))
+
+	// An account outside the allowlist keeps the legacy path and is not fail-closed.
+	header = http.Header{}
+	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), other, "gpt-6-astra", header))
+	require.Empty(t, header.Get(openAICodexTurnStateHeader))
+	require.False(t, svc.openAICodexTicketBlocksAccount(other, "gpt-6-astra"))
+}
+
 func TestLookupOpenAICodexTicket_PrefersNewerExtra(t *testing.T) {
 	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 292, TTLSeconds: 3600}, nil)
 	account := ticketTestAccount(41)

@@ -163,6 +163,34 @@ func (s *OpenAIGatewayService) openAICodexTicketEnabledContext(ctx context.Conte
 	return fallback
 }
 
+// OpenAICodexTicketAccountAllowed applies the optional account allowlist.
+// An empty allowlist preserves the historical global scope.
+func OpenAICodexTicketAccountAllowed(account *Account, accountIDs []int64) bool {
+	if account == nil || account.ID <= 0 {
+		return false
+	}
+	if len(accountIDs) == 0 {
+		return true
+	}
+	for _, id := range accountIDs {
+		if id == account.ID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *OpenAIGatewayService) openAICodexTicketAccountAllowed(ctx context.Context, account *Account) bool {
+	if s == nil || account == nil {
+		return false
+	}
+	ids := append([]int64(nil), s.openAICodexTicketConfig().AccountIDs...)
+	if s.settingService != nil {
+		ids = s.settingService.GetOpenAICodexTicketAccountIDs(ctx)
+	}
+	return OpenAICodexTicketAccountAllowed(account, ids)
+}
+
 func (s *OpenAIGatewayService) openAICodexTicketHarvestProxyURL() string {
 	return s.openAICodexTicketHarvestProxyURLContext(context.Background())
 }
@@ -293,6 +321,9 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, accou
 	if s == nil || h == nil || !isOpenAICodexTicketAccount(account) || !s.openAICodexTicketEnabledContext(ctx) {
 		return nil
 	}
+	if !s.openAICodexTicketAccountAllowed(ctx, account) {
+		return nil
+	}
 	model = normalizeOpenAICodexTicketModel(model)
 	if model == "" || !s.openAICodexTicketGatedModel(model) {
 		return nil
@@ -343,6 +374,9 @@ func (s *OpenAIGatewayService) openAICodexTicketOutboundModel(account *Account, 
 // 不是客户端原始模型：注入侧读的是出站 body.model，两侧口径必须一致。
 func (s *OpenAIGatewayService) openAICodexTicketBlocksAccount(account *Account, outboundModel string) bool {
 	if s == nil || !isOpenAICodexTicketAccount(account) || !s.openAICodexTicketEnabled() {
+		return false
+	}
+	if !s.openAICodexTicketAccountAllowed(context.Background(), account) {
 		return false
 	}
 	cfg := s.openAICodexTicketConfig()
@@ -495,7 +529,7 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTickets(ctx context.Context) {
 	probed := 0
 	for i := range accounts {
 		account := accounts[i]
-		if account.Status != StatusActive || !isOpenAICodexTicketAccount(&account) {
+		if account.Status != StatusActive || !isOpenAICodexTicketAccount(&account) || !s.openAICodexTicketAccountAllowed(ctx, &account) {
 			continue
 		}
 		for _, model := range cfg.Models {
@@ -529,7 +563,7 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTickets(ctx context.Context) {
 // gAAAAA 前缀）就落库；否则记 Info miss，交给下个周期重试。同一 key 并发去重，避免上一发还没
 // 回来又叠一发。
 func (s *OpenAIGatewayService) probeOnceOpenAICodexTicket(ctx context.Context, account *Account, model string) {
-	if s == nil || !isOpenAICodexTicketAccount(account) || ctx.Err() != nil || !s.openAICodexTicketEnabledContext(ctx) {
+	if s == nil || !isOpenAICodexTicketAccount(account) || ctx.Err() != nil || !s.openAICodexTicketEnabledContext(ctx) || !s.openAICodexTicketAccountAllowed(ctx, account) {
 		return
 	}
 	cfg := s.openAICodexTicketConfig()

@@ -247,6 +247,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAICodexClientVersionSynced:                     "",
 		SettingKeyOpenAICodexVersionAutoSyncEnabled:                  "true",
 		SettingKeyOpenAICodexTicketHarvestProxyURL:                   "",
+		SettingKeyOpenAICodexTicketAccountIDs:                        "",
 		SettingPaymentVisibleMethodAlipaySource:                      "",
 		SettingPaymentVisibleMethodWxpaySource:                       "",
 		SettingPaymentVisibleMethodAlipayEnabled:                     "false",
@@ -898,6 +899,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		result.OpenAICodexTicketEnabled = s.cfg.Gateway.OpenAICodexTicket.Enabled
 	}
 	result.OpenAICodexTicketHarvestProxyURL = strings.TrimSpace(settings[SettingKeyOpenAICodexTicketHarvestProxyURL])
+	result.OpenAICodexTicketAccountIDs = parseOpenAICodexTicketAccountIDs(settings[SettingKeyOpenAICodexTicketAccountIDs], s)
 	// codex_cli_only 加固
 	result.MinCodexVersion = settings[SettingKeyMinCodexVersion]
 	result.MaxCodexVersion = settings[SettingKeyMaxCodexVersion]
@@ -994,6 +996,21 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	})
 
 	return result
+}
+
+func parseOpenAICodexTicketAccountIDs(raw string, s *SettingService) []int64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		if s != nil && s.cfg != nil {
+			return normalizeInt64IDs(append([]int64(nil), s.cfg.Gateway.OpenAICodexTicket.AccountIDs...))
+		}
+		return []int64{}
+	}
+	var ids []int64
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return []int64{}
+	}
+	return normalizeInt64IDs(ids)
 }
 
 func normalizeOpenAITTFTMode(mode string) string {

@@ -404,6 +404,65 @@ func (s *SettingService) InvalidateOpenAICodexTicketHarvestProxyCache() {
 	s.openAICodexTicketHarvestProxyCache.Store(&cachedOpenAICodexTicketHarvestProxy{expiresAt: 0})
 }
 
+type cachedOpenAICodexTicketAccountIDs struct {
+	value     []int64
+	expiresAt int64
+}
+
+const openAICodexTicketAccountIDsCacheTTL = 5 * time.Second
+
+// GetOpenAICodexTicketAccountIDs returns the optional account allowlist.
+// An empty list deliberately preserves the legacy global scope.
+func (s *SettingService) GetOpenAICodexTicketAccountIDs(ctx context.Context) []int64 {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil || s == nil || s.settingRepo == nil {
+		return nil
+	}
+	if cached, ok := s.openAICodexTicketAccountIDsCache.Load().(*cachedOpenAICodexTicketAccountIDs); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return append([]int64(nil), cached.value...)
+	}
+	resultCh := s.openAICodexTicketAccountIDsSF.DoChan(SettingKeyOpenAICodexTicketAccountIDs, func() (any, error) {
+		if cached, ok := s.openAICodexTicketAccountIDsCache.Load().(*cachedOpenAICodexTicketAccountIDs); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+			return cached.value, nil
+		}
+		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAICodexTicketAccountIDs)
+		if errors.Is(err, ErrSettingNotFound) {
+			raw = ""
+			err = nil
+		}
+		if err != nil {
+			if cached, ok := s.openAICodexTicketAccountIDsCache.Load().(*cachedOpenAICodexTicketAccountIDs); ok && cached != nil {
+				return cached.value, nil
+			}
+			return []int64(nil), nil
+		}
+		ids := parseOpenAICodexTicketAccountIDs(raw, s)
+		s.openAICodexTicketAccountIDsCache.Store(&cachedOpenAICodexTicketAccountIDs{value: ids, expiresAt: time.Now().Add(openAICodexTicketAccountIDsCacheTTL).UnixNano()})
+		return ids, nil
+	})
+	select {
+	case <-ctx.Done():
+		return nil
+	case result := <-resultCh:
+		if ids, ok := result.Val.([]int64); ok && result.Err == nil {
+			return append([]int64(nil), ids...)
+		}
+		return nil
+	}
+}
+
+func (s *SettingService) InvalidateOpenAICodexTicketAccountIDsCache() {
+	if s == nil {
+		return
+	}
+	s.openAICodexTicketAccountIDsSF.Forget(SettingKeyOpenAICodexTicketAccountIDs)
+	s.openAICodexTicketAccountIDsCache.Store(&cachedOpenAICodexTicketAccountIDs{expiresAt: 0})
+}
+
 // GetOpenAICodexUserAgent 返回 OpenAI Codex 上游请求使用的 User-Agent。
 // 后台设置优先；为空时回退到内置默认值。
 func (s *SettingService) GetOpenAICodexUserAgent(ctx context.Context) string {
