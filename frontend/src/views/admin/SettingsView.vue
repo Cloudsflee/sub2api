@@ -4551,6 +4551,19 @@
                   <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                     {{ t("admin.settings.gatewayForwarding.codexTicketAccountIDsDesc") }}
                   </p>
+                  <label class="mt-4 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.gatewayForwarding.codexTicketAccountModels") }}
+                  </label>
+                  <textarea
+                    id="codex-ticket-account-models"
+                    v-model="form.openai_codex_ticket_account_models"
+                    rows="3"
+                    class="input mt-2 w-full font-mono text-sm"
+                    :placeholder="t('admin.settings.gatewayForwarding.codexTicketAccountModelsPlaceholder')"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.codexTicketAccountModelsDesc") }}
+                  </p>
                 </div>
                 <div>
                   <h3 class="text-base font-semibold text-gray-900 dark:text-white">
@@ -9592,6 +9605,7 @@ type SettingsForm = Omit<
   | "wechat_connect_mp_enabled"
   | "wechat_connect_mobile_enabled"
   | "openai_codex_ticket_account_ids"
+  | "openai_codex_ticket_account_models"
 > & {
   /** Form always binds a concrete boolean (SystemSettings marks this optional). */
   channel_monitor_hide_throughput: boolean;
@@ -9633,6 +9647,7 @@ type SettingsForm = Omit<
   openai_advanced_scheduler_weight_previous_response: string;
   openai_advanced_scheduler_weight_session_sticky: string;
   openai_codex_ticket_account_ids: string;
+  openai_codex_ticket_account_models: string;
   // 系统全局平台限额 map；form 内始终归一化为全 4 平台对象（模板非空绑定依赖此不变量）
   default_platform_quotas: DefaultPlatformQuotasMap;
   account_scheduling_thresholds: ReturnType<typeof normalizeAccountSchedulingThresholdsMap>;
@@ -9897,6 +9912,7 @@ const form = reactive<SettingsForm>({
   openai_codex_ticket_harvest_proxy_url: "",
   openai_codex_ticket_harvest_proxy_configured: false,
   openai_codex_ticket_account_ids: "",
+  openai_codex_ticket_account_models: "",
   // codex_cli_only 加固
   min_codex_version: "",
   max_codex_version: "",
@@ -10884,6 +10900,37 @@ const codexSyncedVersionLabel = computed(() => {
   });
 });
 
+function formatCodexTicketAccountModels(
+  scopes: Record<string, string[]> | null | undefined,
+): string {
+  if (!scopes || typeof scopes !== "object") return "";
+  return Object.entries(scopes)
+    .filter(([accountId, models]) => /^\d+$/.test(accountId) && Array.isArray(models))
+    .sort(([left], [right]) => Number(left) - Number(right))
+    .map(([accountId, models]) => `${accountId}:${models.join("|")}`)
+    .join("\n");
+}
+
+function parseCodexTicketAccountModels(raw: string): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+  for (const line of raw.split(/\r?\n/)) {
+    const match = line.match(/^\s*(\d+)\s*:\s*(.*?)\s*$/);
+    if (!match) continue;
+    const accountId = Number(match[1]);
+    if (!Number.isSafeInteger(accountId) || accountId <= 0) continue;
+    const models = Array.from(
+      new Set(
+        match[2]
+          .split(/[|,\s]+/)
+          .map((model) => model.trim())
+          .filter(Boolean),
+      ),
+    ).sort();
+    result[String(accountId)] = models;
+  }
+  return result;
+}
+
 async function loadSettings() {
   loading.value = true;
   loadFailed.value = false;
@@ -10902,6 +10949,9 @@ async function loadSettings() {
     )
       ? settings.openai_codex_ticket_account_ids.join(", ")
       : "";
+    form.openai_codex_ticket_account_models = formatCodexTicketAccountModels(
+      settings.openai_codex_ticket_account_models,
+    );
     syncCaptchaProviderSelection();
     if (!form.claude_oauth_system_prompt_blocks?.trim()) {
       form.claude_oauth_system_prompt_blocks =
@@ -11517,6 +11567,9 @@ async function saveSettings() {
         .split(/[\s,]+/)
         .map((value) => Number(value))
         .filter((value) => Number.isSafeInteger(value) && value > 0),
+      openai_codex_ticket_account_models: parseCodexTicketAccountModels(
+        String(form.openai_codex_ticket_account_models || ""),
+      ),
       min_codex_version: form.min_codex_version?.trim() || "",
       max_codex_version: form.max_codex_version?.trim() || "",
       codex_cli_only_allow_app_server_clients:

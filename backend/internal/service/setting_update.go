@@ -495,6 +495,11 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		return nil, fmt.Errorf("encode codex ticket account ids: %w", err)
 	}
 	updates[SettingKeyOpenAICodexTicketAccountIDs] = string(accountIDs)
+	accountModels, err := json.Marshal(normalizeOpenAICodexTicketAccountModels(settings.OpenAICodexTicketAccountModels))
+	if err != nil {
+		return nil, fmt.Errorf("encode codex ticket account models: %w", err)
+	}
+	updates[SettingKeyOpenAICodexTicketAccountModels] = string(accountModels)
 	// SettingKeyOpenAICodexClientVersionSynced 由自动同步任务独占写入，此处不得覆盖，
 	// 否则面板保存会把同步结果清空。
 	// codex_cli_only 加固
@@ -752,6 +757,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	s.InvalidateOpenAICodexTicketEnabledCache()
 	s.InvalidateOpenAICodexTicketHarvestProxyCache()
 	s.InvalidateOpenAICodexTicketAccountIDsCache()
+	s.InvalidateOpenAICodexTicketAccountModelsCache()
 	openAIAdvancedSchedulerSettingSF.Forget(openAIAdvancedSchedulerSettingKey)
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
 		lowUpstreamRatePriorityEnabled: settings.OpenAILowUpstreamRatePriorityEnabled,

@@ -104,6 +104,14 @@ func TestCodexTicketAccountIDsRuntimeSetting(t *testing.T) {
 	require.Empty(t, settings.GetOpenAICodexTicketAccountIDs(context.Background()))
 }
 
+func TestCodexTicketAccountModelsRuntimeSetting(t *testing.T) {
+	repo := &codexTicketSettingRepo{codexPolicyMigrationRepoStub: &codexPolicyMigrationRepoStub{
+		values: map[string]string{SettingKeyOpenAICodexTicketAccountModels: `{"42":["gpt-5.6-sol","gpt-6-astra","gpt-6-astra"]}`},
+	}}
+	settings := NewSettingService(repo, &config.Config{})
+	require.Equal(t, map[string][]string{"42": {"gpt-5.6-sol", "gpt-6-astra"}}, settings.GetOpenAICodexTicketAccountModels(context.Background()))
+}
+
 func TestCodexTicketProxyMaskAndValidation(t *testing.T) {
 	for _, raw := range []string{"http://user:secret@proxy.example.com:8080", "socks5h://user:secret@proxy.example.com:1080", "https://user:secret@[::1]:443"} {
 		require.NoError(t, ValidateOpenAICodexTicketHarvestProxyURL(raw))

@@ -326,6 +326,8 @@ gateway:
     enabled: false
     # Optional account allowlist. Empty keeps the legacy global scope.
     account_ids: []
+    # Optional per-account model scope. Accounts absent here use the global models list.
+    account_models: {}
     target_length: 292
     ttl_seconds: 3600
     refresh_before_seconds: 600

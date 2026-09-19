@@ -554,6 +554,9 @@ export default {
         codexTicketAccountIDs: "Ticket account allowlist",
         codexTicketAccountIDsPlaceholder: "e.g. 2225, 2230",
         codexTicketAccountIDsDesc: "Leave empty for all accounts. When set, only these account IDs harvest and inject tickets.",
+        codexTicketAccountModels: "Per-account ticket models",
+        codexTicketAccountModelsPlaceholder: "2226:gpt-6-astra",
+        codexTicketAccountModelsDesc: "Use one account ID and model list per line, separated by ':'. Separate models with '|'. Unlisted allowlisted accounts use the global model set.",
         codexClientRestrictionTitle: "Codex client restriction",
         codexHardeningDesc:
           "Only affects OpenAI OAuth accounts with 'Codex official clients only' enabled (global). Beyond User-Agent/Originator, harden the decision with a version range, an engine-fingerprint gate, and black/whitelists.",

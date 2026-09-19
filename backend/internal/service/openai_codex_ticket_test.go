@@ -130,6 +130,26 @@ func TestOpenAICodexTicketAccountAllowlistScopesHarvestAndInjection(t *testing.T
 	require.False(t, svc.openAICodexTicketBlocksAccount(other, "gpt-6-astra"))
 }
 
+func TestOpenAICodexTicketAccountModelScopeKeepsSolUngated(t *testing.T) {
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{
+		Enabled: true,
+		AccountModels: map[string][]string{
+			"42": {"gpt-6-astra"},
+		},
+		FailClosed: true,
+	}, nil)
+	account := ticketTestAccount(42)
+	require.Equal(t, []string{"gpt-6-astra"}, OpenAICodexTicketModelsForAccount(account, svc.openAICodexTicketConfig()))
+
+	header := http.Header{}
+	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), account, "gpt-5.6-sol", header))
+	require.Empty(t, header.Get(openAICodexTurnStateHeader))
+	require.False(t, svc.openAICodexTicketBlocksAccount(account, "gpt-5.6-sol"))
+
+	header = http.Header{}
+	require.ErrorIs(t, svc.applyOpenAICodexTicket(context.Background(), account, "gpt-6-astra", header), ErrOpenAICodexTicketUnavailable)
+}
+
 func TestLookupOpenAICodexTicket_PrefersNewerExtra(t *testing.T) {
 	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 292, TTLSeconds: 3600}, nil)
 	account := ticketTestAccount(41)

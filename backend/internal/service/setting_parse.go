@@ -248,6 +248,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAICodexVersionAutoSyncEnabled:                  "true",
 		SettingKeyOpenAICodexTicketHarvestProxyURL:                   "",
 		SettingKeyOpenAICodexTicketAccountIDs:                        "",
+		SettingKeyOpenAICodexTicketAccountModels:                     "{}",
 		SettingPaymentVisibleMethodAlipaySource:                      "",
 		SettingPaymentVisibleMethodWxpaySource:                       "",
 		SettingPaymentVisibleMethodAlipayEnabled:                     "false",
@@ -900,6 +901,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	result.OpenAICodexTicketHarvestProxyURL = strings.TrimSpace(settings[SettingKeyOpenAICodexTicketHarvestProxyURL])
 	result.OpenAICodexTicketAccountIDs = parseOpenAICodexTicketAccountIDs(settings[SettingKeyOpenAICodexTicketAccountIDs], s)
+	result.OpenAICodexTicketAccountModels = parseOpenAICodexTicketAccountModels(settings[SettingKeyOpenAICodexTicketAccountModels], s)
 	// codex_cli_only 加固
 	result.MinCodexVersion = settings[SettingKeyMinCodexVersion]
 	result.MaxCodexVersion = settings[SettingKeyMaxCodexVersion]
@@ -1011,6 +1013,46 @@ func parseOpenAICodexTicketAccountIDs(raw string, s *SettingService) []int64 {
 		return []int64{}
 	}
 	return normalizeInt64IDs(ids)
+}
+
+func parseOpenAICodexTicketAccountModels(raw string, s *SettingService) map[string][]string {
+	var scopes map[string][]string
+	if strings.TrimSpace(raw) == "" {
+		if s != nil && s.cfg != nil {
+			return normalizeOpenAICodexTicketAccountModels(s.cfg.Gateway.OpenAICodexTicket.AccountModels)
+		}
+		return map[string][]string{}
+	}
+	if err := json.Unmarshal([]byte(raw), &scopes); err != nil {
+		return map[string][]string{}
+	}
+	return normalizeOpenAICodexTicketAccountModels(scopes)
+}
+
+func normalizeOpenAICodexTicketAccountModels(scopes map[string][]string) map[string][]string {
+	result := make(map[string][]string, len(scopes))
+	for rawAccountID, models := range scopes {
+		accountID, err := strconv.ParseInt(strings.TrimSpace(rawAccountID), 10, 64)
+		if err != nil || accountID <= 0 {
+			continue
+		}
+		seen := make(map[string]struct{}, len(models))
+		normalized := make([]string, 0, len(models))
+		for _, model := range models {
+			model = normalizeOpenAICodexTicketModel(model)
+			if model == "" {
+				continue
+			}
+			if _, exists := seen[model]; exists {
+				continue
+			}
+			seen[model] = struct{}{}
+			normalized = append(normalized, model)
+		}
+		sort.Strings(normalized)
+		result[strconv.FormatInt(accountID, 10)] = normalized
+	}
+	return result
 }
 
 func normalizeOpenAITTFTMode(mode string) string {

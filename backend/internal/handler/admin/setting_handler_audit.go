@@ -492,6 +492,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if !reflect.DeepEqual(before.OpenAICodexTicketAccountIDs, after.OpenAICodexTicketAccountIDs) {
 		changed = append(changed, "openai_codex_ticket_account_ids")
 	}
+	if !reflect.DeepEqual(before.OpenAICodexTicketAccountModels, after.OpenAICodexTicketAccountModels) {
+		changed = append(changed, "openai_codex_ticket_account_models")
+	}
 	if before.OpenAICodexUserAgent != after.OpenAICodexUserAgent {
 		changed = append(changed, "openai_codex_user_agent")
 	}

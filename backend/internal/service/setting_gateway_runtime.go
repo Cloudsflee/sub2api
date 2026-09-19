@@ -463,6 +463,73 @@ func (s *SettingService) InvalidateOpenAICodexTicketAccountIDsCache() {
 	s.openAICodexTicketAccountIDsCache.Store(&cachedOpenAICodexTicketAccountIDs{expiresAt: 0})
 }
 
+type cachedOpenAICodexTicketAccountModels struct {
+	value     map[string][]string
+	expiresAt int64
+}
+
+const openAICodexTicketAccountModelsCacheTTL = 5 * time.Second
+
+func CloneOpenAICodexTicketAccountModels(scopes map[string][]string) map[string][]string {
+	result := make(map[string][]string, len(scopes))
+	for accountID, models := range scopes {
+		result[accountID] = append([]string(nil), models...)
+	}
+	return result
+}
+
+// GetOpenAICodexTicketAccountModels returns optional per-account model scopes.
+// Accounts absent from the map continue using the global ticket model list.
+func (s *SettingService) GetOpenAICodexTicketAccountModels(ctx context.Context) map[string][]string {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil || s == nil || s.settingRepo == nil {
+		return map[string][]string{}
+	}
+	if cached, ok := s.openAICodexTicketAccountModelsCache.Load().(*cachedOpenAICodexTicketAccountModels); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return CloneOpenAICodexTicketAccountModels(cached.value)
+	}
+	resultCh := s.openAICodexTicketAccountModelsSF.DoChan(SettingKeyOpenAICodexTicketAccountModels, func() (any, error) {
+		if cached, ok := s.openAICodexTicketAccountModelsCache.Load().(*cachedOpenAICodexTicketAccountModels); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+			return cached.value, nil
+		}
+		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAICodexTicketAccountModels)
+		if errors.Is(err, ErrSettingNotFound) {
+			raw = ""
+			err = nil
+		}
+		if err != nil {
+			if cached, ok := s.openAICodexTicketAccountModelsCache.Load().(*cachedOpenAICodexTicketAccountModels); ok && cached != nil {
+				return cached.value, nil
+			}
+			return map[string][]string{}, nil
+		}
+		scopes := parseOpenAICodexTicketAccountModels(raw, s)
+		s.openAICodexTicketAccountModelsCache.Store(&cachedOpenAICodexTicketAccountModels{value: scopes, expiresAt: time.Now().Add(openAICodexTicketAccountModelsCacheTTL).UnixNano()})
+		return scopes, nil
+	})
+	select {
+	case <-ctx.Done():
+		return map[string][]string{}
+	case result := <-resultCh:
+		if scopes, ok := result.Val.(map[string][]string); ok && result.Err == nil {
+			return CloneOpenAICodexTicketAccountModels(scopes)
+		}
+		return map[string][]string{}
+	}
+}
+
+func (s *SettingService) InvalidateOpenAICodexTicketAccountModelsCache() {
+	if s == nil {
+		return
+	}
+	s.openAICodexTicketAccountModelsSF.Forget(SettingKeyOpenAICodexTicketAccountModels)
+	s.openAICodexTicketAccountModelsCache.Store(&cachedOpenAICodexTicketAccountModels{expiresAt: 0})
+}
+
 // GetOpenAICodexUserAgent 返回 OpenAI Codex 上游请求使用的 User-Agent。
 // 后台设置优先；为空时回退到内置默认值。
 func (s *SettingService) GetOpenAICodexUserAgent(ctx context.Context) string {

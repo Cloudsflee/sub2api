@@ -715,6 +715,8 @@ const (
 	SettingKeyOpenAICodexTicketHarvestProxyURL = "openai_codex_ticket_harvest_proxy_url"
 	// SettingKeyOpenAICodexTicketAccountIDs 可选的账号白名单；空值保持旧的全局语义。
 	SettingKeyOpenAICodexTicketAccountIDs = "openai_codex_ticket_account_ids"
+	// SettingKeyOpenAICodexTicketAccountModels 可选的账号级模型范围；未列出的白名单账号沿用全局模型列表。
+	SettingKeyOpenAICodexTicketAccountModels = "openai_codex_ticket_account_models"
 	// SettingKeyOpenAIAllowClaudeCodeCodexPlugin 已废弃：历史全局开关只作为升级迁移输入读取。
 	// 迁移后等价规则写入 SettingKeyCodexCLIOnlyWhitelist，不再参与运行时判定。
 	SettingKeyOpenAIAllowClaudeCodeCodexPlugin = "openai_allow_claude_code_codex_plugin"

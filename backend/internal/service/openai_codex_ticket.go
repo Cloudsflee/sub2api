@@ -113,9 +113,9 @@ func OpenAICodexTicketStatuses(account *Account, cfg config.OpenAICodexTicketCon
 	if !cfg.Enabled || !isOpenAICodexTicketAccount(account) {
 		return nil
 	}
-	models, targetLen := cfg.Models, cfg.TargetLength
+	models, targetLen := OpenAICodexTicketModelsForAccount(account, cfg), cfg.TargetLength
 	if len(models) == 0 {
-		models = []string{openAICodexTicketDefaultModel, openAICodexTicketDefaultSolModel}
+		return nil
 	}
 	if targetLen <= 0 {
 		targetLen = 292
@@ -174,6 +174,54 @@ func OpenAICodexTicketAccountAllowed(account *Account, accountIDs []int64) bool 
 	}
 	for _, id := range accountIDs {
 		if id == account.ID {
+			return true
+		}
+	}
+	return false
+}
+
+// OpenAICodexTicketModelsForAccount resolves the global model set through an
+// optional account-specific override. An explicit empty override disables all
+// ticket handling for that account while leaving its ordinary requests intact.
+func OpenAICodexTicketModelsForAccount(account *Account, cfg config.OpenAICodexTicketConfig) []string {
+	models := cfg.Models
+	if len(models) == 0 {
+		models = []string{openAICodexTicketDefaultModel, openAICodexTicketDefaultSolModel}
+	}
+	if account == nil || account.ID <= 0 {
+		return nil
+	}
+	scoped, exists := cfg.AccountModels[strconv.FormatInt(account.ID, 10)]
+	if !exists {
+		return append([]string(nil), models...)
+	}
+	allowed := make(map[string]struct{}, len(scoped))
+	for _, model := range scoped {
+		if model = normalizeOpenAICodexTicketModel(model); model != "" {
+			allowed[model] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(models))
+	for _, model := range models {
+		model = normalizeOpenAICodexTicketModel(model)
+		if _, ok := allowed[model]; ok {
+			result = append(result, model)
+		}
+	}
+	return result
+}
+
+func (s *OpenAIGatewayService) openAICodexTicketAccountModelAllowed(ctx context.Context, account *Account, model string) bool {
+	if s == nil || account == nil {
+		return false
+	}
+	cfg := s.openAICodexTicketConfig()
+	if s.settingService != nil {
+		cfg.AccountModels = s.settingService.GetOpenAICodexTicketAccountModels(ctx)
+	}
+	model = normalizeOpenAICodexTicketModel(model)
+	for _, allowed := range OpenAICodexTicketModelsForAccount(account, cfg) {
+		if normalizeOpenAICodexTicketModel(allowed) == model {
 			return true
 		}
 	}
@@ -325,7 +373,7 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, accou
 		return nil
 	}
 	model = normalizeOpenAICodexTicketModel(model)
-	if model == "" || !s.openAICodexTicketGatedModel(model) {
+	if model == "" || !s.openAICodexTicketAccountModelAllowed(ctx, account, model) || !s.openAICodexTicketGatedModel(model) {
 		return nil
 	}
 	cfg := s.openAICodexTicketConfig()
@@ -384,7 +432,7 @@ func (s *OpenAIGatewayService) openAICodexTicketBlocksAccount(account *Account, 
 		return false
 	}
 	model := normalizeOpenAICodexTicketModel(outboundModel)
-	if !s.openAICodexTicketGatedModel(model) {
+	if !s.openAICodexTicketAccountModelAllowed(context.Background(), account, model) || !s.openAICodexTicketGatedModel(model) {
 		return false
 	}
 	ticket := s.lookupOpenAICodexTicket(account, model)
@@ -532,7 +580,11 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTickets(ctx context.Context) {
 		if account.Status != StatusActive || !isOpenAICodexTicketAccount(&account) || !s.openAICodexTicketAccountAllowed(ctx, &account) {
 			continue
 		}
-		for _, model := range cfg.Models {
+		accountCfg := cfg
+		if s.settingService != nil {
+			accountCfg.AccountModels = s.settingService.GetOpenAICodexTicketAccountModels(ctx)
+		}
+		for _, model := range OpenAICodexTicketModelsForAccount(&account, accountCfg) {
 			model := normalizeOpenAICodexTicketModel(model)
 			if model == "" {
 				continue
@@ -563,7 +615,7 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTickets(ctx context.Context) {
 // gAAAAA 前缀）就落库；否则记 Info miss，交给下个周期重试。同一 key 并发去重，避免上一发还没
 // 回来又叠一发。
 func (s *OpenAIGatewayService) probeOnceOpenAICodexTicket(ctx context.Context, account *Account, model string) {
-	if s == nil || !isOpenAICodexTicketAccount(account) || ctx.Err() != nil || !s.openAICodexTicketEnabledContext(ctx) || !s.openAICodexTicketAccountAllowed(ctx, account) {
+	if s == nil || !isOpenAICodexTicketAccount(account) || ctx.Err() != nil || !s.openAICodexTicketEnabledContext(ctx) || !s.openAICodexTicketAccountAllowed(ctx, account) || !s.openAICodexTicketAccountModelAllowed(ctx, account, model) {
 		return
 	}
 	cfg := s.openAICodexTicketConfig()

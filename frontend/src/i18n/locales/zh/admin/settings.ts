@@ -547,6 +547,9 @@ export default {
         codexTicketAccountIDs: '门票账号白名单',
         codexTicketAccountIDsPlaceholder: '例如 2225, 2230',
         codexTicketAccountIDsDesc: '留空表示全局账号；填写账号 ID 后，仅这些账号进行打票和门票注入。',
+        codexTicketAccountModels: '账号模型范围',
+        codexTicketAccountModelsPlaceholder: '2226:gpt-6-astra',
+        codexTicketAccountModelsDesc: '每行填写“账号ID:模型”，多个模型用 | 分隔。未列出的白名单账号沿用全局模型；列出的账号只处理指定模型。',
         codexClientRestrictionTitle: 'Codex 客户端限制',
         codexHardeningDesc:
           '仅对已开启「仅允许 Codex 官方客户端」的 OpenAI OAuth 账号生效（全局）。在 User-Agent/Originator 之外，用版本区间、引擎指纹门与黑/白名单巩固判定。',
