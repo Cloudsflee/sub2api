@@ -20,7 +20,7 @@ function Get-SettingsEndpoint([string] $raw) {
 
 $endpoint = Get-SettingsEndpoint $ApiUrl
 $headers = @{ Accept = 'application/json' }
-if ($Token) { $headers.Authorization = "Bearer $Token" }
+if ($Token) { $headers.'x-api-key' = $Token }
 $payload = @{ openai_codex_ticket_harvest_proxy_url = $PreviousProxyURLs }
 if ($RestoreBusinessLinkage) {
     $payload.openai_codex_ticket_sync_business_proxy = $true

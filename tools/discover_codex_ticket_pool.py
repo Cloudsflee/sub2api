@@ -402,7 +402,9 @@ def _api_request(endpoint: str, method: str, token: str, payload: dict[str, Any]
     body = None if payload is None else json.dumps(payload, separators=(",", ":")).encode("utf-8")
     headers = {"Accept": "application/json"}
     if token:
-        headers["Authorization"] = f"Bearer {token}"
+        # The admin middleware reserves x-api-key for machine credentials;
+        # Authorization: Bearer is the separate JWT session path.
+        headers["x-api-key"] = token
     if body is not None:
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(endpoint, data=body, headers=headers, method=method)

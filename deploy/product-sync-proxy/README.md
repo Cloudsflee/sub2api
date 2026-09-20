@@ -65,8 +65,10 @@ python3 /opt/sub2api/tools/discover_codex_ticket_pool.py \
   --output /var/lib/sub2api-product-proxy/codex-ticket-pool.json
 ```
 
-After the report has been reviewed, pass an admin API token and explicitly
-write the selected listeners. The PUT is a partial settings update, so the
+After the report has been reviewed, pass the administrator API key and
+explicitly write the selected listeners. The script sends it in the
+`x-api-key` header (the `Authorization: Bearer` header is reserved for JWT
+sessions). The PUT is a partial settings update, so the
 application's settings coordinator performs the durable write and runtime
 cache refresh. With more than one selected listener it also persists
 `openai_codex_ticket_sync_business_proxy=false`, preserving the existing

@@ -113,6 +113,18 @@ proxies:
             pool._mask_url("http://user:secret@listener.example:8080"),
         )
 
+    @mock.patch.object(pool.urllib.request, "urlopen")
+    def test_api_request_uses_admin_api_key_header(self, urlopen):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"{}"
+        urlopen.return_value = response
+
+        self.assertEqual({}, pool._api_request("http://listener.test/admin/settings", "GET", "TOKEN"))
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual("TOKEN", request.get_header("X-api-key"))
+        self.assertIsNone(request.get_header("Authorization"))
+
     @mock.patch.object(pool, "_api_request")
     def test_single_entry_write_does_not_toggle_business_linkage(self, request):
         request.side_effect = [{}, {"data": {"openai_codex_ticket_harvest_proxy_url": "http://listener.example:17891", "openai_codex_ticket_sync_business_proxy": True}}]
