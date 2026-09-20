@@ -13,12 +13,20 @@ type settingRepository struct {
 	client *ent.Client
 }
 
+func (r *settingRepository) clientForContext(ctx context.Context) *ent.Client {
+	if tx := ent.TxFromContext(ctx); tx != nil {
+		return tx.Client()
+	}
+	return r.client
+}
+
 func NewSettingRepository(client *ent.Client) service.SettingRepository {
 	return &settingRepository{client: client}
 }
 
 func (r *settingRepository) Get(ctx context.Context, key string) (*service.Setting, error) {
-	m, err := r.client.Setting.Query().Where(setting.KeyEQ(key)).Only(ctx)
+	client := r.clientForContext(ctx)
+	m, err := client.Setting.Query().Where(setting.KeyEQ(key)).Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
 			return nil, service.ErrSettingNotFound
@@ -43,7 +51,7 @@ func (r *settingRepository) GetValue(ctx context.Context, key string) (string, e
 
 func (r *settingRepository) Set(ctx context.Context, key, value string) error {
 	now := time.Now()
-	return r.client.Setting.
+	return r.clientForContext(ctx).Setting.
 		Create().
 		SetKey(key).
 		SetValue(value).
@@ -57,7 +65,7 @@ func (r *settingRepository) GetMultiple(ctx context.Context, keys []string) (map
 	if len(keys) == 0 {
 		return map[string]string{}, nil
 	}
-	settings, err := r.client.Setting.Query().Where(setting.KeyIn(keys...)).All(ctx)
+	settings, err := r.clientForContext(ctx).Setting.Query().Where(setting.KeyIn(keys...)).All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -75,11 +83,12 @@ func (r *settingRepository) SetMultiple(ctx context.Context, settings map[string
 	}
 
 	now := time.Now()
+	client := r.clientForContext(ctx)
 	builders := make([]*ent.SettingCreate, 0, len(settings))
 	for key, value := range settings {
-		builders = append(builders, r.client.Setting.Create().SetKey(key).SetValue(value).SetUpdatedAt(now))
+		builders = append(builders, client.Setting.Create().SetKey(key).SetValue(value).SetUpdatedAt(now))
 	}
-	return r.client.Setting.
+	return client.Setting.
 		CreateBulk(builders...).
 		OnConflictColumns(setting.FieldKey).
 		UpdateNewValues().
@@ -87,7 +96,7 @@ func (r *settingRepository) SetMultiple(ctx context.Context, settings map[string
 }
 
 func (r *settingRepository) GetAll(ctx context.Context) (map[string]string, error) {
-	settings, err := r.client.Setting.Query().All(ctx)
+	settings, err := r.clientForContext(ctx).Setting.Query().All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +109,6 @@ func (r *settingRepository) GetAll(ctx context.Context) (map[string]string, erro
 }
 
 func (r *settingRepository) Delete(ctx context.Context, key string) error {
-	_, err := r.client.Setting.Delete().Where(setting.KeyEQ(key)).Exec(ctx)
+	_, err := r.clientForContext(ctx).Setting.Delete().Where(setting.KeyEQ(key)).Exec(ctx)
 	return err
 }

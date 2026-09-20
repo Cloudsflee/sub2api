@@ -762,7 +762,20 @@ func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsSer
 	return aggregator
 }
 
-// ProvideSettingService wires SettingService with group reader and proxy repo.
+// ProvideCodexTicketProxySyncService wires the transaction coordinator used by
+// the admin settings save path.
+func ProvideCodexTicketProxySyncService(
+	entClient *dbent.Client,
+	settingRepo SettingRepository,
+	accountRepo AccountRepository,
+	proxyRepo ProxyRepository,
+	schedulerCache SchedulerCache,
+) *CodexTicketProxySyncService {
+	return NewCodexTicketProxySyncService(entClient, settingRepo, accountRepo, proxyRepo, schedulerCache)
+}
+
+// ProvideSettingService wires SettingService with group reader, proxy repo,
+// and the optional Codex ticket proxy transaction coordinator.
 func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
 	svc := NewSettingService(settingRepo, cfg)
 	svc.SetDefaultSubscriptionGroupReader(groupRepo)
@@ -785,6 +798,21 @@ func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupReposit
 	SetCodexCanonicalUserAgentResolver(func() string {
 		return svc.GetOpenAICodexCanonicalUserAgent(context.Background())
 	})
+	return svc
+}
+
+func ProvideSettingServiceWithCodexTicketProxySync(
+	settingRepo SettingRepository,
+	groupRepo GroupRepository,
+	proxyRepo ProxyRepository,
+	cfg *config.Config,
+	coordinator *CodexTicketProxySyncService,
+) *SettingService {
+	svc := ProvideSettingService(settingRepo, groupRepo, proxyRepo, cfg)
+	if coordinator != nil && cfg != nil {
+		coordinator.SetFallbackHarvestProxyURL(cfg.Gateway.OpenAICodexTicket.HarvestProxyURL)
+	}
+	svc.SetCodexTicketProxySyncService(coordinator)
 	return svc
 }
 
@@ -883,7 +911,8 @@ var ProviderSet = wire.NewSet(
 	ProvideAccountTestService,
 	ProvideUpstreamBillingProbeService,
 	ProvideOllamaCloudUsageService,
-	ProvideSettingService,
+	ProvideCodexTicketProxySyncService,
+	ProvideSettingServiceWithCodexTicketProxySync,
 	NewDataManagementService,
 	ProvideBackupService,
 	ProvideOpsSystemLogSink,

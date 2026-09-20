@@ -717,6 +717,10 @@ const (
 	SettingKeyOpenAICodexTicketAccountIDs = "openai_codex_ticket_account_ids"
 	// SettingKeyOpenAICodexTicketAccountModels 可选的账号级模型范围；未列出的白名单账号沿用全局模型列表。
 	SettingKeyOpenAICodexTicketAccountModels = "openai_codex_ticket_account_models"
+	// SettingKeyOpenAICodexTicketSyncBusinessProxy controls automatic binding of
+	// the harvest proxy to eligible OpenAI OAuth business traffic.
+	SettingKeyOpenAICodexTicketSyncBusinessProxy        = "openai_codex_ticket_sync_business_proxy"
+	SettingKeyOpenAICodexTicketSyncBusinessProxyEnabled = SettingKeyOpenAICodexTicketSyncBusinessProxy
 	// SettingKeyOpenAIAllowClaudeCodeCodexPlugin 已废弃：历史全局开关只作为升级迁移输入读取。
 	// 迁移后等价规则写入 SettingKeyCodexCLIOnlyWhitelist，不再参与运行时判定。
 	SettingKeyOpenAIAllowClaudeCodeCodexPlugin = "openai_allow_claude_code_codex_plugin"

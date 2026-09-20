@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -167,10 +168,18 @@ func newAccountRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor, schedul
 }
 
 func (r *accountRepository) Create(ctx context.Context, account *service.Account) error {
-	if err := createAccountRecord(ctx, r.client, account); err != nil {
+	client := r.client
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		client = tx.Client()
+	}
+	if err := createAccountRecord(ctx, client, account); err != nil {
 		return err
 	}
-	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &account.ID, nil, buildSchedulerGroupPayload(account.GroupIDs)); err != nil {
+	exec := r.sql
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		exec = tx.Client()
+	}
+	if err := enqueueSchedulerOutbox(ctx, exec, service.SchedulerOutboxEventAccountChanged, &account.ID, nil, buildSchedulerGroupPayload(account.GroupIDs)); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue account create failed: account=%d err=%v", account.ID, err)
 	}
 	return nil
@@ -305,7 +314,11 @@ func (r *accountRepository) CreateWithAccountGroups(ctx context.Context, account
 }
 
 func (r *accountRepository) GetByID(ctx context.Context, id int64) (*service.Account, error) {
-	m, err := r.client.Account.Query().Where(dbaccount.IDEQ(id)).Only(ctx)
+	client := r.client
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		client = tx.Client()
+	}
+	m, err := client.Account.Query().Where(dbaccount.IDEQ(id)).Only(ctx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrAccountNotFound, nil)
 	}
@@ -342,7 +355,11 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 		return []*service.Account{}, nil
 	}
 
-	entAccounts, err := r.client.Account.
+	client := r.client
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		client = tx.Client()
+	}
+	entAccounts, err := client.Account.
 		Query().
 		Where(dbaccount.IDIn(uniqueIDs...)).
 		WithProxy().
@@ -1607,7 +1624,11 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 }
 
 func (r *accountRepository) ListByPlatform(ctx context.Context, platform string) ([]service.Account, error) {
-	accounts, err := r.client.Account.Query().
+	client := r.client
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		client = tx.Client()
+	}
+	accounts, err := client.Account.Query().
 		Where(
 			dbaccount.PlatformEQ(platform),
 			dbaccount.StatusEQ(service.StatusActive),
@@ -1620,14 +1641,88 @@ func (r *accountRepository) ListByPlatform(ctx context.Context, platform string)
 	return r.accountsToService(ctx, accounts)
 }
 
+// UpdateCodexTicketBusinessProxy applies one proxy binding to the requested
+// eligible accounts and emits a single merged scheduler outbox event. The
+// caller normally supplies a transaction context; standalone callers get a
+// private transaction for the same atomic behavior.
+func (r *accountRepository) UpdateCodexTicketBusinessProxy(ctx context.Context, proxyID int64, accountIDs []int64) ([]int64, error) {
+	if proxyID <= 0 || len(accountIDs) == 0 {
+		return []int64{}, nil
+	}
+	if dbent.TxFromContext(ctx) == nil {
+		tx, err := r.client.Tx(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = tx.Rollback() }()
+		changed, err := r.UpdateCodexTicketBusinessProxy(dbent.NewTxContext(ctx, tx), proxyID, accountIDs)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		r.syncSchedulerAccountSnapshots(ctx, changed)
+		return changed, nil
+	}
+
+	exec := r.sql
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		exec = tx.Client()
+	}
+	rows, err := exec.QueryContext(ctx, `
+		UPDATE accounts
+		SET proxy_id = $1, updated_at = NOW()
+		WHERE id = ANY($2)
+		  AND platform = 'openai'
+		  AND type = 'oauth'
+		  AND status = 'active'
+		  AND (expires_at IS NULL OR expires_at > NOW())
+		  AND parent_account_id IS NULL
+		  AND deleted_at IS NULL
+		  AND proxy_id IS DISTINCT FROM $1
+		RETURNING id
+	`, proxyID, pq.Array(accountIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	changed := make([]int64, 0, len(accountIDs))
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		changed = append(changed, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	sort.Slice(changed, func(i, j int) bool { return changed[i] < changed[j] })
+	if len(changed) == 0 {
+		return changed, nil
+	}
+	if err := enqueueSchedulerOutbox(ctx, exec, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, map[string]any{"account_ids": changed}); err != nil {
+		return nil, err
+	}
+	return changed, nil
+}
+
 // ListByPlatformAllStatuses returns every account for a platform, including
 // disabled accounts.  The general ListByPlatform contract intentionally stays
 // active-only because it is used by schedulers and other callers that should
 // never hydrate disabled accounts.  Administrative preview flows can opt into
 // this narrower method when they need accurate exclusion counts.
 func (r *accountRepository) ListByPlatformAllStatuses(ctx context.Context, platform string) ([]service.Account, error) {
-	accounts, err := r.client.Account.Query().
-		Where(dbaccount.PlatformEQ(platform)).
+	client := r.client
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		client = tx.Client()
+	}
+	accounts, err := client.Account.Query().
+		Where(dbaccount.PlatformEQ(platform), dbaccount.DeletedAtIsNil()).
 		Order(dbent.Asc(dbaccount.FieldPriority)).
 		All(ctx)
 	if err != nil {
@@ -3919,12 +4014,16 @@ func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64) (
 		return proxyMap, nil
 	}
 
+	client := r.client
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		client = tx.Client()
+	}
 	for start := 0; start < len(proxyIDs); start += postgresParameterBatchSize {
 		end := start + postgresParameterBatchSize
 		if end > len(proxyIDs) {
 			end = len(proxyIDs)
 		}
-		proxies, err := r.client.Proxy.Query().Where(dbproxy.IDIn(proxyIDs[start:end]...)).All(ctx)
+		proxies, err := client.Proxy.Query().Where(dbproxy.IDIn(proxyIDs[start:end]...)).All(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -3945,12 +4044,16 @@ func (r *accountRepository) loadAccountGroups(ctx context.Context, accountIDs []
 		return groupsByAccount, groupIDsByAccount, accountGroupsByAccount, nil
 	}
 
+	client := r.client
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		client = tx.Client()
+	}
 	for start := 0; start < len(accountIDs); start += postgresParameterBatchSize {
 		end := start + postgresParameterBatchSize
 		if end > len(accountIDs) {
 			end = len(accountIDs)
 		}
-		entries, err := r.client.AccountGroup.Query().
+		entries, err := client.AccountGroup.Query().
 			Where(dbaccountgroup.AccountIDIn(accountIDs[start:end]...)).
 			Order(dbaccountgroup.ByAccountID(), dbaccountgroup.ByPriority()).
 			All(ctx)
@@ -3993,12 +4096,16 @@ func (r *accountRepository) loadGroups(ctx context.Context, groupIDs []int64) (m
 		return groupMap, nil
 	}
 
+	client := r.client
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		client = tx.Client()
+	}
 	for start := 0; start < len(groupIDs); start += postgresParameterBatchSize {
 		end := start + postgresParameterBatchSize
 		if end > len(groupIDs) {
 			end = len(groupIDs)
 		}
-		groups, err := r.client.Group.Query().Where(dbgroup.IDIn(groupIDs[start:end]...)).All(ctx)
+		groups, err := client.Group.Query().Where(dbgroup.IDIn(groupIDs[start:end]...)).All(ctx)
 		if err != nil {
 			return nil, err
 		}

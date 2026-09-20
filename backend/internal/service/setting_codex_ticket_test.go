@@ -121,6 +121,11 @@ func TestCodexTicketProxyMaskAndValidation(t *testing.T) {
 	}
 	require.True(t, IsMaskedProxyURL(""))
 	require.False(t, IsMaskedProxyURL("http://user:secret***suffix@proxy.example.com:8080"))
+	pool := "http://user:secret@proxy.example.com:8080\nsocks5h://user:secret@proxy.example.com:1080"
+	maskedPool := MaskProxyURL(pool)
+	require.NotContains(t, maskedPool, "secret")
+	require.Contains(t, maskedPool, "\n")
+	require.True(t, IsMaskedProxyURL(maskedPool))
 	for _, raw := range []string{"user:secret@host:1234", "http://user:secret@", "ftp://user:secret@host:1234", "http://user:secret@host:99999", "http://host:1234/?password=secret", "http://host:1234/#secret", "http://user:secret%zz@host:1234"} {
 		err := ValidateOpenAICodexTicketHarvestProxyURL(raw)
 		require.Error(t, err)
@@ -135,4 +140,30 @@ func TestCodexTicketSettingsRefreshDoesNotMutateSharedConfig(t *testing.T) {
 	svc.refreshCachedSettings(&SystemSettings{OpenAICodexTicketEnabled: true})
 	require.False(t, cfg.Gateway.OpenAICodexTicket.Enabled, "runtime settings must not write the shared immutable startup configuration")
 	require.True(t, svc.GetOpenAICodexTicketEnabled(context.Background(), false))
+}
+
+func TestCodexTicketSettingsForceHarvestOnlyForMultiEntryPool(t *testing.T) {
+	repo := &codexTicketSettingRepo{codexPolicyMigrationRepoStub: &codexPolicyMigrationRepoStub{values: map[string]string{}}}
+	svc := NewSettingService(repo, &config.Config{})
+	settings := &SystemSettings{
+		OpenAICodexTicketHarvestProxyURL:   "http://listener-a.example:17891\nhttp://listener-b.example:17892",
+		OpenAICodexTicketSyncBusinessProxy: true,
+	}
+	updates, err := svc.buildSystemSettingsUpdates(context.Background(), settings)
+	require.NoError(t, err)
+	require.False(t, settings.OpenAICodexTicketSyncBusinessProxy)
+	require.Equal(t, "false", updates[SettingKeyOpenAICodexTicketSyncBusinessProxy])
+}
+
+func TestCodexTicketPartialSettingsCannotReenableMultiEntryBusinessLinkage(t *testing.T) {
+	repo := &codexSyncSettingRepoStub{writes: map[string]string{}}
+	svc := NewSettingService(repo, &config.Config{})
+	settings := &SystemSettings{
+		OpenAICodexTicketHarvestProxyURL:   "http://listener-a.example:17891\nhttp://listener-b.example:17892",
+		OpenAICodexTicketSyncBusinessProxy: true,
+	}
+	require.NoError(t, svc.UpdateSettingsOmitting(context.Background(), settings, OmittedSettingKeys{
+		SettingKeyOpenAICodexTicketSyncBusinessProxy: {},
+	}))
+	require.Equal(t, "false", repo.writes[SettingKeyOpenAICodexTicketSyncBusinessProxy])
 }

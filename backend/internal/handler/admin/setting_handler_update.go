@@ -261,6 +261,7 @@ type UpdateSettingsRequest struct {
 	OpenAICodexTicketHarvestProxyURL       string               `json:"openai_codex_ticket_harvest_proxy_url"`
 	OpenAICodexTicketAccountIDs            *[]int64             `json:"openai_codex_ticket_account_ids"`
 	OpenAICodexTicketAccountModels         *map[string][]string `json:"openai_codex_ticket_account_models"`
+	OpenAICodexTicketSyncBusinessProxy     *bool                `json:"openai_codex_ticket_sync_business_proxy"`
 
 	// codex_cli_only 加固（global-only）
 	MinCodexVersion                      string `json:"min_codex_version"`
@@ -1797,6 +1798,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return service.CloneOpenAICodexTicketAccountModels(previousSettings.OpenAICodexTicketAccountModels)
 		}(),
+		OpenAICodexTicketSyncBusinessProxy: func() bool {
+			if req.OpenAICodexTicketSyncBusinessProxy != nil {
+				return *req.OpenAICodexTicketSyncBusinessProxy
+			}
+			return previousSettings.OpenAICodexTicketSyncBusinessProxy
+		}(),
 		MinCodexVersion:       strings.TrimSpace(req.MinCodexVersion),
 		MaxCodexVersion:       strings.TrimSpace(req.MaxCodexVersion),
 		CodexCLIOnlyBlacklist: strings.TrimSpace(req.CodexCLIOnlyBlacklist),
@@ -2344,6 +2351,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexTicketHarvestProxyConfigured:                strings.TrimSpace(updatedSettings.OpenAICodexTicketHarvestProxyURL) != "",
 		OpenAICodexTicketAccountIDs:                            append([]int64(nil), updatedSettings.OpenAICodexTicketAccountIDs...),
 		OpenAICodexTicketAccountModels:                         service.CloneOpenAICodexTicketAccountModels(updatedSettings.OpenAICodexTicketAccountModels),
+		OpenAICodexTicketSyncBusinessProxy:                     updatedSettings.OpenAICodexTicketSyncBusinessProxy,
 		MinCodexVersion:                                        updatedSettings.MinCodexVersion,
 		MaxCodexVersion:                                        updatedSettings.MaxCodexVersion,
 		CodexCLIOnlyBlacklist:                                  updatedSettings.CodexCLIOnlyBlacklist,

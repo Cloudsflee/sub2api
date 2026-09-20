@@ -106,6 +106,14 @@ type SettingRepository interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// SettingsWriteCoordinator optionally wraps the settings write and related
+// durable changes in one transaction. Implementations are installed by the
+// application wiring; keeping this contract optional preserves the lightweight
+// SettingService test doubles used by unrelated settings features.
+type SettingsWriteCoordinator interface {
+	PersistSettings(ctx context.Context, updates map[string]string, settings *SystemSettings) error
+}
+
 // DefaultSubscriptionGroupReader validates group references used by default subscriptions.
 type DefaultSubscriptionGroupReader interface {
 	GetByID(ctx context.Context, id int64) (*Group, error)
@@ -117,29 +125,32 @@ type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[i
 
 // SettingService 系统设置服务
 type SettingService struct {
-	settingRepo                         SettingRepository
-	defaultSubGroupReader               DefaultSubscriptionGroupReader
-	proxyRepo                           ProxyRepository // for resolving websearch provider proxy URLs
-	cfg                                 *config.Config
-	onUpdate                            func() // Callback when settings are updated (for cache invalidation)
-	version                             string // Application version
-	webSearchManagerBuilder             WebSearchManagerBuilder
-	antigravityUAVersionCache           atomic.Value // *cachedAntigravityUserAgentVersion
-	antigravityUAVersionSF              singleflight.Group
-	openAICodexUACache                  atomic.Value // *cachedOpenAICodexUserAgent
-	openAICodexUASF                     singleflight.Group
-	openAICodexVersionCache             atomic.Value // *cachedOpenAICodexClientVersion
-	openAICodexVersionSF                singleflight.Group
-	openAICodexTicketEnabledCache       atomic.Value // *cachedOpenAICodexTicketEnabled
-	openAICodexTicketEnabledSF          singleflight.Group
-	openAICodexTicketHarvestProxyCache  atomic.Value // *cachedOpenAICodexTicketHarvestProxy
-	openAICodexTicketHarvestProxySF     singleflight.Group
-	openAICodexTicketAccountIDsCache    atomic.Value // *cachedOpenAICodexTicketAccountIDs
-	openAICodexTicketAccountIDsSF       singleflight.Group
-	openAICodexTicketAccountModelsCache atomic.Value // *cachedOpenAICodexTicketAccountModels
-	openAICodexTicketAccountModelsSF    singleflight.Group
-	codexRestrictionPolicyCache         atomic.Value // *cachedCodexRestrictionPolicy
-	codexRestrictionPolicySF            singleflight.Group
+	settingRepo                             SettingRepository
+	settingsWriteCoordinator                SettingsWriteCoordinator
+	defaultSubGroupReader                   DefaultSubscriptionGroupReader
+	proxyRepo                               ProxyRepository // for resolving websearch provider proxy URLs
+	cfg                                     *config.Config
+	onUpdate                                func() // Callback when settings are updated (for cache invalidation)
+	version                                 string // Application version
+	webSearchManagerBuilder                 WebSearchManagerBuilder
+	antigravityUAVersionCache               atomic.Value // *cachedAntigravityUserAgentVersion
+	antigravityUAVersionSF                  singleflight.Group
+	openAICodexUACache                      atomic.Value // *cachedOpenAICodexUserAgent
+	openAICodexUASF                         singleflight.Group
+	openAICodexVersionCache                 atomic.Value // *cachedOpenAICodexClientVersion
+	openAICodexVersionSF                    singleflight.Group
+	openAICodexTicketEnabledCache           atomic.Value // *cachedOpenAICodexTicketEnabled
+	openAICodexTicketEnabledSF              singleflight.Group
+	openAICodexTicketSyncBusinessProxyCache atomic.Value // *cachedOpenAICodexTicketSyncBusinessProxy
+	openAICodexTicketSyncBusinessProxySF    singleflight.Group
+	openAICodexTicketHarvestProxyCache      atomic.Value // *cachedOpenAICodexTicketHarvestProxy
+	openAICodexTicketHarvestProxySF         singleflight.Group
+	openAICodexTicketAccountIDsCache        atomic.Value // *cachedOpenAICodexTicketAccountIDs
+	openAICodexTicketAccountIDsSF           singleflight.Group
+	openAICodexTicketAccountModelsCache     atomic.Value // *cachedOpenAICodexTicketAccountModels
+	openAICodexTicketAccountModelsSF        singleflight.Group
+	codexRestrictionPolicyCache             atomic.Value // *cachedCodexRestrictionPolicy
+	codexRestrictionPolicySF                singleflight.Group
 
 	cyberSessionBlockRuntimeCache atomic.Value // *cachedCyberSessionBlockRuntime
 	cyberSessionBlockRuntimeSF    singleflight.Group
@@ -300,6 +311,21 @@ func NewSettingService(settingRepo SettingRepository, cfg *config.Config) *Setti
 		settingRepo: settingRepo,
 		cfg:         cfg,
 	}
+}
+
+// SetSettingsWriteCoordinator attaches the optional transaction coordinator
+// used by Codex ticket proxy synchronization.
+func (s *SettingService) SetSettingsWriteCoordinator(coordinator SettingsWriteCoordinator) {
+	if s == nil {
+		return
+	}
+	s.settingsWriteCoordinator = coordinator
+}
+
+// SetCodexTicketProxySyncService is an explicit convenience alias for wiring
+// the Codex coordinator from application bootstrap code and focused tests.
+func (s *SettingService) SetCodexTicketProxySyncService(syncService *CodexTicketProxySyncService) {
+	s.SetSettingsWriteCoordinator(syncService)
 }
 
 // SetDefaultSubscriptionGroupReader injects an optional group reader for default subscription validation.

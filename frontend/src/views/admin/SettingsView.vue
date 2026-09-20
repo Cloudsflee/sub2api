@@ -4516,6 +4516,20 @@
                     v-model="form.openai_codex_ticket_enabled"
                   />
                 </div>
+                <div class="flex items-center justify-between gap-4">
+                  <div class="min-w-0">
+                    <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                      {{ t("admin.settings.gatewayForwarding.codexTicketSyncBusinessProxy") }}
+                    </h3>
+                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.codexTicketSyncBusinessProxyDesc") }}
+                    </p>
+                  </div>
+                  <Toggle
+                    id="codex-ticket-sync-business-proxy"
+                    v-model="form.openai_codex_ticket_sync_business_proxy"
+                  />
+                </div>
                 <div>
                   <h3 class="text-base font-semibold text-gray-900 dark:text-white">
                     {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxy") }}
@@ -4523,11 +4537,11 @@
                   <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
                     {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxyDesc") }}
                   </p>
-                  <input
+                  <textarea
                     id="codex-ticket-harvest-proxy"
                     v-model="form.openai_codex_ticket_harvest_proxy_url"
-                    type="text"
-                    class="input mt-3 w-full font-mono text-sm"
+                    rows="4"
+                    class="input mt-3 w-full resize-y font-mono text-sm"
                     :placeholder="t('admin.settings.gatewayForwarding.codexTicketHarvestProxyPlaceholder')"
                     autocomplete="off"
                   />
@@ -9648,6 +9662,7 @@ type SettingsForm = Omit<
   openai_advanced_scheduler_weight_session_sticky: string;
   openai_codex_ticket_account_ids: string;
   openai_codex_ticket_account_models: string;
+  openai_codex_ticket_sync_business_proxy: boolean;
   // 系统全局平台限额 map；form 内始终归一化为全 4 平台对象（模板非空绑定依赖此不变量）
   default_platform_quotas: DefaultPlatformQuotasMap;
   account_scheduling_thresholds: ReturnType<typeof normalizeAccountSchedulingThresholdsMap>;
@@ -9913,6 +9928,7 @@ const form = reactive<SettingsForm>({
   openai_codex_ticket_harvest_proxy_configured: false,
   openai_codex_ticket_account_ids: "",
   openai_codex_ticket_account_models: "",
+  openai_codex_ticket_sync_business_proxy: true,
   // codex_cli_only 加固
   min_codex_version: "",
   max_codex_version: "",
@@ -11570,6 +11586,8 @@ async function saveSettings() {
       openai_codex_ticket_account_models: parseCodexTicketAccountModels(
         String(form.openai_codex_ticket_account_models || ""),
       ),
+      openai_codex_ticket_sync_business_proxy:
+        form.openai_codex_ticket_sync_business_proxy,
       min_codex_version: form.min_codex_version?.trim() || "",
       max_codex_version: form.max_codex_version?.trim() || "",
       codex_cli_only_allow_app_server_clients:

@@ -222,6 +222,7 @@ type SystemSettings struct {
 	OpenAICodexTicketHarvestProxyConfigured bool                `json:"openai_codex_ticket_harvest_proxy_configured"`
 	OpenAICodexTicketAccountIDs             []int64             `json:"openai_codex_ticket_account_ids"`
 	OpenAICodexTicketAccountModels          map[string][]string `json:"openai_codex_ticket_account_models"`
+	OpenAICodexTicketSyncBusinessProxy      bool                `json:"openai_codex_ticket_sync_business_proxy"`
 
 	// codex_cli_only 加固
 	MinCodexVersion                      string `json:"min_codex_version"`

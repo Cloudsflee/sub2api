@@ -254,6 +254,7 @@ type SystemSettings struct {
 	OpenAICodexTicketHarvestProxyURL       string              // Codex 292 打票代理 URL；空则回退 yaml/env
 	OpenAICodexTicketAccountIDs            []int64             // 非空时仅对这些账号打票和注入；空值保持全局语义
 	OpenAICodexTicketAccountModels         map[string][]string // 账号 ID 到门票模型列表；缺少账号项时沿用全局模型列表
+	OpenAICodexTicketSyncBusinessProxy     bool                // 是否将采集代理自动绑定到有效 OpenAI OAuth 账号（默认 true）
 	MinCodexVersion                        string              // codex_cli_only 最低 Codex 引擎版本；空=不检查
 	MaxCodexVersion                        string              // codex_cli_only 最高 Codex 引擎版本；空=不检查
 	CodexCLIOnlyBlacklist                  string              // codex_cli_only 全局黑名单 JSON（[]AllowedClientEntry，OR deny）

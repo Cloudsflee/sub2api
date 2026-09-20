@@ -23,6 +23,13 @@ type proxyRepository struct {
 	sql    sqlExecutor
 }
 
+func (r *proxyRepository) clientForContext(ctx context.Context) *dbent.Client {
+	if tx := dbent.TxFromContext(ctx); tx != nil {
+		return tx.Client()
+	}
+	return r.client
+}
+
 const proxyProbeOutboxAccountChunkSize = 500
 
 func NewProxyRepository(client *dbent.Client, sqlDB *sql.DB) service.ProxyRepository {
@@ -34,7 +41,8 @@ func newProxyRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *proxyRep
 }
 
 func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) error {
-	builder := r.client.Proxy.Create().
+	client := r.clientForContext(ctx)
+	builder := client.Proxy.Create().
 		SetName(proxyIn.Name).
 		SetProtocol(proxyIn.Protocol).
 		SetHost(proxyIn.Host).
@@ -62,8 +70,53 @@ func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) er
 	return err
 }
 
+// FindOrCreateCodexTicketProxy resolves a harvest proxy by its full
+// connection identity. The caller serializes this operation with the
+// synchronization advisory lock, so the lookup and create are deterministic
+// across administrator instances.
+func (r *proxyRepository) FindOrCreateCodexTicketProxy(ctx context.Context, spec service.CodexTicketProxySpec) (*service.Proxy, error) {
+	client := r.clientForContext(ctx)
+	q := client.Proxy.Query().
+		Where(proxy.ProtocolEqualFold(spec.Protocol), proxy.HostEqualFold(spec.Host), proxy.PortEQ(spec.Port), proxy.DeletedAtIsNil())
+	if spec.Username == "" {
+		q = q.Where(proxy.Or(proxy.UsernameIsNil(), proxy.UsernameEQ("")))
+	} else {
+		q = q.Where(proxy.UsernameEQ(spec.Username))
+	}
+	if spec.Password == "" {
+		q = q.Where(proxy.Or(proxy.PasswordIsNil(), proxy.PasswordEQ("")))
+	} else {
+		q = q.Where(proxy.PasswordEQ(spec.Password))
+	}
+	matched, err := q.Order(dbent.Asc(proxy.FieldID)).ForUpdate().First(ctx)
+	if err == nil {
+		if matched.Status != service.StatusActive || matched.ExpiresAt != nil && !matched.ExpiresAt.After(time.Now()) {
+			return nil, service.ErrCodexTicketProxyDisabled
+		}
+		return proxyEntityToService(matched), nil
+	}
+	if !dbent.IsNotFound(err) {
+		return nil, err
+	}
+	created := &service.Proxy{
+		Name:           "Codex ticket harvest",
+		Protocol:       spec.Protocol,
+		Host:           spec.Host,
+		Port:           spec.Port,
+		Username:       spec.Username,
+		Password:       spec.Password,
+		Status:         service.StatusActive,
+		FallbackMode:   service.FallbackModeNone,
+		ExpiryWarnDays: 7,
+	}
+	if err := r.Create(ctx, created); err != nil {
+		return nil, err
+	}
+	return created, nil
+}
+
 func (r *proxyRepository) GetByID(ctx context.Context, id int64) (*service.Proxy, error) {
-	m, err := r.client.Proxy.Get(ctx, id)
+	m, err := r.clientForContext(ctx).Proxy.Get(ctx, id)
 	if err != nil {
 		if dbent.IsNotFound(err) {
 			return nil, service.ErrProxyNotFound
@@ -78,7 +131,7 @@ func (r *proxyRepository) ListByIDs(ctx context.Context, ids []int64) ([]service
 		return []service.Proxy{}, nil
 	}
 
-	proxies, err := r.client.Proxy.Query().
+	proxies, err := r.clientForContext(ctx).Proxy.Query().
 		Where(proxy.IDIn(ids...)).
 		All(ctx)
 	if err != nil {
@@ -93,7 +146,7 @@ func (r *proxyRepository) ListByIDs(ctx context.Context, ids []int64) ([]service
 }
 
 func (r *proxyRepository) Update(ctx context.Context, proxyIn *service.Proxy) error {
-	client := r.client
+	client := r.clientForContext(ctx)
 	var tx *dbent.Tx
 	if contextTx := dbent.TxFromContext(ctx); contextTx != nil {
 		client = contextTx.Client()
@@ -274,7 +327,7 @@ func enqueueProxyProbeAccountChanges(ctx context.Context, exec sqlExecutor, acco
 }
 
 func (r *proxyRepository) Delete(ctx context.Context, id int64) error {
-	_, err := r.client.Proxy.Delete().Where(proxy.IDEQ(id)).Exec(ctx)
+	_, err := r.clientForContext(ctx).Proxy.Delete().Where(proxy.IDEQ(id)).Exec(ctx)
 	return err
 }
 
@@ -284,7 +337,7 @@ func (r *proxyRepository) List(ctx context.Context, params pagination.Pagination
 
 // ListWithFilters lists proxies with optional filtering by protocol, status, and search query
 func (r *proxyRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, protocol, status, search string) ([]service.Proxy, *pagination.PaginationResult, error) {
-	q := r.client.Proxy.Query()
+	q := r.clientForContext(ctx).Proxy.Query()
 	if protocol != "" {
 		q = q.Where(proxy.ProtocolEQ(protocol))
 	}
@@ -322,7 +375,7 @@ func (r *proxyRepository) ListWithFilters(ctx context.Context, params pagination
 
 // ListWithFiltersAndAccountCount lists proxies with filters and includes account count per proxy
 func (r *proxyRepository) ListWithFiltersAndAccountCount(ctx context.Context, params pagination.PaginationParams, protocol, status, search string) ([]service.ProxyWithAccountCount, *pagination.PaginationResult, error) {
-	q := r.client.Proxy.Query()
+	q := r.clientForContext(ctx).Proxy.Query()
 	if protocol != "" {
 		q = q.Where(proxy.ProtocolEQ(protocol))
 	}
@@ -436,7 +489,7 @@ func proxyListOrder(params pagination.PaginationParams) []func(*entsql.Selector)
 }
 
 func (r *proxyRepository) ListActive(ctx context.Context) ([]service.Proxy, error) {
-	proxies, err := r.client.Proxy.Query().
+	proxies, err := r.clientForContext(ctx).Proxy.Query().
 		Where(proxy.StatusEQ(service.StatusActive)).
 		All(ctx)
 	if err != nil {
@@ -451,7 +504,7 @@ func (r *proxyRepository) ListActive(ctx context.Context) ([]service.Proxy, erro
 
 // ExistsByHostPortAuth checks if a proxy with the same host, port, username, and password exists
 func (r *proxyRepository) ExistsByHostPortAuth(ctx context.Context, host string, port int, username, password string) (bool, error) {
-	q := r.client.Proxy.Query().
+	q := r.clientForContext(ctx).Proxy.Query().
 		Where(proxy.HostEQ(host), proxy.PortEQ(port))
 
 	if username == "" {
@@ -549,7 +602,7 @@ func (r *proxyRepository) GetAccountCountsForProxies(ctx context.Context) (count
 
 // ListActiveWithAccountCount returns all active proxies with account count, sorted by creation time descending
 func (r *proxyRepository) ListActiveWithAccountCount(ctx context.Context) ([]service.ProxyWithAccountCount, error) {
-	proxies, err := r.client.Proxy.Query().
+	proxies, err := r.clientForContext(ctx).Proxy.Query().
 		Where(proxy.StatusEQ(service.StatusActive)).
 		Order(dbent.Desc(proxy.FieldCreatedAt)).
 		All(ctx)
@@ -617,7 +670,7 @@ func applyProxyEntityToService(dst *service.Proxy, src *dbent.Proxy) {
 
 // ListAllForFallback 返回所有代理（含过期/非活跃），供改投逻辑使用。
 func (r *proxyRepository) ListAllForFallback(ctx context.Context) ([]service.Proxy, error) {
-	proxies, err := r.client.Proxy.Query().All(ctx)
+	proxies, err := r.clientForContext(ctx).Proxy.Query().All(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -644,6 +644,7 @@ export interface SystemSettings {
   openai_codex_ticket_harvest_proxy_configured: boolean;
   openai_codex_ticket_account_ids: number[];
   openai_codex_ticket_account_models: Record<string, string[]>;
+  openai_codex_ticket_sync_business_proxy: boolean;
   // codex_cli_only 加固
   min_codex_version: string;
   max_codex_version: string;
@@ -967,6 +968,7 @@ export interface UpdateSettingsRequest {
   openai_codex_ticket_harvest_proxy_url?: string;
   openai_codex_ticket_account_ids?: number[];
   openai_codex_ticket_account_models?: Record<string, string[]>;
+  openai_codex_ticket_sync_business_proxy?: boolean;
   // codex_cli_only 加固
   min_codex_version?: string;
   max_codex_version?: string;

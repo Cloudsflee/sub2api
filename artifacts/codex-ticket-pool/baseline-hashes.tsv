@@ -1,0 +1,10 @@
+192a9b2a1f02c7d18f811ed5a4c05b968edc6e7e	backend/internal/service/openai_codex_ticket.go
+709c769d9d12abbb4fe15ebc42e37685549aad4f	backend/internal/service/openai_gateway_service.go
+18f73aa9fa0eeb025102b2bb68af005f394c8b94	backend/internal/service/setting_update.go
+de91c22e8816a78714575b474f647c22ace5dac2	backend/internal/repository/account_repo.go
+07c92046bdbf9c7e6069014634ee78f2b085ebac	backend/internal/repository/proxy_repo.go
+323db5a1ed643aed85f01800b1b0fd761c22c2aa	backend/internal/handler/admin/account_handler.go
+c66e7cec7c081f2372b4befbd5018994e3feb1c0	deploy/config.example.yaml
+3e8d9a6a709b3940762278fb73f6d54f0fefceb1	deploy/product-sync-proxy/README.md
+(new file)	tools/discover_codex_ticket_pool.py
+(new file)	tools/codex_clash_pool_discover.py

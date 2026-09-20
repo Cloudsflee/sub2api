@@ -249,6 +249,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAICodexTicketHarvestProxyURL:                   "",
 		SettingKeyOpenAICodexTicketAccountIDs:                        "",
 		SettingKeyOpenAICodexTicketAccountModels:                     "{}",
+		SettingKeyOpenAICodexTicketSyncBusinessProxy:                 "true",
 		SettingPaymentVisibleMethodAlipaySource:                      "",
 		SettingPaymentVisibleMethodWxpaySource:                       "",
 		SettingPaymentVisibleMethodAlipayEnabled:                     "false",
@@ -902,6 +903,12 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAICodexTicketHarvestProxyURL = strings.TrimSpace(settings[SettingKeyOpenAICodexTicketHarvestProxyURL])
 	result.OpenAICodexTicketAccountIDs = parseOpenAICodexTicketAccountIDs(settings[SettingKeyOpenAICodexTicketAccountIDs], s)
 	result.OpenAICodexTicketAccountModels = parseOpenAICodexTicketAccountModels(settings[SettingKeyOpenAICodexTicketAccountModels], s)
+	if value, ok := settings[SettingKeyOpenAICodexTicketSyncBusinessProxy]; ok && strings.TrimSpace(value) != "" {
+		result.OpenAICodexTicketSyncBusinessProxy = value == "true"
+	} else {
+		// Existing installations do not have this key; preserve the enabled default.
+		result.OpenAICodexTicketSyncBusinessProxy = true
+	}
 	// codex_cli_only 加固
 	result.MinCodexVersion = settings[SettingKeyMinCodexVersion]
 	result.MaxCodexVersion = settings[SettingKeyMaxCodexVersion]

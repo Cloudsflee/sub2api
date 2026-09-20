@@ -118,6 +118,52 @@ systemctl status sub2api-upstream-sync.timer
 journalctl -u sub2api-upstream-sync.service -n 100 --no-pager
 ```
 
+## Codex 门票代理联动发布
+
+启用 `openai_codex_ticket_sync_business_proxy` 前，先在数据库侧保存仅含账号
+ID 和业务代理 ID 的回滚快照。快照不包含代理凭据、门票或账号 token：
+
+```bash
+SNAPSHOT="/var/backups/sub2api/account-proxy-$(date -u +%Y%m%dT%H%M%SZ).tsv"
+install -d -m 700 "$(dirname "$SNAPSHOT")"
+psql "$DATABASE_URL" -At -F $'\t' \
+  -c "SELECT id, COALESCE(proxy_id::text, '') FROM accounts WHERE deleted_at IS NULL ORDER BY id" \
+  > "$SNAPSHOT"
+chmod 600 "$SNAPSHOT"
+```
+
+发布后先把管理设置中的联动开关显式设为 `false`，在备用蓝绿槽完成
+`HOST:8080/health`、应用日志、Worker 状态和 scheduler outbox 检查，再保存当前
+门票白名单/采集代理触发一次对账。观察绑定、跳过、失败计数和业务请求错误率后，
+再将开关设为 `true`。关闭联动只停止后续自动绑定，不会清除已有业务代理。
+
+采集代理支持多行代理池：管理页或配置中的 `harvest_proxy_url` 每行填写一个
+HTTP/HTTPS/SOCKS5(h) URL，最多 256 个不同入口。采集器按轮询游标分配入口，失败入口
+进入冷却后再复用；多入口写入会自动进入 harvest-only，不会调用业务代理联动，也不会
+改变账号当前 `proxy_id`。单 URL 仍保持旧联动行为。代理池保存后先观察各入口的 HTTP
+状态、292 命中数和冷却日志，再扩大账号白名单。
+
+异常时先将联动设为 `false`，然后使用发布前快照恢复被覆盖的代理关系。恢复命令
+在目标数据库事务中执行，缺失 ID 或已删除账号会自然跳过：
+
+```sql
+BEGIN;
+CREATE TEMP TABLE codex_proxy_restore(account_id BIGINT PRIMARY KEY, proxy_id BIGINT);
+-- 用发布前 TSV 导入 codex_proxy_restore(account_id, proxy_id)，空 proxy_id 导入 NULL。
+UPDATE accounts AS a
+SET proxy_id = r.proxy_id, updated_at = NOW()
+FROM codex_proxy_restore AS r
+WHERE a.id = r.account_id AND a.deleted_at IS NULL;
+INSERT INTO scheduler_outbox (event_type, payload)
+SELECT 'account_bulk_changed', jsonb_build_object('account_ids', array_agg(account_id))
+FROM codex_proxy_restore
+WHERE EXISTS (SELECT 1 FROM accounts a WHERE a.id = codex_proxy_restore.account_id AND a.deleted_at IS NULL);
+COMMIT;
+```
+
+代码回滚不会回滚数据库迁移；保留快照、旧镜像和 outbox 观察记录，直到业务代理
+关系确认恢复。
+
 ## 分支职责
 
 - `main`：与官方 `upstream/main` 保持一致。

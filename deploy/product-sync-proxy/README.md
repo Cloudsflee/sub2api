@@ -45,3 +45,50 @@ The production worker contract is deliberately bounded:
 - 0.75 requests per second per listener and 4.5 requests per second globally,
   both with capacity one and no burst;
 - independent 1, 5, and 15 minute pressure backoff per listener.
+
+## Codex 292 listener discovery
+
+`tools/discover_codex_ticket_pool.py` reuses the listeners declared in the
+active Mihomo file without changing that file or the product worker. The
+default config path is `/etc/sub2api-product-proxy/config.yaml`; only HTTP,
+mixed, and SOCKS listeners bound to the application network are considered.
+Each candidate must reference a complete node, return a public egress from the
+egress probe, and return a successful status from the health probe. Egress
+identities are recorded as stable hashes, and credentials are never printed.
+
+Inspect the pool first:
+
+```bash
+python3 /opt/sub2api/tools/discover_codex_ticket_pool.py \
+  --config /etc/sub2api-product-proxy/config.yaml \
+  --network 172.18.0.0/16 \
+  --output /var/lib/sub2api-product-proxy/codex-ticket-pool.json
+```
+
+After the report has been reviewed, pass an admin API token and explicitly
+write the selected listeners. The PUT is a partial settings update, so the
+application's settings coordinator performs the durable write and runtime
+cache refresh. With more than one selected listener it also persists
+`openai_codex_ticket_sync_business_proxy=false`, preserving the existing
+business `proxy_id` values:
+
+```bash
+SUB2API_ADMIN_TOKEN='TOKEN' \
+python3 /opt/sub2api/tools/discover_codex_ticket_pool.py \
+  --write --api-url http://127.0.0.1:8080 \
+  --config /etc/sub2api-product-proxy/config.yaml \
+  --network 172.18.0.0/16
+```
+
+The script never targets `api.sub2api.com`. Set `CODEX_EGRESS_URL` and
+`CODEX_HEALTH_URL` to operator-approved probe endpoints when the defaults are
+not reachable. Keep the redacted report and the database settings/account
+snapshot until every target account has a persisted HTTP 200, `gAAAAA`, exact
+292 ticket; restore the prior setting through the same admin endpoint before
+rolling back an image. The gateway emits a redacted pool status each harvest
+cycle (`pool_size`, available/cooling counts, entry hash, HTTP status, state
+length, and failure category such as `transport`, `length_312`, or
+`incomplete`) and exposes the same snapshot through
+`OpenAICodexTicketHarvestPoolStatus`. A bounded operator monitor can stop when
+`OpenAICodexTicketHarvestCompletion.Complete` is true; the resident harvester
+itself remains running for expiry refreshes.

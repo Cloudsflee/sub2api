@@ -385,6 +385,9 @@ func (h *AccountHandler) enrichCodexTicketStatus(account *service.Account, out *
 			cfg.Enabled = h.codexTicketSettings.GetOpenAICodexTicketEnabled(context.Background(), cfg.Enabled)
 			cfg.AccountIDs = h.codexTicketSettings.GetOpenAICodexTicketAccountIDs(context.Background())
 			cfg.AccountModels = h.codexTicketSettings.GetOpenAICodexTicketAccountModels(context.Background())
+			if proxyURL := h.codexTicketSettings.GetOpenAICodexTicketHarvestProxyURL(context.Background()); proxyURL != "" {
+				cfg.HarvestProxyURL = proxyURL
+			}
 		}
 		if service.OpenAICodexTicketAccountAllowed(account, cfg.AccountIDs) {
 			out.CodexTurnTickets = service.OpenAICodexTicketStatuses(account, cfg, time.Now())

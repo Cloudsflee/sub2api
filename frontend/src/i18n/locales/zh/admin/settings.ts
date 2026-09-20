@@ -539,11 +539,14 @@ export default {
         codexTicketEnabled: '292 打票',
         codexTicketEnabledDesc:
           '关闭后不打票、不注入 x-codex-turn-state，按原链路转发。开启后后台打票，并在业务请求中覆盖该头。',
+        codexTicketSyncBusinessProxy: '联动门票采集代理到业务代理',
+        codexTicketSyncBusinessProxyDesc:
+          '单入口模式可将白名单 OpenAI OAuth 账号绑定到托管代理。多入口自动按仅采集处理并关闭此开关；已有业务代理和 Sol 路径保持不变。',
         codexTicketHarvestProxy: '292 打票代理',
         codexTicketHarvestProxyDesc:
-          '仅在门票功能开启时用于打票，保存后后续探测会使用新代理，无需重启。日常业务仍走账号自己的住宅代理。填写完整代理 URL（http 或 socks5h，含用户名和密码）。代理服务商需自行负责出口 IP 轮换。留空并保存表示不改已保存的值。',
-        codexTicketHarvestProxyPlaceholder: "http://user:pass{'@'}proxy.example.com:1080",
-        codexTicketHarvestProxyConfigured: '已配置（密码已隐藏）。要更换请整段粘贴新的代理 URL。',
+          '仅在门票功能开启时用于打票，保存后后续探测会使用新代理，无需重启。日常业务仍走账号自己的住宅代理。可每行填写一个 HTTP/HTTPS/SOCKS5(h) URL，系统按轮询和冷却使用有效出口。留空并保存表示不改已保存的值。',
+        codexTicketHarvestProxyPlaceholder: "每行一个代理 URL，例如 http://user:pass{'@'}proxy.example.com:1080",
+        codexTicketHarvestProxyConfigured: '已配置（密码已隐藏）。可粘贴多行代理池；保存后按轮询和冷却使用。',
         codexTicketAccountIDs: '门票账号白名单',
         codexTicketAccountIDsPlaceholder: '例如 2225, 2230',
         codexTicketAccountIDsDesc: '留空表示全局账号；填写账号 ID 后，仅这些账号进行打票和门票注入。',

@@ -332,6 +332,74 @@ func (s *SettingService) InvalidateOpenAICodexTicketEnabledCache() {
 	s.openAICodexTicketEnabledCache.Store(&cachedOpenAICodexTicketEnabled{expiresAt: 0})
 }
 
+type cachedOpenAICodexTicketSyncBusinessProxy struct {
+	value     bool
+	expiresAt int64
+}
+
+const openAICodexTicketSyncBusinessProxyCacheTTL = 5 * time.Second
+
+// GetOpenAICodexTicketSyncBusinessProxy returns whether the harvest proxy is
+// automatically bound to eligible business accounts. Missing keys default to
+// true so existing installations adopt the new behavior explicitly.
+func (s *SettingService) GetOpenAICodexTicketSyncBusinessProxy(ctx context.Context) bool {
+	const fallback = true
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil || s == nil || s.settingRepo == nil {
+		return fallback
+	}
+	if cached, ok := s.openAICodexTicketSyncBusinessProxyCache.Load().(*cachedOpenAICodexTicketSyncBusinessProxy); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached.value
+	}
+	resultCh := s.openAICodexTicketSyncBusinessProxySF.DoChan(SettingKeyOpenAICodexTicketSyncBusinessProxy, func() (any, error) {
+		if cached, ok := s.openAICodexTicketSyncBusinessProxyCache.Load().(*cachedOpenAICodexTicketSyncBusinessProxy); ok && cached != nil && time.Now().UnixNano() < cached.expiresAt {
+			return cached.value, nil
+		}
+		dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAICodexTicketSyncBusinessProxy)
+		value := fallback
+		if err == nil && strings.TrimSpace(raw) != "" {
+			value = strings.TrimSpace(raw) == "true"
+		} else if err != nil && !errors.Is(err, ErrSettingNotFound) {
+			if cached, ok := s.openAICodexTicketSyncBusinessProxyCache.Load().(*cachedOpenAICodexTicketSyncBusinessProxy); ok && cached != nil {
+				return cached.value, nil
+			}
+		}
+		s.openAICodexTicketSyncBusinessProxyCache.Store(&cachedOpenAICodexTicketSyncBusinessProxy{value: value, expiresAt: time.Now().Add(openAICodexTicketSyncBusinessProxyCacheTTL).UnixNano()})
+		return value, nil
+	})
+	select {
+	case <-ctx.Done():
+		return fallback
+	case result := <-resultCh:
+		if value, ok := result.Val.(bool); ok && result.Err == nil {
+			return value
+		}
+		return fallback
+	}
+}
+
+// GetOpenAICodexTicketSyncBusinessProxyEnabled is a descriptive alias kept
+// for callers that use the existing *Enabled runtime-setting naming pattern.
+func (s *SettingService) GetOpenAICodexTicketSyncBusinessProxyEnabled(ctx context.Context) bool {
+	return s.GetOpenAICodexTicketSyncBusinessProxy(ctx)
+}
+
+func (s *SettingService) InvalidateOpenAICodexTicketSyncBusinessProxyCache() {
+	if s == nil {
+		return
+	}
+	s.openAICodexTicketSyncBusinessProxySF.Forget(SettingKeyOpenAICodexTicketSyncBusinessProxy)
+	s.openAICodexTicketSyncBusinessProxyCache.Store(&cachedOpenAICodexTicketSyncBusinessProxy{expiresAt: 0})
+}
+
+func (s *SettingService) InvalidateOpenAICodexTicketSyncBusinessProxyEnabledCache() {
+	s.InvalidateOpenAICodexTicketSyncBusinessProxyCache()
+}
+
 type cachedOpenAICodexTicketHarvestProxy struct {
 	value     string
 	expiresAt int64

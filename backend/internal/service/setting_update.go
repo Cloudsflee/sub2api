@@ -43,8 +43,9 @@ func (s *SettingService) UpdateSettingsOmitting(ctx context.Context, settings *S
 		return err
 	}
 	omitted.dropFrom(updates)
+	s.enforceCodexTicketHarvestOnly(updates, settings)
 
-	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
+	if err := s.persistSettings(ctx, updates, settings); err != nil {
 		return err
 	}
 	s.refreshCachedSettingsAfterWrite(ctx, settings, omitted)
@@ -73,12 +74,32 @@ func (s *SettingService) UpdateSettingsWithAuthSourceDefaultsOmitting(ctx contex
 		updates[key] = value
 	}
 	omitted.dropFrom(updates)
+	s.enforceCodexTicketHarvestOnly(updates, settings)
 
-	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
+	if err := s.persistSettings(ctx, updates, settings); err != nil {
 		return err
 	}
 	s.refreshCachedSettingsAfterWrite(ctx, settings, omitted)
 	return nil
+}
+
+func (s *SettingService) persistSettings(ctx context.Context, updates map[string]string, settings *SystemSettings) error {
+	if s != nil && s.settingsWriteCoordinator != nil {
+		return s.settingsWriteCoordinator.PersistSettings(ctx, updates, settings)
+	}
+	return s.settingRepo.SetMultiple(ctx, updates)
+}
+
+// enforceCodexTicketHarvestOnly keeps the invariant intact even for partial
+// settings payloads that omit the linkage checkbox. The coordinator repeats
+// this check for transactional deployments; the service-level check also
+// covers lightweight repositories and migrations without that coordinator.
+func (s *SettingService) enforceCodexTicketHarvestOnly(updates map[string]string, settings *SystemSettings) {
+	if settings == nil || !OpenAICodexTicketHarvestOnlyMode(settings.OpenAICodexTicketHarvestProxyURL) {
+		return
+	}
+	settings.OpenAICodexTicketSyncBusinessProxy = false
+	updates[SettingKeyOpenAICodexTicketSyncBusinessProxy] = "false"
 }
 
 // refreshCachedSettingsAfterWrite keeps the in-process caches in step with the
@@ -486,7 +507,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAICodexClientVersion] = NormalizeCodexClientVersion(settings.OpenAICodexClientVersion)
 	updates[SettingKeyOpenAICodexVersionAutoSyncEnabled] = strconv.FormatBool(settings.OpenAICodexVersionAutoSyncEnabled)
 	updates[SettingKeyOpenAICodexTicketEnabled] = strconv.FormatBool(settings.OpenAICodexTicketEnabled)
-	if err := ValidateOpenAICodexTicketHarvestProxyURL(settings.OpenAICodexTicketHarvestProxyURL); err != nil {
+	proxyEntries, err := SplitOpenAICodexTicketHarvestProxyURLs(settings.OpenAICodexTicketHarvestProxyURL)
+	if err != nil {
 		return nil, infraerrors.BadRequest("INVALID_CODEX_HARVEST_PROXY", err.Error())
 	}
 	updates[SettingKeyOpenAICodexTicketHarvestProxyURL] = strings.TrimSpace(settings.OpenAICodexTicketHarvestProxyURL)
@@ -500,6 +522,13 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		return nil, fmt.Errorf("encode codex ticket account models: %w", err)
 	}
 	updates[SettingKeyOpenAICodexTicketAccountModels] = string(accountModels)
+	if len(proxyEntries) > 1 {
+		// Multiple listeners are a harvest-only pool. A single business proxy
+		// cannot represent that pool, so force the linkage switch off at the
+		// settings boundary before any coordinator or fallback repository sees it.
+		settings.OpenAICodexTicketSyncBusinessProxy = false
+	}
+	updates[SettingKeyOpenAICodexTicketSyncBusinessProxy] = strconv.FormatBool(settings.OpenAICodexTicketSyncBusinessProxy)
 	// SettingKeyOpenAICodexClientVersionSynced 由自动同步任务独占写入，此处不得覆盖，
 	// 否则面板保存会把同步结果清空。
 	// codex_cli_only 加固
@@ -755,6 +784,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	// 这里没有它的最新值，重算会把同步结果覆盖成陈旧值。
 	s.InvalidateOpenAICodexClientVersionCache()
 	s.InvalidateOpenAICodexTicketEnabledCache()
+	s.InvalidateOpenAICodexTicketSyncBusinessProxyCache()
 	s.InvalidateOpenAICodexTicketHarvestProxyCache()
 	s.InvalidateOpenAICodexTicketAccountIDsCache()
 	s.InvalidateOpenAICodexTicketAccountModelsCache()

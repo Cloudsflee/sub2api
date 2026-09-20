@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -19,6 +21,149 @@ func fakeCodexTicketState(n int) string {
 		return strings.Repeat("A", n)
 	}
 	return openAICodexTicketStatePrefix + strings.Repeat("B", n-len(openAICodexTicketStatePrefix))
+}
+
+func TestSplitOpenAICodexTicketHarvestProxyURLs(t *testing.T) {
+	got, err := SplitOpenAICodexTicketHarvestProxyURLs(" http://a.example:8080\n\nhttp://b.example:8081;http://a.example:8080 ")
+	require.NoError(t, err)
+	require.Equal(t, []string{"http://a.example:8080", "http://b.example:8081"}, got)
+	got, err = SplitOpenAICodexTicketHarvestProxyURLs(`["http://a.example:8080","http://b.example:8081"]`)
+	require.NoError(t, err)
+	require.Equal(t, []string{"http://a.example:8080", "http://b.example:8081"}, got)
+	_, err = SplitOpenAICodexTicketHarvestProxyURLs("http://a.example:8080\nftp://bad.example:21")
+	require.Error(t, err)
+	got, err = SplitOpenAICodexTicketHarvestProxyURLs("http://a.example\nhttp://a.example:80")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	entries := make([]string, 257)
+	for i := range entries {
+		entries[i] = fmt.Sprintf("http://listener-%d.example:8080", i)
+	}
+	encoded, marshalErr := json.Marshal(entries)
+	require.NoError(t, marshalErr)
+	_, err = SplitOpenAICodexTicketHarvestProxyURLs(string(encoded))
+	require.Error(t, err)
+}
+
+func TestOpenAICodexTicketHarvestProxyPoolRotatesAndCoolsFailures(t *testing.T) {
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{
+		Enabled:                     true,
+		HarvestProxyURL:             "http://a.example:8080\nhttp://b.example:8081",
+		HarvestProbeIntervalSeconds: 30,
+	}, nil)
+	first := svc.nextOpenAICodexTicketHarvestProxy(context.Background())
+	second := svc.nextOpenAICodexTicketHarvestProxy(context.Background())
+	require.NotEmpty(t, first)
+	require.NotEmpty(t, second)
+	require.NotEqual(t, first, second)
+	svc.recordOpenAICodexTicketHarvestProxy(first, false)
+	require.Equal(t, second, svc.nextOpenAICodexTicketHarvestProxy(context.Background()))
+	// With every entry cooling, the pool reports no candidate until cooldown.
+	svc.recordOpenAICodexTicketHarvestProxy(second, false)
+	require.Empty(t, svc.nextOpenAICodexTicketHarvestProxy(context.Background()))
+}
+
+func TestOpenAICodexTicketConfigClampsProbeInterval(t *testing.T) {
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{HarvestProbeIntervalSeconds: 6}, nil)
+	require.Equal(t, 180, svc.openAICodexTicketConfig().HarvestProbeIntervalSeconds)
+}
+
+func TestOpenAICodexTicketHarvestStatusTracksFailureCategoriesWithoutURL(t *testing.T) {
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{
+		Enabled:         true,
+		HarvestProxyURL: "http://user:secret@a.example:8080\nhttp://b.example:8081",
+	}, nil)
+	first := svc.nextOpenAICodexTicketHarvestProxy(context.Background())
+	require.Contains(t, first, "a.example")
+	svc.recordOpenAICodexTicketHarvestProxyResult(first, OpenAICodexTicketHarvestFailureHTTP312, 312, 292)
+	status := svc.OpenAICodexTicketHarvestPoolStatus(context.Background())
+	require.Equal(t, 2, status.PoolSize)
+	require.Equal(t, 1, status.AvailableCount)
+	require.Equal(t, 1, status.CoolingDownCount)
+	require.Equal(t, string(OpenAICodexTicketHarvestFailureHTTP312), string(status.Entries[0].LastFailureCategory))
+	require.NotContains(t, status.Entries[0].EntryID, "secret")
+	// A successful response clears the circuit and the failure category.
+	svc.recordOpenAICodexTicketHarvestProxyResult(first, OpenAICodexTicketHarvestFailureNone, 200, 292)
+	status = svc.OpenAICodexTicketHarvestPoolStatus(context.Background())
+	require.Equal(t, 2, status.AvailableCount)
+	require.Zero(t, status.Entries[0].FailureCount)
+	require.Empty(t, status.Entries[0].LastFailureCategory)
+	svc.recordOpenAICodexTicketHarvestProxyResult(first, OpenAICodexTicketHarvestFailureLength312, 200, 312)
+	status = svc.OpenAICodexTicketHarvestPoolStatus(context.Background())
+	require.Equal(t, 200, status.Entries[0].LastHTTPStatus)
+	require.Equal(t, 312, status.Entries[0].LastStateLength)
+	require.Equal(t, OpenAICodexTicketHarvestFailureLength312, status.Entries[0].LastFailureCategory)
+}
+
+func TestClassifyOpenAICodexTicketHarvestFailure(t *testing.T) {
+	require.Equal(t, OpenAICodexTicketHarvestFailureTransport, classifyOpenAICodexTicketHarvestFailure(0, ""))
+	require.Equal(t, OpenAICodexTicketHarvestFailureHTTP312, classifyOpenAICodexTicketHarvestFailure(312, ""))
+	require.Equal(t, OpenAICodexTicketHarvestFailureHTTPStatus, classifyOpenAICodexTicketHarvestFailure(503, ""))
+	require.Equal(t, OpenAICodexTicketHarvestFailureIncomplete, classifyOpenAICodexTicketHarvestFailure(200, ""))
+	require.Equal(t, OpenAICodexTicketHarvestFailureLength312, classifyOpenAICodexTicketHarvestFailure(200, fakeCodexTicketState(312)))
+	require.Equal(t, OpenAICodexTicketHarvestFailureState, classifyOpenAICodexTicketHarvestFailure(200, fakeCodexTicketState(313)))
+}
+
+func TestOpenAICodexTicketHarvestCompletionRequiresPersistedTicket(t *testing.T) {
+	account := ticketTestAccount(41)
+	account.Status = StatusActive
+	repo := &codexTicketRefreshRepo{accounts: []Account{*account}}
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{
+		Enabled:         true,
+		HarvestProxyURL: "http://listener.example:17891",
+		Models:          []string{"gpt-6-astra"},
+	}, nil)
+	svc.accountRepo = repo
+	svc.storeOpenAICodexTicket(context.Background(), account, &openAICodexTicket{
+		AccountID: account.ID,
+		Model:     "gpt-6-astra",
+		State:     fakeCodexTicketState(292),
+		Length:    292,
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	completion := svc.OpenAICodexTicketHarvestCompletion(context.Background())
+	require.False(t, completion.Complete)
+	require.Equal(t, 0, completion.ReadyPairCount)
+	account.Extra = map[string]any{openAICodexTicketExtraKey("gpt-6-astra"): map[string]any{
+		"state":       fakeCodexTicketState(292),
+		"length":      292,
+		"captured_at": time.Now(),
+		"expires_at":  time.Now().Add(time.Hour),
+	}}
+	repo.accounts = []Account{*account}
+	completion = svc.OpenAICodexTicketHarvestCompletion(context.Background())
+	require.True(t, completion.Complete)
+	require.Equal(t, 1, completion.ReadyPairCount)
+}
+
+func TestOpenAICodexTicketHarvestCompletionDoesNotCountSol(t *testing.T) {
+	account := ticketTestAccount(41)
+	account.Status = StatusActive
+	account.Extra = map[string]any{openAICodexTicketExtraKey("gpt-6-astra"): map[string]any{
+		"state":       fakeCodexTicketState(292),
+		"length":      292,
+		"captured_at": time.Now(),
+		"expires_at":  time.Now().Add(time.Hour),
+	}}
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{
+		Enabled:         true,
+		HarvestProxyURL: "http://listener.example:17891",
+	}, nil)
+	svc.accountRepo = &codexTicketRefreshRepo{accounts: []Account{*account}}
+	completion := svc.OpenAICodexTicketHarvestCompletion(context.Background())
+	require.True(t, completion.Complete)
+	require.Equal(t, 1, completion.EligiblePairCount)
+}
+
+func TestOpenAICodexTicketStatusesMultiEntryOmitsSol(t *testing.T) {
+	account := ticketTestAccount(41)
+	status := OpenAICodexTicketStatuses(account, config.OpenAICodexTicketConfig{
+		Enabled:         true,
+		HarvestProxyURL: "http://listener-a.example:17891\nhttp://listener-b.example:17892",
+		Models:          []string{"gpt-6-astra", "gpt-5.6-sol"},
+	}, time.Now())
+	require.Len(t, status, 1)
+	require.Equal(t, "gpt-6-astra", status[0].Model)
 }
 
 func ticketTestAccount(id int64) *Account {
@@ -148,6 +293,20 @@ func TestOpenAICodexTicketAccountModelScopeKeepsSolUngated(t *testing.T) {
 
 	header = http.Header{}
 	require.ErrorIs(t, svc.applyOpenAICodexTicket(context.Background(), account, "gpt-6-astra", header), ErrOpenAICodexTicketUnavailable)
+}
+
+func TestOpenAICodexTicketMultiEntryPoolKeepsSolOnBusinessPath(t *testing.T) {
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{
+		Enabled:         true,
+		FailClosed:      true,
+		HarvestProxyURL: "http://listener-a.example:17891\nhttp://listener-b.example:17892",
+		Models:          []string{"gpt-6-astra", "gpt-5.6-sol"},
+	}, nil)
+	account := ticketTestAccount(41)
+	header := http.Header{}
+	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), account, "gpt-5.6-sol", header))
+	require.Empty(t, header.Get(openAICodexTurnStateHeader))
+	require.False(t, svc.openAICodexTicketBlocksAccount(account, "gpt-5.6-sol"))
 }
 
 func TestLookupOpenAICodexTicket_PrefersNewerExtra(t *testing.T) {
@@ -450,7 +609,7 @@ func TestOpenAICodexTicketStatuses_RespectRuntimeConfiguration(t *testing.T) {
 	require.True(t, OpenAICodexTicketStatuses(account, cfg, time.Now())[0].Blocked)
 }
 func TestProbeOpenAICodexTicket_RejectsInvalidState(t *testing.T) {
-	for _, state := range []string{fakeCodexTicketState(312), strings.Repeat("X", 292), ""} {
+	for _, state := range []string{fakeCodexTicketState(313), strings.Repeat("X", 292), ""} {
 		h := http.Header{}
 		h.Set(openAICodexTurnStateHeader, state)
 		upstream := &httpUpstreamRecorder{responses: []*http.Response{{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(""))}}}
@@ -459,6 +618,17 @@ func TestProbeOpenAICodexTicket_RejectsInvalidState(t *testing.T) {
 		svc.probeOnceOpenAICodexTicket(context.Background(), account, "gpt-6-astra")
 		require.Nil(t, svc.lookupOpenAICodexTicket(account, "gpt-6-astra"))
 	}
+}
+
+func TestOpenAICodexTicketStateLengthStrict(t *testing.T) {
+	for _, length := range []int{292} {
+		state := fakeCodexTicketState(length)
+		require.Truef(t, openAICodexTicketStateLengthAccepted(state, 292), "length=%d", length)
+		ticket := &openAICodexTicket{State: state, Length: length, ExpiresAt: time.Now().Add(time.Hour)}
+		require.Truef(t, ticket.valid(time.Now(), 292), "length=%d", length)
+	}
+	require.False(t, openAICodexTicketStateLengthAccepted(fakeCodexTicketState(313), 292))
+	require.False(t, openAICodexTicketStateLengthAccepted(fakeCodexTicketState(312), 292))
 }
 func TestOpenAICodexTicket_RequiresActualLengthAndExpiry(t *testing.T) {
 	ticket := &openAICodexTicket{State: fakeCodexTicketState(312), Length: 292, ExpiresAt: time.Now().Add(time.Hour)}
