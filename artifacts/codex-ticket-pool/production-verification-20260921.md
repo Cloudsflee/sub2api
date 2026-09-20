@@ -2,8 +2,8 @@
 
 Date: 2026-09-21 (Asia/Shanghai)
 
-The active blue/green slot is `blue` at `HOST:8080`, running commit
-`1202589d8cb4d019fd5e7a60e047a8977f50f591`. The administrator key was read
+The active blue/green slot is `green` at `HOST:8080`, running commit
+`72f160df9df381d2cf2975a4a2c45592166eeb35`. The administrator key was read
 from the local, ACL-restricted file outside the repository and was not added
 to a source file, image, or commit.
 
@@ -37,8 +37,8 @@ to a source file, image, or commit.
 | Admin settings PUT through `HOST:8080` | HTTP `200`, response `code=0`, `success` |
 | Admin settings GET | HTTP `200`, pool count `9`, linkage `False`, ticket enabled `True` |
 | Application health | HTTP `200`, `{"status":"ok"}` |
-| Containers | active `blue`, product-sync worker, PostgreSQL, and Redis healthy; old `green` retained stopped |
-| Deployment state | `ACTIVE_SLOT=blue`, deployed commit `1202589d8cb4d019fd5e7a60e047a8977f50f591` |
+| Containers | active `green`, product-sync worker, PostgreSQL, and Redis healthy; old `blue` retained stopped |
+| Deployment state | `ACTIVE_SLOT=green`, deployed commit `72f160df9df381d2cf2975a4a2c45592166eeb35` |
 | Ticket scope log | `eligible_accounts=2`, `eligible_pairs=2`, `ready_pairs=2` at the final cycle |
 | ACCOUNT_A Astra ticket | prefix `gAAAAA`, state length `292`, persisted length `292`, unexpired |
 | ACCOUNT_B Astra ticket | prefix `gAAAAA`, state length `292`, persisted length `292`, unexpired |
