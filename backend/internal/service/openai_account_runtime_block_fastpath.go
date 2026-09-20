@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
 const (
@@ -434,6 +436,25 @@ func canonicalOpenAIAccountSchedulingModel(account *Account, requestedModel stri
 	}
 	if account.IsOpenAI() {
 		return resolveOpenAIAccountUpstreamModelForRequest(account, model, false)
+	}
+	// Grok's optional cross-client mapping is intended for explicitly
+	// configured client aliases. A generic GPT/Claude request must retain its
+	// identity when the runtime mapping switch is enabled; otherwise a global
+	// settings update can make Grok inherit OpenAI Codex aliases.
+	if account.Platform == PlatformGrok && !xai.IsGrokModelID(model) {
+		// Keep an operator-supplied account mapping active, while ignoring only
+		// the process-wide default cross-client aliases.
+		rawMapping, configured := account.Credentials["model_mapping"]
+		explicit := false
+		switch mapping := rawMapping.(type) {
+		case map[string]any:
+			explicit = configured && len(mapping) > 0
+		case map[string]string:
+			explicit = configured && len(mapping) > 0
+		}
+		if !explicit {
+			return model
+		}
 	}
 	if mapped := strings.TrimSpace(account.GetMappedModel(model)); mapped != "" {
 		return mapped

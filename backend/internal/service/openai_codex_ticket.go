@@ -311,7 +311,7 @@ func OpenAICodexTicketStatuses(account *Account, cfg config.OpenAICodexTicketCon
 	if !cfg.Enabled || !isOpenAICodexTicketAccount(account) {
 		return nil
 	}
-	models, targetLen := OpenAICodexTicketModelsForAccount(account, cfg), cfg.TargetLength
+	models, targetLen := OpenAICodexTicketModelsForAccount(account, cfg), openAICodexTicketTargetLength
 	if OpenAICodexTicketHarvestOnlyMode(cfg.HarvestProxyURL) {
 		filtered := make([]string, 0, len(models))
 		for _, model := range models {
@@ -324,7 +324,6 @@ func OpenAICodexTicketStatuses(account *Account, cfg config.OpenAICodexTicketCon
 	if len(models) == 0 {
 		return nil
 	}
-	targetLen = openAICodexTicketTargetLength
 	out := make([]OpenAICodexTicketStatus, 0, len(models))
 	for _, model := range models {
 		model = normalizeOpenAICodexTicketModel(model)
