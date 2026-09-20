@@ -136,14 +136,18 @@ def _as_proxy_index(value: Any) -> dict[str, dict[str, Any]]:
     return result
 
 
-def _as_group_index(value: Any) -> set[str]:
-    groups: set[str] = set()
+def _as_group_index(value: Any) -> dict[str, dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
     if isinstance(value, list):
         for item in value:
             if isinstance(item, dict) and item.get("name"):
-                groups.add(str(item["name"]))
+                groups[str(item["name"])] = item
     elif isinstance(value, dict):
-        groups.update(str(name) for name in value)
+        for name, item in value.items():
+            if isinstance(item, dict):
+                copy = dict(item)
+                copy.setdefault("name", str(name))
+                groups[str(name)] = copy
     return groups
 
 
@@ -351,8 +355,19 @@ def _candidate_list(document: dict[str, Any], networks: list[ipaddress._BaseNetw
         proxy_name = listener.get("proxy") or listener.get("proxy-name") or listener.get("proxy_name")
         node = proxy_name if isinstance(proxy_name, dict) else proxies.get(str(proxy_name))
         if node is None and str(proxy_name) in groups:
-            candidates.append(Candidate(name=name, listener_url="", entry_id=fallback_id, health="incomplete_node", reason="listener points to a proxy group"))
-            continue
+            group = groups[str(proxy_name)]
+            members = group.get("proxies")
+            if isinstance(members, list) and members:
+                member_nodes = [proxies.get(str(member)) for member in members]
+                if all(isinstance(member, dict) and _node_is_complete(member) for member in member_nodes):
+                    # The listener is validated through the group endpoint;
+                    # retaining one complete member here proves the group is
+                    # backed by concrete node configuration without exposing
+                    # any member credentials.
+                    node = member_nodes[0]
+            if node is None:
+                candidates.append(Candidate(name=name, listener_url="", entry_id=fallback_id, health="incomplete_node", reason="listener proxy group has no complete direct nodes"))
+                continue
         if not isinstance(node, dict) or not _node_is_complete(node):
             candidates.append(Candidate(name=name, listener_url="", entry_id=fallback_id, health="incomplete_node", reason="listener node is incomplete"))
             continue

@@ -57,6 +57,26 @@ proxies:
         self.assertEqual("outside_network", candidates[1].health)
         self.assertEqual("incomplete_node", candidates[2].health)
 
+    def test_resolves_single_node_proxy_group(self):
+        config = self.write_config(
+            """
+listeners:
+  - {name: grouped, type: mixed, listen: 172.18.0.1, port: 17891, proxy: gate-a}
+proxy-groups:
+  - {name: gate-a, type: select, proxies: [node-a]}
+proxies:
+  - {name: node-a, type: socks5, server: 198.51.100.10, port: 443}
+"""
+        )
+        candidates = pool._candidate_list(
+            pool._load_config(config),
+            [pool.ipaddress.ip_network("172.18.0.0/16")],
+            "172.18.0.1",
+            False,
+        )
+        self.assertEqual(["grouped"], [candidate.name for candidate in candidates])
+        self.assertEqual("unprobed", candidates[0].health)
+
     @mock.patch.object(pool, "_probe")
     def test_unique_egress_and_redacted_report(self, probe):
         config = self.write_config(
