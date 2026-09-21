@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -81,15 +82,12 @@ func TestFilterGrokFreeQuotaAccountsOnlyBlocksExplicitFreeOAuth(t *testing.T) {
 	filtered := scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
 	require.Equal(t, []int64{1, 2, 3, 4}, accountIDs(filtered), "miss fails open on hot path")
 
+	// Second pass: wait for the asynchronous refresh to publish its cache entry,
+	// then block the over-gate free OAuth account. A call-count check alone races
+	// with the goroutine between the repository read and cache publication.
 	require.Eventually(t, func() bool {
-		repo.mu.Lock()
-		defer repo.mu.Unlock()
-		return repo.calls >= 1
-	}, 2*time.Second, 10*time.Millisecond)
-
-	// Second pass: uses refreshed cache and blocks over-gate free OAuth.
-	filtered = scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)
-	require.Equal(t, []int64{2, 3, 4}, accountIDs(filtered), "paid and unknown fail-open; API-key free marker is not gated")
+		return slices.Equal(accountIDs(scheduler.filterGrokFreeQuotaAccounts(context.Background(), accounts)), []int64{2, 3, 4})
+	}, 2*time.Second, 10*time.Millisecond, "paid and unknown fail-open; API-key free marker is not gated")
 	require.Equal(t, []int64{1}, repo.lastIDs, "paid, unknown, and API-key accounts must not enter the local free-tier query")
 	require.WithinDuration(t, time.Now().UTC().Add(-24*time.Hour), repo.start, time.Second)
 }
