@@ -249,7 +249,7 @@ func TestSettingService_GetPublicSettings_SubscriptionEnabledOnlyExplicitFalseDi
 		values map[string]string
 		want   bool
 	}{
-		{name: "missing key defaults to harvest-only", values: map[string]string{}, want: false},
+		{name: "missing key defaults to enabled", values: map[string]string{}, want: true},
 		{name: "empty value stays enabled", values: map[string]string{SettingKeySubscriptionEnabled: ""}, want: true},
 		{name: "explicit true", values: map[string]string{SettingKeySubscriptionEnabled: "true"}, want: true},
 		{name: "explicit false disables", values: map[string]string{SettingKeySubscriptionEnabled: "false"}, want: false},
