@@ -2413,7 +2413,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		// Independent-request rotation remains available to compatibility callers,
 		// but the production scheduler keeps upstream ordering by default.
 		DistributeIndependent: false,
-		ExcludedIDs:             excludedIDs,
+		ExcludedIDs:           excludedIDs,
 	})
 }
 
