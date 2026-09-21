@@ -116,8 +116,9 @@ func (s *OpenAIGatewayService) noteOpenAICodexTurnStateProvenance(c *gin.Context
 }
 
 // guardOpenAICodexTurnStateEcho 出站守卫：客户端回带的 turn-state 若已知由
-// 其他账号铸造则剥离，同账号或无溯源记录时保持原样。跨账号剥离之后，
-// applyOpenAICodexTicket 会按 (账号, 模型) 覆盖为已捕获的 292 门票。
+// 其他账号铸造则剥离，同账号或无溯源记录时保持原样。这里只做跨账号剥离；
+// 真实 Codex /responses 请求按自身回合语义回带状态，服务端 ticket 注入仅由
+// 兼容桥接路径在显式启用时负责。
 func (s *OpenAIGatewayService) guardOpenAICodexTurnStateEcho(c *gin.Context, account *Account, h http.Header) {
 	if s == nil || h == nil || account == nil {
 		return

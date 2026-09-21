@@ -847,14 +847,11 @@ func (s *AccountUsageService) getOpenAIUsageWithProbeStatus(ctx context.Context,
 
 	probeSucceeded := false
 	if needsProbe && prepareErr != nil {
-		if force {
-			return usage, false, fmt.Errorf("refresh OpenAI usage snapshot: %w", prepareErr)
-		}
 		slog.Warn("openai_codex_probe_prepare_failed", "account_id", account.ID, "error", prepareErr)
 	} else if needsProbe && s.shouldProbeOpenAICodexSnapshot(probeAccount, now, force) {
 		updates, probeErr := s.refreshPreparedOpenAICodexSnapshot(ctx, probeAccount)
 		if probeErr != nil {
-			if force {
+			if force && account.IsShadow() {
 				return usage, false, fmt.Errorf("refresh OpenAI usage snapshot: %w", probeErr)
 			}
 			slog.Warn("openai_codex_probe_failed", "account_id", account.ID, "error", probeErr)

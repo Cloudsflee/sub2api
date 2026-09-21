@@ -95,12 +95,12 @@ func TestNormalizeCodexTicketProxyURL(t *testing.T) {
 	require.NotContains(t, err.Error(), "secret")
 }
 
-func TestCodexTicketSyncBusinessProxyDefaultsTrueAndParsesFalse(t *testing.T) {
+func TestCodexTicketSyncBusinessProxyDefaultsFalseAndParsesFalse(t *testing.T) {
 	repo := &codexSyncSettingRepoStub{writes: map[string]string{}}
 	svc := NewSettingService(repo, &config.Config{})
 	settings, err := svc.GetAllSettings(context.Background())
 	require.NoError(t, err)
-	require.True(t, settings.OpenAICodexTicketSyncBusinessProxy)
+	require.False(t, settings.OpenAICodexTicketSyncBusinessProxy)
 
 	repo.writes[SettingKeyOpenAICodexTicketSyncBusinessProxy] = "false"
 	settings, err = svc.GetAllSettings(context.Background())

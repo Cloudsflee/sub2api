@@ -52,7 +52,9 @@ func acquireOpenAIAuthenticatedAccountSnapshot(
 		if !durable.IsOpenAIOAuth() || durable.IsOpenAIAgentIdentity() || durable.IsCredentialShadow() {
 			return "", nil, fmt.Errorf("account authentication mode changed during token acquisition")
 		}
-		if strings.TrimSpace(durable.GetOpenAIAccessToken()) == accessToken {
+		durableToken := strings.TrimSpace(durable.GetOpenAIAccessToken())
+		if durableToken == accessToken ||
+			(durableToken == "" && strings.TrimSpace(candidate.GetOpenAIAccessToken()) == "" && openAIAuthSnapshotIdentityMatches(candidate, durable)) {
 			return accessToken, snapshotOAuthRefreshAccount(durable), nil
 		}
 
@@ -67,4 +69,27 @@ func acquireOpenAIAuthenticatedAccountSnapshot(
 	}
 
 	return "", nil, fmt.Errorf("account credentials kept changing during token acquisition")
+}
+
+// openAIAuthSnapshotIdentityMatches permits a cache-only token when the
+// durable row intentionally omits access_token, while still rejecting a
+// concurrent reauthorization that changed the account's ownership identity.
+// Expiry and access-token fields are deliberately excluded because they are
+// expected to change during refresh.
+func openAIAuthSnapshotIdentityMatches(left, right *Account) bool {
+	if left == nil || right == nil || left.ID != right.ID {
+		return false
+	}
+	for _, key := range []string{
+		"chatgpt_account_id",
+		"organization_id",
+		"chatgpt_user_id",
+		"refresh_token",
+		"auth_mode",
+	} {
+		if strings.TrimSpace(left.GetCredential(key)) != strings.TrimSpace(right.GetCredential(key)) {
+			return false
+		}
+	}
+	return true
 }

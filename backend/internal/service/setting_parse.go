@@ -249,7 +249,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAICodexTicketHarvestProxyURL:                   "",
 		SettingKeyOpenAICodexTicketAccountIDs:                        "",
 		SettingKeyOpenAICodexTicketAccountModels:                     "{}",
-		SettingKeyOpenAICodexTicketSyncBusinessProxy:                 "true",
+		SettingKeyOpenAICodexTicketSyncBusinessProxy:                 "false",
 		SettingPaymentVisibleMethodAlipaySource:                      "",
 		SettingPaymentVisibleMethodWxpaySource:                       "",
 		SettingPaymentVisibleMethodAlipayEnabled:                     "false",
@@ -906,8 +906,9 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	if value, ok := settings[SettingKeyOpenAICodexTicketSyncBusinessProxy]; ok && strings.TrimSpace(value) != "" {
 		result.OpenAICodexTicketSyncBusinessProxy = value == "true"
 	} else {
-		// Existing installations do not have this key; preserve the enabled default.
-		result.OpenAICodexTicketSyncBusinessProxy = true
+		// Missing keys stay harvest-only by default. Operators can opt into
+		// business-proxy linkage explicitly for a single-entry setup.
+		result.OpenAICodexTicketSyncBusinessProxy = false
 	}
 	// codex_cli_only 加固
 	result.MinCodexVersion = settings[SettingKeyMinCodexVersion]

@@ -9928,7 +9928,7 @@ const form = reactive<SettingsForm>({
   openai_codex_ticket_harvest_proxy_configured: false,
   openai_codex_ticket_account_ids: "",
   openai_codex_ticket_account_models: "",
-  openai_codex_ticket_sync_business_proxy: true,
+  openai_codex_ticket_sync_business_proxy: false,
   // codex_cli_only 加固
   min_codex_version: "",
   max_codex_version: "",

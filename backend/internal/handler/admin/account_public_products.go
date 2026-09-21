@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -327,6 +328,7 @@ var (
 	publicProductCacheLoaded bool
 	publicProductCache       = publicAccountImportProductStore{Version: publicAccountImportProductStoreVersion, Shops: map[string]publicAccountImportProductShopCache{}}
 	publicProductLastJobAt   time.Time
+	publicProductAttemptSeq  atomic.Uint64
 )
 
 func (h *AccountHandler) ListPublicAccountImportProducts(c *gin.Context) {
@@ -2173,7 +2175,8 @@ func publicAccountImportProductID(shopID, goodsKey string) string {
 }
 
 func publicAccountImportProductSyncAttemptID(shopID string, now time.Time) string {
-	sum := sha256.Sum256([]byte(shopID + ":" + now.Format(time.RFC3339Nano)))
+	sequence := publicProductAttemptSeq.Add(1)
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", shopID, now.Format(time.RFC3339Nano), sequence)))
 	return hex.EncodeToString(sum[:16])
 }
 

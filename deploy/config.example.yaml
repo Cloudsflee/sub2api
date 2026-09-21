@@ -259,6 +259,9 @@ gateway:
   #
   # 注意：开启后会影响所有客户端的行为（不仅限于 VS Code / Codex CLI），请谨慎开启。
   force_codex_cli: false
+  # Keep canonical Codex User-Agent/originator/version enforcement enabled.
+  # Set true only as an emergency compatibility rollback.
+  disable_codex_identity_enforcement: false
   # Stop rewriting load-shed Codex originators to the official CLI identity.
   # 关闭「把落在上游降载桶的 Codex originator 改写为官方 CLI 身份（codex_cli_rs）」。
   #
@@ -337,10 +340,9 @@ gateway:
     # The value may contain one proxy URL per line; the harvester rotates entries
     # and cools failed entries before reuse. Multiple entries are harvest-only;
     # single-entry mode retains the legacy business synchronization option.
-    # The admin setting defaults to true (DB key: openai_codex_ticket_sync_business_proxy).
-    # openai_codex_ticket_sync_business_proxy: true
-    # It binds eligible OAuth account business traffic to the managed harvest
-    # proxy; turning it off preserves existing account proxy assignments.
+    # The admin setting defaults to false (DB key: openai_codex_ticket_sync_business_proxy).
+    # Keep it false for a harvest-only pool; enabling it binds eligible OAuth
+    # business traffic to a single managed harvest proxy.
     harvest_probe_interval_seconds: 180
     harvest_attempt_timeout_seconds: 25
     fail_closed: true
