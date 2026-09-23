@@ -261,6 +261,9 @@ type SystemSettings struct {
 	CodexCLIOnlyWhitelist                  string              // codex_cli_only 全局白名单 JSON（[]AllowedClientEntry，AND allow）
 	CodexCLIOnlyAllowAppServerClients      bool                // codex_cli_only App Server 开关：对未列名客户端开闸（默认 false）
 	CodexCLIOnlyEngineFingerprintSignals   string              // codex_cli_only 引擎指纹门信号列表 JSON（[]EngineFingerprintSignal）
+	ClaudeCodeClientVersion                string              // 出站声明的 Claude Code CLI 客户端版本号（管理员覆写）；空值跟随自动同步值
+	ClaudeCodeClientVersionSynced          string              // 自动同步到的官方最新版本号（只读展示）
+	ClaudeCodeVersionAutoSyncEnabled       bool                // 是否启用 Claude Code 客户端版本号自动同步（默认 true）
 
 	// Web Search Emulation
 	WebSearchEmulationEnabled bool // 是否启用 web search 模拟
@@ -273,7 +276,7 @@ type SystemSettings struct {
 
 	// OpenAI 账号调度
 	OpenAILowUpstreamRatePriorityEnabled                   bool
-	OpenAIOAuthSchedulingRateMultiplier                    float64
+	OpenAIOAuthSchedulingRateMultiplier                    *float64
 	OpenAIAdvancedSchedulerEnabled                         bool
 	OpenAIAdvancedSchedulerStickyWeightedEnabled           bool
 	OpenAIAdvancedSchedulerSubscriptionPriorityEnabled     bool
