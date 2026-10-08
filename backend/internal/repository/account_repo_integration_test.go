@@ -579,7 +579,7 @@ func (s *AccountRepoSuite) TestUpdateCredentials_InvalidatesQuotaMarkerOnlyWhenT
 	}))
 	afterTokenRotation, err := s.repo.GetByID(s.ctx, account.ID)
 	s.Require().NoError(err)
-	for _, key := range openAIQuotaManagedExtraKeys {
+	for _, key := range []string{"codex_primary_used_percent", "codex_5h_used_percent", "codex_5h_reset_at", "codex_7d_used_percent", "codex_usage_updated_at"} {
 		s.Require().Contains(afterTokenRotation.Extra, key)
 	}
 
