@@ -245,32 +245,6 @@ func (Group) Fields() []ent.Field {
 		field.Bool("allow_live").
 			Default(false).
 			Comment("是否允许此 OpenAI 分组访问 Live 接口"),
-		field.Bool("openai_5h_auto_wake_enabled").
-			Default(false).
-			Comment("是否为此 OpenAI 分组自动唤醒 5h 配额窗口"),
-		field.Time("openai_5h_auto_wake_next_check_at").
-			Optional().
-			Nillable().
-			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}).
-			Comment("OpenAI 5h 自动唤醒下一次计划检查时间"),
-		field.Time("openai_5h_auto_wake_last_checked_at").
-			Optional().
-			Nillable().
-			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
-		field.Int("openai_5h_auto_wake_last_candidate_pool_count").
-			Optional().
-			Nillable(),
-		field.String("openai_5h_auto_wake_last_reason").
-			MaxLen(64).
-			Optional().
-			Nillable(),
-		field.Int64("openai_5h_auto_wake_last_task_id").
-			Optional().
-			Nillable(),
-		field.String("openai_5h_auto_wake_last_task_status").
-			MaxLen(32).
-			Optional().
-			Nillable(),
 		field.Bool("force_openai_fast").
 			Default(false).
 			Comment("是否强制此 OpenAI/Composite 分组请求使用 service_tier=priority"),

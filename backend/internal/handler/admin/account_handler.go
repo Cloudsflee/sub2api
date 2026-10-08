@@ -65,7 +65,6 @@ type AccountHandler struct {
 	grokImportProber        grokImportProber
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
-	openAI5hWake            *service.OpenAI5hWakeService
 	urlPolicyConfig         *config.Config
 	codexTicketSettings     *service.SettingService
 	cfg                     *config.Config
@@ -79,10 +78,6 @@ func (h *AccountHandler) SetUpstreamBillingProbeService(probe *service.UpstreamB
 
 func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUsageService) {
 	h.ollamaCloudUsage = usage
-}
-
-func (h *AccountHandler) SetOpenAI5hWakeService(wake *service.OpenAI5hWakeService) {
-	h.openAI5hWake = wake
 }
 
 // SetURLPolicyConfig attaches the process-wide outbound URL policy used by

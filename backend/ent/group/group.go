@@ -120,20 +120,6 @@ const (
 	FieldAllowMessagesDispatch = "allow_messages_dispatch"
 	// FieldAllowLive holds the string denoting the allow_live field in the database.
 	FieldAllowLive = "allow_live"
-	// FieldOpenai5hAutoWakeEnabled holds the string denoting the openai_5h_auto_wake_enabled field in the database.
-	FieldOpenai5hAutoWakeEnabled = "openai_5h_auto_wake_enabled"
-	// FieldOpenai5hAutoWakeNextCheckAt holds the string denoting the openai_5h_auto_wake_next_check_at field in the database.
-	FieldOpenai5hAutoWakeNextCheckAt = "openai_5h_auto_wake_next_check_at"
-	// FieldOpenai5hAutoWakeLastCheckedAt holds the string denoting the openai_5h_auto_wake_last_checked_at field in the database.
-	FieldOpenai5hAutoWakeLastCheckedAt = "openai_5h_auto_wake_last_checked_at"
-	// FieldOpenai5hAutoWakeLastCandidatePoolCount holds the string denoting the openai_5h_auto_wake_last_candidate_pool_count field in the database.
-	FieldOpenai5hAutoWakeLastCandidatePoolCount = "openai_5h_auto_wake_last_candidate_pool_count"
-	// FieldOpenai5hAutoWakeLastReason holds the string denoting the openai_5h_auto_wake_last_reason field in the database.
-	FieldOpenai5hAutoWakeLastReason = "openai_5h_auto_wake_last_reason"
-	// FieldOpenai5hAutoWakeLastTaskID holds the string denoting the openai_5h_auto_wake_last_task_id field in the database.
-	FieldOpenai5hAutoWakeLastTaskID = "openai_5h_auto_wake_last_task_id"
-	// FieldOpenai5hAutoWakeLastTaskStatus holds the string denoting the openai_5h_auto_wake_last_task_status field in the database.
-	FieldOpenai5hAutoWakeLastTaskStatus = "openai_5h_auto_wake_last_task_status"
 	// FieldForceOpenaiFast holds the string denoting the force_openai_fast field in the database.
 	FieldForceOpenaiFast = "force_openai_fast"
 	// FieldFreeOpenaiFast holds the string denoting the free_openai_fast field in the database.
@@ -291,13 +277,6 @@ var Columns = []string{
 	FieldSortOrder,
 	FieldAllowMessagesDispatch,
 	FieldAllowLive,
-	FieldOpenai5hAutoWakeEnabled,
-	FieldOpenai5hAutoWakeNextCheckAt,
-	FieldOpenai5hAutoWakeLastCheckedAt,
-	FieldOpenai5hAutoWakeLastCandidatePoolCount,
-	FieldOpenai5hAutoWakeLastReason,
-	FieldOpenai5hAutoWakeLastTaskID,
-	FieldOpenai5hAutoWakeLastTaskStatus,
 	FieldForceOpenaiFast,
 	FieldFreeOpenaiFast,
 	FieldRequireOauthOnly,
@@ -424,12 +403,6 @@ var (
 	DefaultAllowMessagesDispatch bool
 	// DefaultAllowLive holds the default value on creation for the "allow_live" field.
 	DefaultAllowLive bool
-	// DefaultOpenai5hAutoWakeEnabled holds the default value on creation for the "openai_5h_auto_wake_enabled" field.
-	DefaultOpenai5hAutoWakeEnabled bool
-	// Openai5hAutoWakeLastReasonValidator is a validator for the "openai_5h_auto_wake_last_reason" field. It is called by the builders before save.
-	Openai5hAutoWakeLastReasonValidator func(string) error
-	// Openai5hAutoWakeLastTaskStatusValidator is a validator for the "openai_5h_auto_wake_last_task_status" field. It is called by the builders before save.
-	Openai5hAutoWakeLastTaskStatusValidator func(string) error
 	// DefaultForceOpenaiFast holds the default value on creation for the "force_openai_fast" field.
 	DefaultForceOpenaiFast bool
 	// DefaultFreeOpenaiFast holds the default value on creation for the "free_openai_fast" field.
@@ -714,41 +687,6 @@ func ByAllowMessagesDispatch(opts ...sql.OrderTermOption) OrderOption {
 // ByAllowLive orders the results by the allow_live field.
 func ByAllowLive(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAllowLive, opts...).ToFunc()
-}
-
-// ByOpenai5hAutoWakeEnabled orders the results by the openai_5h_auto_wake_enabled field.
-func ByOpenai5hAutoWakeEnabled(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOpenai5hAutoWakeEnabled, opts...).ToFunc()
-}
-
-// ByOpenai5hAutoWakeNextCheckAt orders the results by the openai_5h_auto_wake_next_check_at field.
-func ByOpenai5hAutoWakeNextCheckAt(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOpenai5hAutoWakeNextCheckAt, opts...).ToFunc()
-}
-
-// ByOpenai5hAutoWakeLastCheckedAt orders the results by the openai_5h_auto_wake_last_checked_at field.
-func ByOpenai5hAutoWakeLastCheckedAt(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOpenai5hAutoWakeLastCheckedAt, opts...).ToFunc()
-}
-
-// ByOpenai5hAutoWakeLastCandidatePoolCount orders the results by the openai_5h_auto_wake_last_candidate_pool_count field.
-func ByOpenai5hAutoWakeLastCandidatePoolCount(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOpenai5hAutoWakeLastCandidatePoolCount, opts...).ToFunc()
-}
-
-// ByOpenai5hAutoWakeLastReason orders the results by the openai_5h_auto_wake_last_reason field.
-func ByOpenai5hAutoWakeLastReason(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOpenai5hAutoWakeLastReason, opts...).ToFunc()
-}
-
-// ByOpenai5hAutoWakeLastTaskID orders the results by the openai_5h_auto_wake_last_task_id field.
-func ByOpenai5hAutoWakeLastTaskID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOpenai5hAutoWakeLastTaskID, opts...).ToFunc()
-}
-
-// ByOpenai5hAutoWakeLastTaskStatus orders the results by the openai_5h_auto_wake_last_task_status field.
-func ByOpenai5hAutoWakeLastTaskStatus(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOpenai5hAutoWakeLastTaskStatus, opts...).ToFunc()
 }
 
 // ByForceOpenaiFast orders the results by the force_openai_fast field.

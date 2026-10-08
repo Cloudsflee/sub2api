@@ -546,12 +546,6 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		}
 	}
 
-	openAI5hAutoWakeEnabled := platform == PlatformOpenAI && input.OpenAI5hAutoWakeEnabled
-	var openAI5hAutoWakeNextCheckAt *time.Time
-	if openAI5hAutoWakeEnabled {
-		now := time.Now().UTC()
-		openAI5hAutoWakeNextCheckAt = &now
-	}
 	// 白名单在创建路径同样收口：开启但为空、通配位置非法都会 400。
 	modelAllowlist, err := normalizeGroupModelAllowlist(input.ModelAllowlist)
 	if err != nil {
@@ -606,8 +600,6 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		SupportedModelScopes:            input.SupportedModelScopes,
 		AllowMessagesDispatch:           input.AllowMessagesDispatch,
 		AllowLive:                       input.AllowLive,
-		OpenAI5hAutoWakeEnabled:         openAI5hAutoWakeEnabled,
-		OpenAI5hAutoWakeNextCheckAt:     openAI5hAutoWakeNextCheckAt,
 		ForceOpenAIFast:                 input.ForceOpenAIFast,
 		FreeOpenAIFast:                  input.FreeOpenAIFast,
 		RequireOAuthOnly:                input.RequireOAuthOnly,
@@ -661,11 +653,6 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		}
 		group.AccountCount = int64(len(accountIDsToCopy))
 	}
-	checker := s.openAI5hAutoWakeChecker
-	if group.OpenAI5hAutoWakeEnabled && group.IsActive() && checker != nil {
-		checker.TriggerGroupCheck(group.ID)
-	}
-
 	return group, nil
 }
 
@@ -993,9 +980,6 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.AllowLive != nil {
 		group.AllowLive = *input.AllowLive
 	}
-	if input.OpenAI5hAutoWakeEnabled != nil {
-		group.OpenAI5hAutoWakeEnabled = *input.OpenAI5hAutoWakeEnabled
-	}
 	if input.ForceOpenAIFast != nil {
 		group.ForceOpenAIFast = *input.ForceOpenAIFast
 	}
@@ -1052,17 +1036,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	sanitizeGroupOpenAIFast(group)
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
-		group.OpenAI5hAutoWakeEnabled = false
 		group.PublicStatusEnabled = false
-	}
-	// A saved active OpenAI group is immediately eligible for a fresh check.
-	// Disabled groups retain their switches but do not retain a runnable
-	// deadline; reactivation below schedules an immediate check again.
-	if group.Platform == PlatformOpenAI && group.OpenAI5hAutoWakeEnabled && group.IsActive() {
-		now := time.Now().UTC()
-		group.OpenAI5hAutoWakeNextCheckAt = &now
-	} else if !group.IsActive() || !group.OpenAI5hAutoWakeEnabled {
-		group.OpenAI5hAutoWakeNextCheckAt = nil
 	}
 	sanitizeGroupReasoningEffortPolicy(group)
 	// 固定账号 manifest 配置：按最终平台归一化（切出 openai 平台时静默归零，
@@ -1157,11 +1131,6 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 			}
 		}
 	}
-	checker := s.openAI5hAutoWakeChecker
-	if group.OpenAI5hAutoWakeEnabled && group.IsActive() && checker != nil {
-		checker.TriggerGroupCheck(group.ID)
-	}
-
 	return group, nil
 }
 

@@ -624,13 +624,6 @@ export interface Group {
 
 export interface AdminGroup extends Group {
   public_status_enabled: boolean
-  openai_5h_auto_wake_enabled: boolean
-  openai_5h_auto_wake_next_check_at?: string | null
-  openai_5h_auto_wake_last_checked_at: string | null
-  openai_5h_auto_wake_last_candidate_pool_count: number | null
-  openai_5h_auto_wake_last_reason: string
-  openai_5h_auto_wake_last_task_id: number | null
-  openai_5h_auto_wake_last_task_status: string
   force_openai_fast: boolean
   free_openai_fast: boolean
   model_pricing: import('@/api/admin/channels').ChannelModelPricing[]
@@ -846,7 +839,6 @@ export interface CreateGroupRequest {
   codex_models_manifest_config?: CodexModelsManifestConfig
   allow_messages_dispatch?: boolean
   allow_live?: boolean
-  openai_5h_auto_wake_enabled?: boolean
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
   model_routing?: Record<string, number[]> | null
@@ -914,7 +906,6 @@ export interface UpdateGroupRequest {
   codex_models_manifest_config?: CodexModelsManifestConfig
   allow_messages_dispatch?: boolean
   allow_live?: boolean
-  openai_5h_auto_wake_enabled?: boolean
   default_mapped_model?: string
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
   model_routing?: Record<string, number[]> | null

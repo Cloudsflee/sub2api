@@ -362,9 +362,9 @@ func (s *AccountRepoSuite) TestUpdate() {
 	s.Require().Equal("updated", got.Name)
 }
 
-func (s *AccountRepoSuite) TestUpdate_PreservesConcurrentOpenAIWakeSnapshotForSameIdentity() {
+func (s *AccountRepoSuite) TestUpdate_PreservesConcurrentOpenAIQuotaSnapshotForSameIdentity() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{
-		Name:     "wake-snapshot-concurrent-edit",
+		Name:     "quota-snapshot-concurrent-edit",
 		Platform: service.PlatformOpenAI,
 		Type:     service.AccountTypeOAuth,
 		Credentials: map[string]any{
@@ -374,40 +374,37 @@ func (s *AccountRepoSuite) TestUpdate_PreservesConcurrentOpenAIWakeSnapshotForSa
 			"chatgpt_user_id":    "user-a",
 		},
 		Extra: map[string]any{
-			"operator_note":               "old",
-			"codex_5h_used_percent":       91.0,
-			"codex_usage_updated_at":      "stale",
-			"codex_5h_wake_identity_hash": "stale-marker",
+			"operator_note":          "old",
+			"codex_5h_used_percent":  91.0,
+			"codex_usage_updated_at": "stale",
 		},
 	})
 	stale, err := s.repo.GetByID(s.ctx, account.ID)
 	s.Require().NoError(err)
 
 	s.Require().NoError(s.repo.UpdateExtra(s.ctx, account.ID, map[string]any{
-		"codex_5h_used_percent":                      12.5,
-		"codex_5h_reset_at":                          "2026-08-05T12:00:00Z",
-		"codex_7d_used_percent":                      34.5,
-		"codex_usage_updated_at":                     "2026-08-05T07:00:00Z",
-		service.OpenAI5hWakeSnapshotIdentityExtraKey: "fresh-marker",
+		"codex_5h_used_percent":  12.5,
+		"codex_5h_reset_at":      "2026-08-05T12:00:00Z",
+		"codex_7d_used_percent":  34.5,
+		"codex_usage_updated_at": "2026-08-05T07:00:00Z",
 	}))
-	stale.Name = "wake-snapshot-concurrent-edit-renamed"
+	stale.Name = "quota-snapshot-concurrent-edit-renamed"
 	stale.Extra["operator_note"] = "edited"
 	s.Require().NoError(s.repo.Update(s.ctx, stale))
 
 	got, err := s.repo.GetByID(s.ctx, account.ID)
 	s.Require().NoError(err)
-	s.Require().Equal("wake-snapshot-concurrent-edit-renamed", got.Name)
+	s.Require().Equal("quota-snapshot-concurrent-edit-renamed", got.Name)
 	s.Require().Equal("edited", got.Extra["operator_note"])
 	s.Require().Equal(12.5, got.Extra["codex_5h_used_percent"])
 	s.Require().Equal("2026-08-05T12:00:00Z", got.Extra["codex_5h_reset_at"])
 	s.Require().Equal(34.5, got.Extra["codex_7d_used_percent"])
 	s.Require().Equal("2026-08-05T07:00:00Z", got.Extra["codex_usage_updated_at"])
-	s.Require().Equal("fresh-marker", got.Extra[service.OpenAI5hWakeSnapshotIdentityExtraKey])
 }
 
-func (s *AccountRepoSuite) TestUpdate_ClearsOpenAIWakeSnapshotWhenIdentityChanges() {
+func (s *AccountRepoSuite) TestUpdate_ClearsOpenAIQuotaSnapshotWhenIdentityChanges() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{
-		Name:     "wake-snapshot-identity-change",
+		Name:     "quota-snapshot-identity-change",
 		Platform: service.PlatformOpenAI,
 		Type:     service.AccountTypeOAuth,
 		Credentials: map[string]any{
@@ -417,26 +414,24 @@ func (s *AccountRepoSuite) TestUpdate_ClearsOpenAIWakeSnapshotWhenIdentityChange
 			"chatgpt_user_id":    "user-a",
 		},
 		Extra: map[string]any{
-			"operator_note":                              "kept",
-			"codex_primary_used_percent":                 11.0,
-			"codex_5h_used_percent":                      12.0,
-			"codex_5h_reset_at":                          "2026-08-05T12:00:00Z",
-			"codex_7d_used_percent":                      34.0,
-			"codex_usage_updated_at":                     "2026-08-05T07:00:00Z",
-			service.OpenAI5hWakeSnapshotIdentityExtraKey: "old-marker",
+			"operator_note":              "kept",
+			"codex_primary_used_percent": 11.0,
+			"codex_5h_used_percent":      12.0,
+			"codex_5h_reset_at":          "2026-08-05T12:00:00Z",
+			"codex_7d_used_percent":      34.0,
+			"codex_usage_updated_at":     "2026-08-05T07:00:00Z",
 		},
 	})
 	shadow := mustCreateAccount(s.T(), s.client, &service.Account{
-		Name:            "wake-snapshot-identity-change-shadow",
+		Name:            "quota-snapshot-identity-change-shadow",
 		Platform:        service.PlatformOpenAI,
 		Type:            service.AccountTypeOAuth,
 		ParentAccountID: &account.ID,
 		QuotaDimension:  service.QuotaDimensionSpark,
 		Extra: map[string]any{
-			"operator_note":                              "shadow-kept",
-			"codex_5h_used_percent":                      44.0,
-			"codex_usage_updated_at":                     "2026-08-05T07:00:00Z",
-			service.OpenAI5hWakeSnapshotIdentityExtraKey: "shadow-marker",
+			"operator_note":          "shadow-kept",
+			"codex_5h_used_percent":  44.0,
+			"codex_usage_updated_at": "2026-08-05T07:00:00Z",
 		},
 	})
 	cacheRecorder := &schedulerCacheRecorder{}
@@ -451,7 +446,6 @@ func (s *AccountRepoSuite) TestUpdate_ClearsOpenAIWakeSnapshotWhenIdentityChange
 	afterTokenRotation, err := s.repo.GetByID(s.ctx, shadow.ID)
 	s.Require().NoError(err)
 	s.Require().Equal(44.0, afterTokenRotation.Extra["codex_5h_used_percent"])
-	s.Require().Equal("shadow-marker", afterTokenRotation.Extra[service.OpenAI5hWakeSnapshotIdentityExtraKey])
 
 	loaded, err = s.repo.GetByID(s.ctx, account.ID)
 	s.Require().NoError(err)
@@ -461,17 +455,17 @@ func (s *AccountRepoSuite) TestUpdate_ClearsOpenAIWakeSnapshotWhenIdentityChange
 	got, err := s.repo.GetByID(s.ctx, account.ID)
 	s.Require().NoError(err)
 	s.Require().Equal("kept", got.Extra["operator_note"])
-	for _, key := range openAIWakeManagedExtraKeys {
+	for _, key := range openAIQuotaManagedExtraKeys {
 		s.Require().NotContains(got.Extra, key)
 	}
 	gotShadow, err := s.repo.GetByID(s.ctx, shadow.ID)
 	s.Require().NoError(err)
 	s.Require().Equal("shadow-kept", gotShadow.Extra["operator_note"])
-	for _, key := range openAIWakeManagedExtraKeys {
+	for _, key := range openAIQuotaManagedExtraKeys {
 		s.Require().NotContains(gotShadow.Extra, key)
 	}
 	s.Require().NotNil(cacheRecorder.accounts[shadow.ID])
-	for _, key := range openAIWakeManagedExtraKeys {
+	for _, key := range openAIQuotaManagedExtraKeys {
 		s.Require().NotContains(cacheRecorder.accounts[shadow.ID].Extra, key)
 	}
 	var bulkOutboxCount int
@@ -557,9 +551,9 @@ func (s *AccountRepoSuite) TestUpdateCredentials_SyncsSnapshotAndDurableOutbox()
 	s.Require().Equal(1, outboxCount)
 }
 
-func (s *AccountRepoSuite) TestUpdateCredentials_InvalidatesWakeMarkerOnlyWhenTypedIdentityChanges() {
+func (s *AccountRepoSuite) TestUpdateCredentials_InvalidatesQuotaMarkerOnlyWhenTypedIdentityChanges() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{
-		Name:        "wake-identity-credentials",
+		Name:        "quota-identity-credentials",
 		Platform:    service.PlatformOpenAI,
 		Type:        service.AccountTypeOAuth,
 		Status:      service.StatusActive,
@@ -570,12 +564,11 @@ func (s *AccountRepoSuite) TestUpdateCredentials_InvalidatesWakeMarkerOnlyWhenTy
 			"organization_id":    "org",
 		},
 		Extra: map[string]any{
-			"codex_primary_used_percent":                 1.0,
-			"codex_5h_used_percent":                      2.0,
-			"codex_5h_reset_at":                          "2026-08-05T12:00:00Z",
-			"codex_7d_used_percent":                      3.0,
-			"codex_usage_updated_at":                     "2026-08-05T07:00:00Z",
-			service.OpenAI5hWakeSnapshotIdentityExtraKey: "trusted-marker",
+			"codex_primary_used_percent": 1.0,
+			"codex_5h_used_percent":      2.0,
+			"codex_5h_reset_at":          "2026-08-05T12:00:00Z",
+			"codex_7d_used_percent":      3.0,
+			"codex_usage_updated_at":     "2026-08-05T07:00:00Z",
 		},
 	})
 
@@ -586,7 +579,9 @@ func (s *AccountRepoSuite) TestUpdateCredentials_InvalidatesWakeMarkerOnlyWhenTy
 	}))
 	afterTokenRotation, err := s.repo.GetByID(s.ctx, account.ID)
 	s.Require().NoError(err)
-	s.Require().Equal("trusted-marker", afterTokenRotation.Extra[service.OpenAI5hWakeSnapshotIdentityExtraKey])
+	for _, key := range openAIQuotaManagedExtraKeys {
+		s.Require().Contains(afterTokenRotation.Extra, key)
+	}
 
 	s.Require().NoError(s.repo.UpdateCredentials(s.ctx, account.ID, map[string]any{
 		"access_token":       "reauthorized-token",
@@ -595,14 +590,14 @@ func (s *AccountRepoSuite) TestUpdateCredentials_InvalidatesWakeMarkerOnlyWhenTy
 	}))
 	afterIdentityChange, err := s.repo.GetByID(s.ctx, account.ID)
 	s.Require().NoError(err)
-	for _, key := range openAIWakeManagedExtraKeys {
+	for _, key := range openAIQuotaManagedExtraKeys {
 		s.Require().NotContains(afterIdentityChange.Extra, key)
 	}
 }
 
-func (s *AccountRepoSuite) TestOpenAIWakeSnapshotCASRejectsReauthorizedIdentity() {
+func (s *AccountRepoSuite) TestOpenAIQuotaSnapshotCASRejectsReauthorizedIdentity() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{
-		Name: "wake-cas", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Name: "quota-cas", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
 		Credentials: map[string]any{
 			"chatgpt_account_id": "account-before", "organization_id": "org", "chatgpt_user_id": "user",
 		},
@@ -615,8 +610,7 @@ func (s *AccountRepoSuite) TestOpenAIWakeSnapshotCASRejectsReauthorizedIdentity(
 	}))
 
 	applied, err := s.repo.UpdateOpenAICodexSnapshot(s.ctx, stale.ID, stale, nil, map[string]any{
-		"codex_5h_used_percent":                      99.0,
-		service.OpenAI5hWakeSnapshotIdentityExtraKey: "old-marker",
+		"codex_5h_used_percent": 99.0,
 	})
 	s.Require().NoError(err)
 	s.Require().False(applied)
@@ -624,12 +618,11 @@ func (s *AccountRepoSuite) TestOpenAIWakeSnapshotCASRejectsReauthorizedIdentity(
 	s.Require().NoError(err)
 	s.Require().Equal("preserve", got.Extra["operator_note"])
 	s.Require().NotContains(got.Extra, "codex_5h_used_percent")
-	s.Require().NotContains(got.Extra, service.OpenAI5hWakeSnapshotIdentityExtraKey)
 }
 
 func (s *AccountRepoSuite) TestOpenAICodexSnapshotDoesNotRegressForLateResponse() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{
-		Name: "wake-monotonic", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Name: "quota-monotonic", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
 		Credentials: map[string]any{
 			"chatgpt_account_id": "account-a", "organization_id": "org", "chatgpt_user_id": "user",
 		},
@@ -719,7 +712,7 @@ func (s *AccountRepoSuite) TestOpenAICodexSnapshotSparkShadowRejectsReauthorized
 	afterReauthorization, err := s.repo.GetByID(s.ctx, shadow.ID)
 	s.Require().NoError(err)
 	s.Require().Equal("shadow-preserve", afterReauthorization.Extra["operator_note"])
-	for _, key := range openAIWakeManagedExtraKeys {
+	for _, key := range openAIQuotaManagedExtraKeys {
 		s.Require().NotContains(afterReauthorization.Extra, key)
 	}
 
@@ -738,7 +731,7 @@ func (s *AccountRepoSuite) TestOpenAICodexSnapshotSparkShadowRejectsReauthorized
 
 func (s *AccountRepoSuite) TestOpenAICodexSnapshotAppliesOrdinaryFieldsWhileRejectingStaleManagedFields() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{
-		Name: "wake-mixed-atomic", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Name: "quota-mixed-atomic", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
 		Credentials: map[string]any{
 			"chatgpt_account_id": "account-a", "organization_id": "org", "chatgpt_user_id": "user",
 		},
@@ -781,7 +774,7 @@ func (s *AccountRepoSuite) TestOpenAICodexSnapshotAppliesOrdinaryFieldsWhileReje
 
 func (s *AccountRepoSuite) TestOpenAICodexSnapshotDetachedCacheSyncIgnoresCallerCancellation() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{
-		Name: "wake-detached-cache", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Name: "quota-detached-cache", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
 		Credentials: map[string]any{"chatgpt_account_id": "account-detached"},
 	})
 	cacheRecorder := &schedulerCacheRecorder{}
@@ -797,22 +790,21 @@ func (s *AccountRepoSuite) TestOpenAICodexSnapshotDetachedCacheSyncIgnoresCaller
 	s.Require().Equal(account.ID, cacheRecorder.setAccounts[0].ID)
 }
 
-func (s *AccountRepoSuite) TestBulkUpdate_ClearsOpenAIWakeSnapshotOnIdentityEdit() {
+func (s *AccountRepoSuite) TestBulkUpdate_ClearsOpenAIQuotaSnapshotOnIdentityEdit() {
 	account := mustCreateAccount(s.T(), s.client, &service.Account{
-		Name: "bulk-wake-identity", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Name: "bulk-quota-identity", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
 		Credentials: map[string]any{
 			"access_token":       "bulk-token-before",
 			"chatgpt_account_id": "account-before", "organization_id": "org", "chatgpt_user_id": "user",
 		},
 		Extra: map[string]any{
-			"codex_5h_used_percent":                      2.0,
-			"codex_7d_used_percent":                      3.0,
-			"codex_usage_updated_at":                     "2026-08-05T07:00:00Z",
-			service.OpenAI5hWakeSnapshotIdentityExtraKey: "trusted-marker",
+			"codex_5h_used_percent":  2.0,
+			"codex_7d_used_percent":  3.0,
+			"codex_usage_updated_at": "2026-08-05T07:00:00Z",
 		},
 	})
 	shadow := mustCreateAccount(s.T(), s.client, &service.Account{
-		Name:            "bulk-wake-identity-shadow",
+		Name:            "bulk-quota-identity-shadow",
 		Platform:        service.PlatformOpenAI,
 		Type:            service.AccountTypeOAuth,
 		ParentAccountID: &account.ID,
@@ -837,13 +829,13 @@ func (s *AccountRepoSuite) TestBulkUpdate_ClearsOpenAIWakeSnapshotOnIdentityEdit
 	s.Require().NoError(err)
 	got, err := s.repo.GetByID(s.ctx, account.ID)
 	s.Require().NoError(err)
-	for _, key := range openAIWakeManagedExtraKeys {
+	for _, key := range openAIQuotaManagedExtraKeys {
 		s.Require().NotContains(got.Extra, key)
 	}
 	gotShadow, err := s.repo.GetByID(s.ctx, shadow.ID)
 	s.Require().NoError(err)
 	s.Require().Equal("shadow-kept", gotShadow.Extra["operator_note"])
-	for _, key := range openAIWakeManagedExtraKeys {
+	for _, key := range openAIQuotaManagedExtraKeys {
 		s.Require().NotContains(gotShadow.Extra, key)
 	}
 }

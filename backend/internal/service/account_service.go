@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -320,8 +319,6 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 	if err != nil {
 		return nil, fmt.Errorf("get account: %w", err)
 	}
-	previousOpenAI5hWakeIdentity := openAI5hWakeIdentityFingerprintFor(account)
-	previousOpenAI5hWakeMarker, hadOpenAI5hWakeMarker := account.Extra[openAI5hWakeSnapshotIdentityKey]
 
 	// 更新字段
 	if req.Name != nil {
@@ -343,23 +340,9 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 		delete(extra, OllamaCloudUsageSessionExtraKey)
 		delete(extra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(extra, OllamaCloudUsageSnapshotExtraKey)
-		delete(extra, openAI5hWakeSnapshotIdentityKey)
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, extra)
 	} else {
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, account.Extra)
-	}
-
-	currentOpenAI5hWakeIdentity := openAI5hWakeIdentityFingerprintFor(account)
-	if previousOpenAI5hWakeIdentity != currentOpenAI5hWakeIdentity {
-		delete(account.Extra, openAI5hWakeSnapshotIdentityKey)
-	} else if req.Extra != nil && hadOpenAI5hWakeMarker {
-		if marker, ok := previousOpenAI5hWakeMarker.(string); ok &&
-			strings.EqualFold(strings.TrimSpace(marker), currentOpenAI5hWakeIdentity.identityHash) {
-			if account.Extra == nil {
-				account.Extra = make(map[string]any)
-			}
-			account.Extra[openAI5hWakeSnapshotIdentityKey] = marker
-		}
 	}
 
 	if req.ProxyID != nil {

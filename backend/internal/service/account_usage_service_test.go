@@ -164,6 +164,38 @@ func TestOpenAICodexProbeCooldownSeparatesQuotaIdentity(t *testing.T) {
 	}
 }
 
+func TestOpenAICodexProbeIsolationDimensions(t *testing.T) {
+	base := &Account{
+		ID: 42, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+		Credentials: map[string]any{"chatgpt_account_id": "workspace-a", "chatgpt_user_id": "user-a", "organization_id": "org-a"},
+	}
+	for name, change := range map[string]func(*Account){
+		"account":         func(a *Account) { a.ID++ },
+		"workspace":       func(a *Account) { a.Credentials["chatgpt_account_id"] = "workspace-b" },
+		"user":            func(a *Account) { a.Credentials["chatgpt_user_id"] = "user-b" },
+		"organization":    func(a *Account) { a.Credentials["organization_id"] = "org-b" },
+		"quota-dimension": func(a *Account) { a.QuotaDimension = QuotaDimensionSpark },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := snapshotOAuthRefreshAccount(base)
+			change(changed)
+			if openAICodexProbeFlightKey(base) == openAICodexProbeFlightKey(changed) {
+				t.Fatal("different quota identities must not share a probe flight")
+			}
+			cache := NewUsageCache()
+			svc := &AccountUsageService{cache: cache}
+			now := time.Now()
+			cache.openAIProbeCache.Store(openAICodexProbeCacheKey(base), now)
+			if svc.shouldProbeOpenAICodexSnapshot(base, now.Add(time.Minute)) {
+				t.Fatal("original identity must retain its cooldown")
+			}
+			if !svc.shouldProbeOpenAICodexSnapshot(changed, now.Add(time.Minute)) {
+				t.Fatal("different quota identities must not share a cooldown")
+			}
+		})
+	}
+}
+
 func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) {
 	t.Parallel()
 

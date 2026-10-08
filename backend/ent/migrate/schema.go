@@ -955,13 +955,6 @@ var (
 		{Name: "sort_order", Type: field.TypeInt, Default: 0},
 		{Name: "allow_messages_dispatch", Type: field.TypeBool, Default: false},
 		{Name: "allow_live", Type: field.TypeBool, Default: false},
-		{Name: "openai_5h_auto_wake_enabled", Type: field.TypeBool, Default: false},
-		{Name: "openai_5h_auto_wake_next_check_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "openai_5h_auto_wake_last_checked_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "openai_5h_auto_wake_last_candidate_pool_count", Type: field.TypeInt, Nullable: true},
-		{Name: "openai_5h_auto_wake_last_reason", Type: field.TypeString, Nullable: true, Size: 64},
-		{Name: "openai_5h_auto_wake_last_task_id", Type: field.TypeInt64, Nullable: true},
-		{Name: "openai_5h_auto_wake_last_task_status", Type: field.TypeString, Nullable: true, Size: 32},
 		{Name: "force_openai_fast", Type: field.TypeBool, Default: false},
 		{Name: "free_openai_fast", Type: field.TypeBool, Default: false},
 		{Name: "require_oauth_only", Type: field.TypeBool, Default: false},
@@ -1107,137 +1100,6 @@ var (
 				Name:    "identityadoptiondecision_identity_id",
 				Unique:  false,
 				Columns: []*schema.Column{IdentityAdoptionDecisionsColumns[6]},
-			},
-		},
-	}
-	// Openai5hWakePoolLeasesColumns holds the columns for the "openai_5h_wake_pool_leases" table.
-	Openai5hWakePoolLeasesColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeInt64, Increment: true},
-		{Name: "identity_hash", Type: field.TypeString, Unique: true, Size: 64},
-		{Name: "task_id", Type: field.TypeInt64},
-		{Name: "item_id", Type: field.TypeInt64, Unique: true},
-		{Name: "lease_owner", Type: field.TypeString, Size: 128},
-		{Name: "lease_expires_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "heartbeat_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
-	}
-	// Openai5hWakePoolLeasesTable holds the schema information for the "openai_5h_wake_pool_leases" table.
-	Openai5hWakePoolLeasesTable = &schema.Table{
-		Name:       "openai_5h_wake_pool_leases",
-		Columns:    Openai5hWakePoolLeasesColumns,
-		PrimaryKey: []*schema.Column{Openai5hWakePoolLeasesColumns[0]},
-		Indexes: []*schema.Index{
-			{
-				Name:    "openai5hwakepoollease_task_id",
-				Unique:  false,
-				Columns: []*schema.Column{Openai5hWakePoolLeasesColumns[2]},
-			},
-			{
-				Name:    "openai5hwakepoollease_lease_expires_at",
-				Unique:  false,
-				Columns: []*schema.Column{Openai5hWakePoolLeasesColumns[5]},
-			},
-		},
-	}
-	// Openai5hWakeTasksColumns holds the columns for the "openai_5h_wake_tasks" table.
-	Openai5hWakeTasksColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeInt64, Increment: true},
-		{Name: "trigger_type", Type: field.TypeString, Size: 32, Default: "manual"},
-		{Name: "group_id", Type: field.TypeInt64, Nullable: true},
-		{Name: "status", Type: field.TypeString, Size: 32, Default: "pending"},
-		{Name: "eligible_account_count", Type: field.TypeInt, Default: 0},
-		{Name: "active_window_count", Type: field.TypeInt, Default: 0},
-		{Name: "estimated_request_count", Type: field.TypeInt, Default: 0},
-		{Name: "total_items", Type: field.TypeInt, Default: 0},
-		{Name: "processed_items", Type: field.TypeInt, Default: 0},
-		{Name: "woken_count", Type: field.TypeInt, Default: 0},
-		{Name: "skipped_active_count", Type: field.TypeInt, Default: 0},
-		{Name: "failed_count", Type: field.TypeInt, Default: 0},
-		{Name: "cancelled_count", Type: field.TypeInt, Default: 0},
-		{Name: "requested_by_user_id", Type: field.TypeInt64, Nullable: true},
-		{Name: "requested_by_email", Type: field.TypeString, Nullable: true, Size: 320},
-		{Name: "lease_owner", Type: field.TypeString, Nullable: true, Size: 128},
-		{Name: "lease_expires_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "heartbeat_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "earliest_reset_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "latest_reset_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "cancel_requested_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "started_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "finished_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
-	}
-	// Openai5hWakeTasksTable holds the schema information for the "openai_5h_wake_tasks" table.
-	Openai5hWakeTasksTable = &schema.Table{
-		Name:       "openai_5h_wake_tasks",
-		Columns:    Openai5hWakeTasksColumns,
-		PrimaryKey: []*schema.Column{Openai5hWakeTasksColumns[0]},
-		Indexes: []*schema.Index{
-			{
-				Name:    "openai5hwaketask_trigger_type_status",
-				Unique:  false,
-				Columns: []*schema.Column{Openai5hWakeTasksColumns[1], Openai5hWakeTasksColumns[3]},
-			},
-			{
-				Name:    "openai5hwaketask_status",
-				Unique:  false,
-				Columns: []*schema.Column{Openai5hWakeTasksColumns[3]},
-			},
-			{
-				Name:    "openai5hwaketask_created_at",
-				Unique:  false,
-				Columns: []*schema.Column{Openai5hWakeTasksColumns[23]},
-			},
-			{
-				Name:    "openai5hwaketask_lease_expires_at",
-				Unique:  false,
-				Columns: []*schema.Column{Openai5hWakeTasksColumns[16]},
-			},
-			{
-				Name:    "openai5hwaketask_finished_at",
-				Unique:  false,
-				Columns: []*schema.Column{Openai5hWakeTasksColumns[22]},
-			},
-		},
-	}
-	// Openai5hWakeTaskItemsColumns holds the columns for the "openai_5h_wake_task_items" table.
-	Openai5hWakeTaskItemsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeInt64, Increment: true},
-		{Name: "task_id", Type: field.TypeInt64},
-		{Name: "identity_hash", Type: field.TypeString, Size: 64},
-		{Name: "member_account_ids", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
-		{Name: "attempted_account_ids", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
-		{Name: "successful_account_id", Type: field.TypeInt64, Nullable: true},
-		{Name: "status", Type: field.TypeString, Size: 32, Default: "pending"},
-		{Name: "attempt_count", Type: field.TypeInt, Default: 0},
-		{Name: "error_code", Type: field.TypeString, Nullable: true, Size: 128},
-		{Name: "reset_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "started_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "finished_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
-		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
-	}
-	// Openai5hWakeTaskItemsTable holds the schema information for the "openai_5h_wake_task_items" table.
-	Openai5hWakeTaskItemsTable = &schema.Table{
-		Name:       "openai_5h_wake_task_items",
-		Columns:    Openai5hWakeTaskItemsColumns,
-		PrimaryKey: []*schema.Column{Openai5hWakeTaskItemsColumns[0]},
-		Indexes: []*schema.Index{
-			{
-				Name:    "openai5hwaketaskitem_task_id_identity_hash",
-				Unique:  true,
-				Columns: []*schema.Column{Openai5hWakeTaskItemsColumns[1], Openai5hWakeTaskItemsColumns[2]},
-			},
-			{
-				Name:    "openai5hwaketaskitem_task_id_status",
-				Unique:  false,
-				Columns: []*schema.Column{Openai5hWakeTaskItemsColumns[1], Openai5hWakeTaskItemsColumns[6]},
-			},
-			{
-				Name:    "openai5hwaketaskitem_status",
-				Unique:  false,
-				Columns: []*schema.Column{Openai5hWakeTaskItemsColumns[6]},
 			},
 		},
 	}
@@ -2251,9 +2113,6 @@ var (
 		GroupsTable,
 		IdempotencyRecordsTable,
 		IdentityAdoptionDecisionsTable,
-		Openai5hWakePoolLeasesTable,
-		Openai5hWakeTasksTable,
-		Openai5hWakeTaskItemsTable,
 		PaymentAuditLogsTable,
 		PaymentOrdersTable,
 		PaymentProviderInstancesTable,
@@ -2350,15 +2209,6 @@ func init() {
 	IdentityAdoptionDecisionsTable.ForeignKeys[1].RefTable = PendingAuthSessionsTable
 	IdentityAdoptionDecisionsTable.Annotation = &entsql.Annotation{
 		Table: "identity_adoption_decisions",
-	}
-	Openai5hWakePoolLeasesTable.Annotation = &entsql.Annotation{
-		Table: "openai_5h_wake_pool_leases",
-	}
-	Openai5hWakeTasksTable.Annotation = &entsql.Annotation{
-		Table: "openai_5h_wake_tasks",
-	}
-	Openai5hWakeTaskItemsTable.Annotation = &entsql.Annotation{
-		Table: "openai_5h_wake_task_items",
 	}
 	PaymentAuditLogsTable.Annotation = &entsql.Annotation{
 		Table: "payment_audit_logs",

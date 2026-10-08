@@ -3,6 +3,8 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1057,17 +1059,28 @@ func openAICodexProbeFlightKey(account *Account) string {
 	if account.ParentAccountID != nil {
 		parentID = *account.ParentAccountID
 	}
-	fingerprint := openAI5hWakeIdentityFingerprintFor(account)
-	return fmt.Sprintf(
-		"openai-usage:%d:%s:%s:%s:%t:%d:%s",
-		account.ID,
-		fingerprint.platform,
-		fingerprint.accountType,
-		fingerprint.quotaDimension,
-		fingerprint.shadow,
-		parentID,
-		fingerprint.identityHash,
-	)
+	return fmt.Sprintf("openai-usage:%d:%s:%s:%s:%t:%d:%s", account.ID, account.Platform, account.Type, account.QuotaDimensionOrDefault(), account.IsShadow(), parentID, codexQuotaIdentityHash(account))
+}
+
+func codexQuotaIdentityHash(account *Account) string {
+	if account == nil {
+		return ""
+	}
+	parts := []string{}
+	for _, item := range []struct{ name, value string }{
+		{"chatgpt_account_id", strings.TrimSpace(account.GetCredential("chatgpt_account_id"))},
+		{"organization_id", strings.TrimSpace(account.GetCredential("organization_id"))},
+		{"chatgpt_user_id", strings.TrimSpace(account.GetCredential("chatgpt_user_id"))},
+	} {
+		if item.value != "" {
+			parts = append(parts, item.name+":"+item.value)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	h := sha256.Sum256([]byte("openai-quota-pool\x00" + strings.Join(parts, "\x00")))
+	return hex.EncodeToString(h[:])
 }
 
 // The cooldown must use the same non-secret identity tuple as singleflight.
@@ -1294,7 +1307,7 @@ func extractOpenAICodexProbeUpdates(resp *http.Response) (map[string]any, error)
 	// A 429 response is the only non-2xx status whose quota headers are
 	// authoritative. Authentication and upstream failures may carry generic or
 	// stale x-codex-* headers; accepting them would overwrite the account's last
-	// verified snapshot after a wake task completes.
+	// verified snapshot after a quota probe completes.
 	if resp.StatusCode != http.StatusTooManyRequests &&
 		(resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
 		return nil, fmt.Errorf("openai codex probe returned status %d", resp.StatusCode)

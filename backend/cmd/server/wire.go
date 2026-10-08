@@ -129,7 +129,6 @@ func provideCleanup(
 	auditLog *service.AuditLogService,
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
 	promptAudit *securityaudit.PromptService,
-	openAI5hWake *service.OpenAI5hWakeService,
 	pluginManager *service.PluginManager,
 ) func() {
 	return func() {
@@ -230,12 +229,6 @@ func provideCleanup(
 			{"SchedulerSnapshotService", func() error {
 				if schedulerSnapshot != nil {
 					schedulerSnapshot.Stop()
-				}
-				return nil
-			}},
-			{"OpenAI5hWakeService", func() error {
-				if openAI5hWake != nil {
-					openAI5hWake.Stop()
 				}
 				return nil
 			}},

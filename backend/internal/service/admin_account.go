@@ -151,13 +151,10 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"codex_7d_reset_after_seconds":           {},
 	"codex_7d_window_minutes":                {},
 	"codex_7d_reset_at":                      {},
-	// Wake verification belongs to the source account and must be re-established
-	// when an account is duplicated or its credentials are replaced.
-	"codex_5h_wake_identity_hash": {},
 }
 
 // openAICodexSnapshotManagedExtraKeys are maintained by upstream quota probes
-// and the 5h wake worker. They are deliberately excluded from generic admin
+// and deliberately excluded from generic admin
 // Extra edits so a stale account form cannot overwrite a newer observation.
 var openAICodexSnapshotManagedExtraKeys = map[string]struct{}{
 	// Codex fingerprint convergence uses a per-account random seed, never copied from another account.
@@ -179,7 +176,6 @@ var openAICodexSnapshotManagedExtraKeys = map[string]struct{}{
 	"codex_7d_reset_after_seconds":         {},
 	"codex_7d_window_minutes":              {},
 	"codex_7d_reset_at":                    {},
-	openAI5hWakeSnapshotIdentityKey:        {},
 }
 
 func discardOpenAICodexSnapshotManagedExtra(updates map[string]any) {
@@ -578,10 +574,6 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 			return nil, err
 		}
 	}
-	// A newly-created OpenAI account can change the eligibility of every bound
-	// quota pool. Queue checks only after the binding write has succeeded.
-	s.triggerOpenAI5hGroupChecks(account, groupIDs)
-
 	// OAuth 账号：创建后异步设置隐私。
 	// 使用 Ensure（幂等）而非 Force：新建账号 Extra 为空时效果相同，但更安全。
 	if account.Type == AccountTypeOAuth {
@@ -615,10 +607,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
-	previousOpenAI5hWakeIdentity := openAI5hWakeIdentityFingerprintFor(account)
-	previousGroupIDs := append([]int64(nil), account.GroupIDs...)
-	previousPlatform := account.Platform
-	previousOpenAI5hWakeMarker, hadOpenAI5hWakeMarker := account.Extra[openAI5hWakeSnapshotIdentityKey]
+	previousQuotaIdentity := openAICodexProbeFlightKey(account)
 	var normalizedExtra map[string]any
 	if input.Extra != nil {
 		normalizedExtra, err = normalizeOpenAILongContextBillingUpdateExtra(account, input)
@@ -727,7 +716,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, OpenCodeGoUsageAutoRefreshExtraKey)
 		delete(normalizedExtra, OpenCodeGoUsageSnapshotExtraKey)
 		// 保留配额用量和专用服务受管字段，防止普通账号编辑意外覆盖。
-		if previousOpenAI5hWakeIdentity == openAI5hWakeIdentityFingerprintFor(account) {
+		if previousQuotaIdentity == openAICodexProbeFlightKey(account) {
 			for key := range openAICodexSnapshotManagedExtraKeys {
 				if value, ok := account.Extra[key]; ok && value != nil {
 					normalizedExtra[key] = value
@@ -837,21 +826,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			delete(account.Extra, OllamaCloudUsageSnapshotExtraKey)
 		}
 	}
-	currentOpenAI5hWakeIdentity := openAI5hWakeIdentityFingerprintFor(account)
-	if previousOpenAI5hWakeIdentity != currentOpenAI5hWakeIdentity {
-		delete(account.Extra, openAI5hWakeSnapshotIdentityKey)
-	} else if input.Extra != nil && hadOpenAI5hWakeMarker {
-		// Preserve a worker-owned marker through unrelated edits, but only when it
-		// is already the marker for this exact identity. A stale/forged value is
-		// intentionally discarded and will be rebuilt by the next wake query.
-		if marker, ok := previousOpenAI5hWakeMarker.(string); ok &&
-			strings.EqualFold(strings.TrimSpace(marker), currentOpenAI5hWakeIdentity.identityHash) {
-			if account.Extra == nil {
-				account.Extra = make(map[string]any)
-			}
-			account.Extra[openAI5hWakeSnapshotIdentityKey] = marker
-		}
-	}
+
 	// OpenCode Go 受管键：身份改变或不再 eligible 时随本次写入清除，防止跨组污染。
 	// （代理变化只失效快照而保留开关，由 repository 合并层在锁定的 DB 行上裁决。）
 	if account.Extra != nil {
@@ -984,50 +959,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
-	if previousPlatform == PlatformOpenAI || (updated != nil && updated.Platform == PlatformOpenAI) {
-		groupIDs := append([]int64(nil), previousGroupIDs...)
-		if updated != nil {
-			groupIDs = append(groupIDs, updated.GroupIDs...)
-		}
-		if input.GroupIDs != nil {
-			groupIDs = append(groupIDs, (*input.GroupIDs)...)
-		}
-		if updated != nil && updated.Platform == PlatformOpenAI {
-			s.triggerOpenAI5hGroupChecks(updated, groupIDs)
-		} else if previousPlatform == PlatformOpenAI {
-			// Platform changes away from OpenAI are uncommon but must wake the
-			// old groups so their candidate snapshots are recalculated.
-			s.triggerOpenAI5hGroupChecksForIDs(groupIDs)
-		}
-	}
 	return updated, nil
-}
-
-// triggerOpenAI5hGroupChecks queues a lightweight immediate check for each
-// distinct group affected by an OpenAI account write. The scheduler performs
-// the authoritative active/platform/feature checks before loading accounts.
-func (s *adminServiceImpl) triggerOpenAI5hGroupChecks(account *Account, groupIDs []int64) {
-	if s == nil || s.openAI5hAutoWakeChecker == nil || account == nil || account.Platform != PlatformOpenAI {
-		return
-	}
-	s.triggerOpenAI5hGroupChecksForIDs(groupIDs)
-}
-
-func (s *adminServiceImpl) triggerOpenAI5hGroupChecksForIDs(groupIDs []int64) {
-	if s == nil || s.openAI5hAutoWakeChecker == nil {
-		return
-	}
-	seen := make(map[int64]struct{}, len(groupIDs))
-	for _, groupID := range groupIDs {
-		if groupID <= 0 {
-			continue
-		}
-		if _, exists := seen[groupID]; exists {
-			continue
-		}
-		seen[groupID] = struct{}{}
-		s.openAI5hAutoWakeChecker.TriggerGroupCheck(groupID)
-	}
 }
 
 // UpdateAccountExtra 仅对 Extra JSONB 做 key 级合并，避免覆盖其它运行态键
@@ -1044,7 +976,6 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OllamaCloudUsageSessionExtraKey)
 	delete(updates, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
-	delete(updates, openAI5hWakeSnapshotIdentityKey)
 	delete(updates, OpenCodeGoUsageAutoRefreshExtraKey)
 	delete(updates, OpenCodeGoUsageSnapshotExtraKey)
 	if _, exists := updates[openAILongContextBillingEnabledKey]; exists {
@@ -1077,7 +1008,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, OllamaCloudUsageSessionExtraKey)
 	delete(input.Extra, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)
-	delete(input.Extra, openAI5hWakeSnapshotIdentityKey)
 	delete(input.Extra, OpenCodeGoUsageAutoRefreshExtraKey)
 	delete(input.Extra, OpenCodeGoUsageSnapshotExtraKey)
 
@@ -1250,15 +1180,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		// next enabled runner cycle probe the new upstream identity immediately.
 		repoUpdates.Extra[UpstreamBillingProbeExtraKey] = nil
 	}
-	if updatesOpenAI5hWakeIdentity(input.Credentials) {
-		if repoUpdates.Extra == nil {
-			repoUpdates.Extra = make(map[string]any)
-		}
-		// BulkUpdate merges one Extra patch into every target row. Clearing the
-		// worker-owned marker for identity-bearing credential edits is deliberate:
-		// each account must prove its new identity independently on the next wake.
-		repoUpdates.Extra[openAI5hWakeSnapshotIdentityKey] = nil
-	}
+
 	if input.Name != "" {
 		repoUpdates.Name = &input.Name
 	}
@@ -1327,21 +1249,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		result.Success++
 		result.SuccessIDs = append(result.SuccessIDs, accountID)
 		result.Results = append(result.Results, entry)
-		if s.openAI5hAutoWakeChecker != nil {
-			account := targetsByID[accountID]
-			if account == nil {
-				// A narrow bulk edit may not have needed the prefetch above;
-				// resolve the account only when the immediate-check hook is in use.
-				account, _ = s.accountRepo.GetByID(ctx, accountID)
-			}
-			if account != nil && account.Platform == PlatformOpenAI {
-				groupIDs := append([]int64(nil), account.GroupIDs...)
-				if input.GroupIDs != nil {
-					groupIDs = append(groupIDs, (*input.GroupIDs)...)
-				}
-				s.triggerOpenAI5hGroupChecks(account, groupIDs)
-			}
-		}
 	}
 
 	return result, nil
@@ -1349,15 +1256,6 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 func updatesUpstreamBillingProbeIdentity(credentials map[string]any) bool {
 	for _, key := range []string{"api_key", "base_url", credKeyHeaderOverrideEnabled, credKeyHeaderOverrides} {
-		if _, ok := credentials[key]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func updatesOpenAI5hWakeIdentity(credentials map[string]any) bool {
-	for _, key := range []string{"chatgpt_account_id", "organization_id", "chatgpt_user_id"} {
 		if _, ok := credentials[key]; ok {
 			return true
 		}

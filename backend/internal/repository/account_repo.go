@@ -78,11 +78,11 @@ var schedulerNeutralExtraKeys = map[string]struct{}{
 	"session_window_utilization":                  {},
 }
 
-// openAIWakeManagedExtraKeys are written asynchronously by the Codex quota
-// probe and the 5h wake worker. Full account edits use a read-modify-write path,
+// openAIQuotaManagedExtraKeys are written asynchronously by the Codex quota
+// probe. Full account edits use a read-modify-write path,
 // so these values must be reloaded after the account row is locked or a stale
 // edit can overwrite a snapshot that was persisted after the edit began.
-var openAIWakeManagedExtraKeys = []string{
+var openAIQuotaManagedExtraKeys = []string{
 	"codex_primary_used_percent",
 	"codex_primary_reset_after_seconds",
 	"codex_primary_window_minutes",
@@ -100,7 +100,6 @@ var openAIWakeManagedExtraKeys = []string{
 	"codex_7d_reset_after_seconds",
 	"codex_7d_window_minutes",
 	"codex_7d_reset_at",
-	service.OpenAI5hWakeSnapshotIdentityExtraKey,
 }
 
 var openAIQuotaIdentityCredentialKeys = []string{
@@ -109,8 +108,8 @@ var openAIQuotaIdentityCredentialKeys = []string{
 	"chatgpt_user_id",
 }
 
-func subtractOpenAIWakeManagedExtra(expression string) string {
-	for _, key := range openAIWakeManagedExtraKeys {
+func subtractOpenAIQuotaManagedExtra(expression string) string {
+	for _, key := range openAIQuotaManagedExtraKeys {
 		expression += " - '" + key + "'"
 	}
 	return expression
@@ -812,8 +811,8 @@ func lockAndMergeAccountProbeExtraWithIdentity(
 		identityUnchanged              bool
 		ollamaGroupIdentityUnchanged   bool
 		ollamaProxyIdentityUnchanged   bool
-		currentWakeScope               bool
-		wakeIdentityUnchanged          bool
+		currentQuotaScope              bool
+		quotaIdentityUnchanged         bool
 		opencodeGroupIdentityUnchanged bool
 		currentExtra                   []byte
 		currentEnabled                 []byte
@@ -830,8 +829,8 @@ func lockAndMergeAccountProbeExtraWithIdentity(
 		&identityUnchanged,
 		&ollamaGroupIdentityUnchanged,
 		&ollamaProxyIdentityUnchanged,
-		&currentWakeScope,
-		&wakeIdentityUnchanged,
+		&currentQuotaScope,
+		&quotaIdentityUnchanged,
 		&currentExtra,
 		&currentEnabled,
 		&currentRateSyncEnabled,
@@ -851,25 +850,25 @@ func lockAndMergeAccountProbeExtraWithIdentity(
 	}
 
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
-	newWakeScope := account.Platform == service.PlatformOpenAI &&
+	newQuotaScope := account.Platform == service.PlatformOpenAI &&
 		account.Type == service.AccountTypeOAuth &&
 		account.QuotaDimensionOrDefault() == service.QuotaDimensionGlobal &&
 		!account.IsShadow()
 	if openAIQuotaIdentityChanged != nil {
-		*openAIQuotaIdentityChanged = (currentWakeScope || newWakeScope) && !wakeIdentityUnchanged
+		*openAIQuotaIdentityChanged = (currentQuotaScope || newQuotaScope) && !quotaIdentityUnchanged
 	}
-	if currentWakeScope || newWakeScope {
-		for _, key := range openAIWakeManagedExtraKeys {
+	if currentQuotaScope || newQuotaScope {
+		for _, key := range openAIQuotaManagedExtraKeys {
 			delete(extra, key)
 		}
-		if wakeIdentityUnchanged {
+		if quotaIdentityUnchanged {
 			var lockedExtra map[string]any
 			if len(currentExtra) > 0 {
 				if err := json.Unmarshal(currentExtra, &lockedExtra); err != nil {
 					return nil, err
 				}
 			}
-			for _, key := range openAIWakeManagedExtraKeys {
+			for _, key := range openAIQuotaManagedExtraKeys {
 				if value, ok := lockedExtra[key]; ok && value != nil {
 					extra[key] = value
 				}
@@ -1098,7 +1097,7 @@ func invalidateOpenAISparkShadowSnapshots(
 	}
 	rows, err := exec.QueryContext(ctx, `
 		UPDATE accounts
-		SET extra = `+subtractOpenAIWakeManagedExtra("COALESCE(extra, '{}'::jsonb)")+`,
+		SET extra = `+subtractOpenAIQuotaManagedExtra("COALESCE(extra, '{}'::jsonb)")+`,
 			updated_at = NOW()
 		WHERE parent_account_id = ANY($1)
 		  AND deleted_at IS NULL
@@ -1107,7 +1106,7 @@ func invalidateOpenAISparkShadowSnapshots(
 		  AND quota_dimension = 'spark'
 		  AND COALESCE(extra, '{}'::jsonb) ?| $2::text[]
 		RETURNING id
-	`, pq.Array(parentIDs), pq.Array(openAIWakeManagedExtraKeys))
+	`, pq.Array(parentIDs), pq.Array(openAIQuotaManagedExtraKeys))
 	if err != nil {
 		return nil, err
 	}
@@ -1221,7 +1220,7 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 					- 'ollama_cloud_usage_auto_refresh'
 					- 'ollama_cloud_usage_snapshot'
 				-- A token refresh keeps the same quota identity and must retain a
-				-- trusted wake marker. Re-authentication that changes any typed
+				-- trusted quota snapshot. Re-authentication that changes any typed
 				-- identity field invalidates it so the new account is queried once.
 				WHEN platform = 'openai'
 					AND type = 'oauth'
@@ -1233,7 +1232,7 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 						OR btrim(COALESCE(credentials ->> 'organization_id', '')) IS DISTINCT FROM btrim(COALESCE($1::jsonb ->> 'organization_id', ''))
 						OR btrim(COALESCE(credentials ->> 'chatgpt_user_id', '')) IS DISTINCT FROM btrim(COALESCE($1::jsonb ->> 'chatgpt_user_id', ''))
 					)
-				THEN `+subtractOpenAIWakeManagedExtra("COALESCE(extra, '{}'::jsonb)")+`
+				THEN `+subtractOpenAIQuotaManagedExtra("COALESCE(extra, '{}'::jsonb)")+`
 				-- 上游倍率探测已放宽到全部 API-key 平台：凭证变化即视为探测
 				-- 身份变化，丢弃 stale 快照。
 				WHEN type = 'apikey'
@@ -1890,64 +1889,6 @@ func (r *accountRepository) SetError(ctx context.Context, id int64, errorMsg str
 	}
 	r.syncSchedulerAccountSnapshot(ctx, id)
 	return nil
-}
-
-// SetOpenAI5hWakeCredentialErrorIfUnchanged quarantines a permanently revoked
-// OAuth credential only while the exact credential document used by the wake
-// request is still current. A concurrent reauthorization therefore wins and
-// is never overwritten by a stale background task.
-func (r *accountRepository) SetOpenAI5hWakeCredentialErrorIfUnchanged(
-	ctx context.Context,
-	id int64,
-	expectedCredentials map[string]any,
-	errorMsg string,
-) (bool, error) {
-	if r == nil || r.sql == nil {
-		return false, errors.New("account repository SQL executor is not configured")
-	}
-	expectedJSON, err := json.Marshal(normalizeJSONMap(expectedCredentials))
-	if err != nil {
-		return false, err
-	}
-	result, err := r.sql.ExecContext(ctx, `
-		WITH updated AS (
-		UPDATE accounts AS a
-		SET status = $1,
-			error_message = $2,
-			schedulable = FALSE,
-			updated_at = NOW()
-		WHERE a.id = $3
-			AND a.deleted_at IS NULL
-			AND a.platform = $4
-			AND a.type = $5
-			AND a.status = $6
-			AND a.credentials = $7::jsonb
-		RETURNING a.id
-		)
-		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
-		SELECT $8, updated.id, NULL, NULL FROM updated
-	`,
-		service.StatusError,
-		errorMsg,
-		id,
-		service.PlatformOpenAI,
-		service.AccountTypeOAuth,
-		service.StatusActive,
-		string(expectedJSON),
-		service.SchedulerOutboxEventAccountChanged,
-	)
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	if affected == 0 {
-		return false, nil
-	}
-	r.syncSchedulerAccountSnapshotDetached(ctx, id)
-	return true, nil
 }
 
 func (r *accountRepository) SetGrokCredentialErrorIfMatch(
@@ -2629,20 +2570,6 @@ func (r *accountRepository) ListSchedulableByGroupIDAndPlatform(ctx context.Cont
 	})
 }
 
-// ListOpenAI5hWakeAccountsByGroupID keeps transient runtime windows visible to
-// the durable 5h wake scheduler. The service still applies the normal
-// rate-limit/cooldown checks before creating task items; this query only makes
-// sure a future reset deadline is not lost while an account is temporarily
-// filtered from ordinary traffic scheduling.
-func (r *accountRepository) ListOpenAI5hWakeAccountsByGroupID(ctx context.Context, groupID int64) ([]service.Account, error) {
-	return r.queryAccountsByGroup(ctx, groupID, accountGroupQueryOptions{
-		status:               service.StatusActive,
-		schedulable:          true,
-		ignoreTransientState: true,
-		platforms:            []string{service.PlatformOpenAI},
-	})
-}
-
 func (r *accountRepository) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]service.Account, error) {
 	if len(platforms) == 0 {
 		return nil, nil
@@ -3318,7 +3245,7 @@ func (r *accountRepository) UpdateOpenAICodexSnapshot(
 	managedUpdates map[string]any,
 ) (bool, error) {
 	if account == nil || account.ID != id {
-		return false, errors.New("invalid OpenAI wake snapshot account")
+		return false, errors.New("invalid OpenAI quota snapshot account")
 	}
 	if len(ordinaryUpdates) == 0 && len(managedUpdates) == 0 {
 		return true, nil
@@ -3759,10 +3686,10 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			"NOT ("+ollamaCloudBaseURLMatchesSQL("credentials ->> 'base_url'")+
 				" AND "+ollamaCloudBaseURLMatchesSQL(credentialPlaceholder+"::jsonb ->> 'base_url'")+")")
 	}
-	openAIWakeIdentityCredentialUpdate := false
+	openAIQuotaIdentityCredentialUpdate := false
 	for _, key := range openAIQuotaIdentityCredentialKeys {
 		if _, ok := updates.Credentials[key]; ok {
-			openAIWakeIdentityCredentialUpdate = true
+			openAIQuotaIdentityCredentialUpdate = true
 			break
 		}
 	}
@@ -3799,9 +3726,9 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				" AND COALESCE(btrim("+credentialPlaceholder+"::jsonb ->> 'account_mode') <> 'zen', true) IS NOT TRUE")
 	}
 
-	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || len(opencodeGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || openAIWakeIdentityCredentialUpdate || updates.EnsureCodexFingerprintSeed {
+	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || len(opencodeGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || openAIQuotaIdentityCredentialUpdate || updates.EnsureCodexFingerprintSeed {
 		extraExpression := "COALESCE(extra, '{}'::jsonb)"
-		wakeSnapshotIdentityChanged := ""
+		quotaSnapshotIdentityChanged := ""
 		if len(updates.Extra) > 0 {
 			payload, err := json.Marshal(updates.Extra)
 			if err != nil {
@@ -3816,9 +3743,6 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			if ollamaCloudUsageSnapshotClearRequested(updates.Extra) {
 				extraExpression = "(" + extraExpression + ") - 'ollama_cloud_usage_snapshot'"
 			}
-			if raw, ok := updates.Extra[service.OpenAI5hWakeSnapshotIdentityExtraKey]; ok && raw == nil {
-				wakeSnapshotIdentityChanged = "platform = 'openai' AND type = 'oauth' AND quota_dimension = 'global' AND parent_account_id IS NULL"
-			}
 		}
 		if credentialPlaceholder != "" {
 			mergedCredentials := "(COALESCE(credentials, '{}'::jsonb) || " + credentialPlaceholder + "::jsonb)"
@@ -3832,15 +3756,15 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			}
 			if len(identityChanges) > 0 {
 				identityCondition := "platform = 'openai' AND type = 'oauth' AND quota_dimension = 'global' AND parent_account_id IS NULL AND (" + joinClauses(identityChanges, " OR ") + ")"
-				if wakeSnapshotIdentityChanged == "" {
-					wakeSnapshotIdentityChanged = identityCondition
+				if quotaSnapshotIdentityChanged == "" {
+					quotaSnapshotIdentityChanged = identityCondition
 				} else {
-					wakeSnapshotIdentityChanged = "(" + wakeSnapshotIdentityChanged + " OR " + identityCondition + ")"
+					quotaSnapshotIdentityChanged = "(" + quotaSnapshotIdentityChanged + " OR " + identityCondition + ")"
 				}
 			}
 		}
-		if wakeSnapshotIdentityChanged != "" {
-			extraExpression = "CASE WHEN " + wakeSnapshotIdentityChanged + " THEN " + subtractOpenAIWakeManagedExtra("("+extraExpression+")") + " ELSE " + extraExpression + " END"
+		if quotaSnapshotIdentityChanged != "" {
+			extraExpression = "CASE WHEN " + quotaSnapshotIdentityChanged + " THEN " + subtractOpenAIQuotaManagedExtra("("+extraExpression+")") + " ELSE " + extraExpression + " END"
 		}
 		eligibleAccount := "platform IN (" + ollamaCloudUsagePlatformsSQL + ") AND type = 'apikey'"
 		groupIdentityChanged := ""

@@ -62,25 +62,6 @@
                 </div>
               </div>
 
-              <button
-                v-if="isOpenAI5hWakeTaskActive"
-                type="button"
-                class="btn btn-secondary px-2 text-blue-700 dark:text-blue-300 md:px-3"
-                :title="t('admin.accounts.openAI5hWake.title')"
-                data-testid="openai-5h-wake-running-entry"
-                @click="showOpenAI5hWake = true"
-              >
-                <Icon name="clock" size="sm" class="md:mr-1.5" />
-                <span class="hidden whitespace-nowrap md:inline">
-                  {{
-                    t('admin.accounts.openAI5hWake.runningEntry', {
-                      processed: latestOpenAI5hWakeTask?.processed_items ?? 0,
-                      total: latestOpenAI5hWakeTask?.total_items ?? 0
-                    })
-                  }}
-                </span>
-              </button>
-
               <!-- More Tools Dropdown -->
               <div class="relative" ref="accountToolsDropdownRef">
                 <button
@@ -151,12 +132,6 @@
                           <Icon name="lock" size="sm" />
                         </span>
                         <span class="flex-1 text-left">{{ t('admin.tlsFingerprintProfiles.title') }}</span>
-                      </button>
-                      <button class="account-tools-menu-item" data-testid="openai-5h-wake-menu-item" @click="openOpenAI5hWake">
-                        <span class="account-tools-menu-icon bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
-                          <Icon name="clock" size="sm" />
-                        </span>
-                        <span class="flex-1 text-left">{{ t('admin.accounts.openAI5hWake.action') }}</span>
                       </button>
 
                       <div class="my-2 border-t border-gray-100 dark:border-dark-700"></div>
@@ -506,13 +481,6 @@
     </ConfirmDialog>
     <ErrorPassthroughRulesModal :show="showErrorPassthrough" @close="showErrorPassthrough = false" />
     <TLSFingerprintProfilesModal :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
-    <OpenAI5hWakeDialog
-      :show="showOpenAI5hWake"
-      :initial-task="latestOpenAI5hWakeTask"
-      @close="showOpenAI5hWake = false"
-      @task-updated="handleOpenAI5hWakeTaskUpdated"
-      @completed="handleOpenAI5hWakeTaskCompleted"
-    />
     <TotpStepUpDialog :controller="accountExportStepUp" />
   </AppLayout>
 </template>
@@ -556,7 +524,6 @@ import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
-import OpenAI5hWakeDialog from '@/components/account/OpenAI5hWakeDialog.vue'
 import { fetchAllAccountIds } from '@/utils/accountSelection'
 import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
@@ -566,7 +533,6 @@ import { sanitizeUrl } from '@/utils/url'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
 import type { Account, AccountListItem, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
-import type { OpenAI5hWakeTask } from '@/api/admin/accounts'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -637,18 +603,6 @@ const showTest = ref(false)
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
-const showOpenAI5hWake = ref(false)
-const latestOpenAI5hWakeTask = ref<OpenAI5hWakeTask | null>(null)
-const openAI5hWakeTerminalStatuses = new Set<OpenAI5hWakeTask['status']>([
-  'succeeded',
-  'partial_succeeded',
-  'failed',
-  'cancelled'
-])
-const isOpenAI5hWakeTaskActive = computed(() => {
-  const status = latestOpenAI5hWakeTask.value?.status
-  return status === 'pending' || status === 'running'
-})
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
@@ -1419,8 +1373,7 @@ const isAnyModalOpen = computed(() => {
     showStats.value ||
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
-    showTLSFingerprintProfiles.value ||
-    showOpenAI5hWake.value
+    showTLSFingerprintProfiles.value
   )
 })
 
@@ -1590,156 +1543,6 @@ const openTLSFingerprintProfiles = () => {
   closeAccountToolsDropdown()
   showTLSFingerprintProfiles.value = true
 }
-
-const openOpenAI5hWake = () => {
-  closeAccountToolsDropdown()
-  showOpenAI5hWake.value = true
-}
-
-const handledOpenAI5hWakeTasks = new Set<number>()
-const refreshingOpenAI5hWakeTasks = new Set<number>()
-const notifiedOpenAI5hWakeTasks = new Set<number>()
-const usageRefreshedOpenAI5hWakeTasks = new Set<number>()
-const openAI5hWakeRefreshRetryTimers = new Map<number, ReturnType<typeof setTimeout>>()
-const openAI5hWakeRefreshRetryAttempts = new Map<number, number>()
-// A terminal task should not turn a temporary list outage into an endless
-// five-second request loop. Keep the first retry responsive, then back off and
-// leave the existing manual-sync affordance visible when the budget is spent.
-const openAI5hWakeRefreshRetryDelays = [5000, 10000, 30000, 60000, 120000] as const
-let accountsViewMounted = false
-let accountsViewLifecycle = 0
-let latestOpenAI5hWakeRefreshing = false
-let latestOpenAI5hWakeViewSequence = 0
-let latestOpenAI5hWakeRequestSequence = 0
-
-const notifyOpenAI5hWakeCompletion = (task: OpenAI5hWakeTask) => {
-  if (notifiedOpenAI5hWakeTasks.has(task.id)) return
-  notifiedOpenAI5hWakeTasks.add(task.id)
-  const params = {
-    woken: task.woken_count,
-    skipped: task.skipped_active_count,
-    failed: task.failed_count
-  }
-  if (task.failed_count > 0 || task.status === 'failed' || task.status === 'cancelled') {
-    appStore.showWarning(t('admin.accounts.openAI5hWake.completedWithFailures', params))
-  } else {
-    appStore.showSuccess(t('admin.accounts.openAI5hWake.completed', params))
-  }
-}
-
-const clearOpenAI5hWakeRefreshRetry = (taskID: number) => {
-  const timer = openAI5hWakeRefreshRetryTimers.get(taskID)
-  if (timer !== undefined) clearTimeout(timer)
-  openAI5hWakeRefreshRetryTimers.delete(taskID)
-  openAI5hWakeRefreshRetryAttempts.delete(taskID)
-}
-
-const scheduleOpenAI5hWakeRefreshRetry = (task: OpenAI5hWakeTask, lifecycle = accountsViewLifecycle) => {
-  if (
-    !accountsViewMounted ||
-    lifecycle !== accountsViewLifecycle ||
-    handledOpenAI5hWakeTasks.has(task.id) ||
-    openAI5hWakeRefreshRetryTimers.has(task.id)
-  ) return
-  const attempt = openAI5hWakeRefreshRetryAttempts.get(task.id) ?? 0
-  if (attempt >= openAI5hWakeRefreshRetryDelays.length) {
-    hasPendingListSync.value = true
-    return
-  }
-  const delay = openAI5hWakeRefreshRetryDelays[attempt]
-  openAI5hWakeRefreshRetryAttempts.set(task.id, attempt + 1)
-  const timer = setTimeout(() => {
-    openAI5hWakeRefreshRetryTimers.delete(task.id)
-    if (!accountsViewMounted || lifecycle !== accountsViewLifecycle) return
-    void refreshAccountsAfterOpenAI5hWake(task, false, lifecycle)
-  }, delay)
-  openAI5hWakeRefreshRetryTimers.set(task.id, timer)
-}
-
-async function refreshAccountsAfterOpenAI5hWake(
-  task: OpenAI5hWakeTask,
-  announceCompletion = true,
-  lifecycle = accountsViewLifecycle
-) {
-  if (!accountsViewMounted || lifecycle !== accountsViewLifecycle) return
-  if (announceCompletion) notifyOpenAI5hWakeCompletion(task)
-  // Refresh the rows that are currently mounted immediately. When the list
-  // reload has already failed, a later retry may replace those rows; advance
-  // the token again for that retry so newly mounted usage cells cannot retain
-  // a stale probe result.
-  const retryAttempt = openAI5hWakeRefreshRetryAttempts.get(task.id) ?? 0
-  if (!usageRefreshedOpenAI5hWakeTasks.has(task.id) || retryAttempt > 0) {
-    usageManualRefreshToken.value += 1
-    usageRefreshedOpenAI5hWakeTasks.add(task.id)
-  }
-  if (handledOpenAI5hWakeTasks.has(task.id) || refreshingOpenAI5hWakeTasks.has(task.id)) return
-  refreshingOpenAI5hWakeTasks.add(task.id)
-  try {
-    const loaded = await reload()
-    if (!accountsViewMounted || lifecycle !== accountsViewLifecycle) return
-    if (!loaded) {
-      scheduleOpenAI5hWakeRefreshRetry(task, lifecycle)
-      return
-    }
-    handledOpenAI5hWakeTasks.add(task.id)
-    clearOpenAI5hWakeRefreshRetry(task.id)
-  } catch (error) {
-    if (!accountsViewMounted || lifecycle !== accountsViewLifecycle) return
-    console.error('Failed to refresh accounts after OpenAI 5h wake task:', error)
-    scheduleOpenAI5hWakeRefreshRetry(task, lifecycle)
-  } finally {
-    refreshingOpenAI5hWakeTasks.delete(task.id)
-  }
-}
-
-const handleOpenAI5hWakeTaskUpdated = (task: OpenAI5hWakeTask) => {
-  latestOpenAI5hWakeViewSequence += 1
-  latestOpenAI5hWakeTask.value = task
-}
-
-const handleOpenAI5hWakeTaskCompleted = (task: OpenAI5hWakeTask) => {
-  latestOpenAI5hWakeViewSequence += 1
-  latestOpenAI5hWakeTask.value = task
-  void refreshAccountsAfterOpenAI5hWake(task)
-}
-
-const refreshLatestOpenAI5hWakeTask = async (handleTerminalTransition: boolean) => {
-  if (latestOpenAI5hWakeRefreshing) return
-  const getLatestTask = adminAPI.accounts.getLatestOpenAI5hWakeTask
-  if (typeof getLatestTask !== 'function') return
-  latestOpenAI5hWakeRefreshing = true
-  const requestSequence = ++latestOpenAI5hWakeRequestSequence
-  const viewSequence = latestOpenAI5hWakeViewSequence
-  const previous = latestOpenAI5hWakeTask.value
-  try {
-    const next = await getLatestTask()
-    if (
-      requestSequence !== latestOpenAI5hWakeRequestSequence ||
-      viewSequence !== latestOpenAI5hWakeViewSequence
-    ) return
-    latestOpenAI5hWakeTask.value = next
-    const previousWasActive = previous?.status === 'pending' || previous?.status === 'running'
-    if (
-      handleTerminalTransition &&
-      previousWasActive &&
-      next &&
-      openAI5hWakeTerminalStatuses.has(next.status) &&
-      !handledOpenAI5hWakeTasks.has(next.id)
-    ) {
-      await refreshAccountsAfterOpenAI5hWake(next, true)
-    }
-  } catch (error) {
-    console.error('Failed to load latest OpenAI 5h wake task:', error)
-  } finally {
-    latestOpenAI5hWakeRefreshing = false
-  }
-}
-
-useIntervalFn(() => {
-  if (typeof document !== 'undefined' && document.hidden) return
-  if (showOpenAI5hWake.value) return
-  void refreshLatestOpenAI5hWakeTask(true)
-}, 5000)
 
 const syncPendingListChanges = async () => {
   hasPendingListSync.value = false
@@ -2720,8 +2523,6 @@ const handleClickOutside = (event: MouseEvent) => {
 }
 
 onMounted(async () => {
-  accountsViewMounted = true
-  accountsViewLifecycle += 1
   if (typeof window !== 'undefined') {
     desktopViewportMediaQuery = window.matchMedia(desktopViewportQuery)
     isDesktopViewport.value = desktopViewportMediaQuery.matches
@@ -2736,7 +2537,6 @@ onMounted(async () => {
   }
   load()
   loadUpstreamBillingProbeGlobalState()
-  void refreshLatestOpenAI5hWakeTask(false)
   const [proxiesResult, groupsResult] = await Promise.allSettled([
     adminAPI.proxies.getAll(),
     adminAPI.groups.getAll()
@@ -2764,13 +2564,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  accountsViewMounted = false
-  accountsViewLifecycle += 1
-  latestOpenAI5hWakeViewSequence += 1
-  latestOpenAI5hWakeRequestSequence += 1
-  openAI5hWakeRefreshRetryTimers.forEach(timer => clearTimeout(timer))
-  openAI5hWakeRefreshRetryTimers.clear()
-  openAI5hWakeRefreshRetryAttempts.clear()
   upstreamBillingRateAbortController?.abort()
   if (usageBatchFlushTimer !== null) {
     clearTimeout(usageBatchFlushTimer)

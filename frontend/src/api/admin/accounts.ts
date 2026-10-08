@@ -34,100 +34,6 @@ import type {
   OpenCodeGoUsageState
 } from '@/types'
 
-export type OpenAI5hWakeTaskStatus =
-  | 'pending'
-  | 'running'
-  | 'succeeded'
-  | 'partial_succeeded'
-  | 'failed'
-  | 'cancelled'
-
-export type OpenAI5hWakeItemStatus =
-  | 'pending'
-  | 'running'
-  | 'woken'
-  | 'skipped_active'
-  | 'failed'
-  | 'cancelled'
-
-export interface OpenAI5hWakePreview {
-  total_openai_accounts: number
-  eligible_accounts: number
-  unique_quota_pools: number
-  active_windows: number
-  estimated_requests: number
-  excluded: {
-    api_key: number
-    non_oauth: number
-    spark_shadow: number
-    non_global: number
-    no_5h_entitlement: number
-    disabled: number
-    unschedulable: number
-    expired: number
-    rate_limited: number
-    cooling_down: number
-    missing_identity: number
-  }
-}
-
-export interface OpenAI5hWakeTask {
-  id: number
-  status: OpenAI5hWakeTaskStatus
-  eligible_account_count: number
-  active_window_count: number
-  estimated_request_count: number
-  total_items: number
-  processed_items: number
-  running_item_count: number
-  woken_count: number
-  skipped_active_count: number
-  failed_count: number
-  cancelled_count: number
-  earliest_reset_at?: string
-  latest_reset_at?: string
-  alignment_span_seconds: number
-  cancel_requested_at?: string
-  started_at?: string
-  finished_at?: string
-  created_at: string
-  updated_at: string
-}
-
-export interface OpenAI5hWakeTaskItem {
-  id: number
-  task_id: number
-  identity_hash: string
-  member_account_ids: number[]
-  attempted_account_ids: number[]
-  successful_account_id?: number
-  status: OpenAI5hWakeItemStatus
-  attempt_count: number
-  error_code?: string
-  reset_at?: string
-  started_at?: string
-  finished_at?: string
-  created_at: string
-  updated_at: string
-}
-
-export type OpenAI5hWakeEventLevel = 'info' | 'warn' | 'error'
-
-export interface OpenAI5hWakeTaskEvent {
-  id: number
-  task_id: number
-  item_id?: number
-  level: OpenAI5hWakeEventLevel
-  code: string
-  message?: string
-  created_at: string
-}
-
-export interface OpenAI5hWakeCreateResult {
-  task: OpenAI5hWakeTask
-  reused: boolean
-}
-
 /**
  * List all accounts with pagination
  * @param page - Page number (default: 1)
@@ -1193,54 +1099,6 @@ export async function refreshOllamaCloudUsage(id: number): Promise<OllamaCloudUs
   return data
 }
 
-export async function previewOpenAI5hWake(): Promise<OpenAI5hWakePreview> {
-  const { data } = await apiClient.get<OpenAI5hWakePreview>('/admin/accounts/openai-5h-wake/preview')
-  return data
-}
-
-export async function createOpenAI5hWakeTask(): Promise<OpenAI5hWakeCreateResult> {
-  const { data } = await apiClient.post<OpenAI5hWakeCreateResult>('/admin/accounts/openai-5h-wake/tasks')
-  return data
-}
-
-export async function getLatestOpenAI5hWakeTask(): Promise<OpenAI5hWakeTask | null> {
-  const { data } = await apiClient.get<{ task: OpenAI5hWakeTask | null }>('/admin/accounts/openai-5h-wake/tasks/latest')
-  return data.task
-}
-
-export async function getOpenAI5hWakeTask(id: number): Promise<OpenAI5hWakeTask> {
-  const { data } = await apiClient.get<OpenAI5hWakeTask>(`/admin/accounts/openai-5h-wake/tasks/${id}`)
-  return data
-}
-
-export async function listOpenAI5hWakeTaskItems(
-  id: number,
-  page = 1,
-  pageSize = 20
-): Promise<PaginatedResponse<OpenAI5hWakeTaskItem>> {
-  const { data } = await apiClient.get<PaginatedResponse<OpenAI5hWakeTaskItem>>(
-    `/admin/accounts/openai-5h-wake/tasks/${id}/items`,
-    { params: { page, page_size: pageSize } }
-  )
-  return data
-}
-
-export async function listOpenAI5hWakeTaskEvents(
-  id: number,
-  page = 1,
-  pageSize = 100
-): Promise<PaginatedResponse<OpenAI5hWakeTaskEvent>> {
-  const { data } = await apiClient.get<PaginatedResponse<OpenAI5hWakeTaskEvent>>(
-    `/admin/accounts/openai-5h-wake/tasks/${id}/events`,
-    { params: { page, page_size: pageSize } }
-  )
-  return data
-}
-
-export async function cancelOpenAI5hWakeTask(id: number): Promise<OpenAI5hWakeTask> {
-  const { data } = await apiClient.post<OpenAI5hWakeTask>(`/admin/accounts/openai-5h-wake/tasks/${id}/cancel`)
-  return data
-}
 export async function getOpenCodeGoUsageSettings(): Promise<OpenCodeGoUsageSettings> {
   const { data } = await apiClient.get<OpenCodeGoUsageSettings>('/admin/accounts/opencode-go-usage/settings')
   return data
@@ -1336,13 +1194,6 @@ export const accountsAPI = {
   deleteOllamaCloudUsageSession,
   setOllamaCloudUsageAutoRefresh,
   refreshOllamaCloudUsage,
-  previewOpenAI5hWake,
-  createOpenAI5hWakeTask,
-  getLatestOpenAI5hWakeTask,
-  getOpenAI5hWakeTask,
-  listOpenAI5hWakeTaskItems,
-  listOpenAI5hWakeTaskEvents,
-  cancelOpenAI5hWakeTask,
   getOpenCodeGoUsageSettings,
   updateOpenCodeGoUsageSettings,
   getOpenCodeGoUsage,

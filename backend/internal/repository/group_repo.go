@@ -137,8 +137,6 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
 		SetAllowLive(groupIn.AllowLive).
-		SetOpenai5hAutoWakeEnabled(groupIn.OpenAI5hAutoWakeEnabled).
-		SetNillableOpenai5hAutoWakeNextCheckAt(groupIn.OpenAI5hAutoWakeNextCheckAt).
 		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
 		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).
 		SetRequireOauthOnly(groupIn.RequireOAuthOnly).
@@ -320,8 +318,6 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetMcpXMLInject(groupIn.MCPXMLInject).
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
 		SetAllowLive(groupIn.AllowLive).
-		SetOpenai5hAutoWakeEnabled(groupIn.OpenAI5hAutoWakeEnabled).
-		SetNillableOpenai5hAutoWakeNextCheckAt(groupIn.OpenAI5hAutoWakeNextCheckAt).
 		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
 		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).
 		SetRequireOauthOnly(groupIn.RequireOAuthOnly).
@@ -412,11 +408,6 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		builder = builder.SetAudioSttPricePerHour(*groupIn.AudioSTTPricePerHour)
 	} else {
 		builder = builder.ClearAudioSttPricePerHour()
-	}
-	if groupIn.OpenAI5hAutoWakeNextCheckAt != nil {
-		builder = builder.SetOpenai5hAutoWakeNextCheckAt(*groupIn.OpenAI5hAutoWakeNextCheckAt)
-	} else {
-		builder = builder.ClearOpenai5hAutoWakeNextCheckAt()
 	}
 
 	// 处理 FallbackGroupID：nil 时清除，否则设置
