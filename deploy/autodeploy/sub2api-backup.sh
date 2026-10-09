@@ -28,6 +28,7 @@ docker exec sub2api-postgres sh -c \
 
 # Runtime logs and the product catalog cache are continuously updated and are not
 # restoration inputs. Excluding them keeps the archive consistent.
+set +e
 tar \
   --ignore-failed-read \
   --warning=no-file-changed \
@@ -37,6 +38,9 @@ tar \
   --exclude='data/upstream-sync-status' \
   -czf "$TEMP_FILES" \
   .env docker-compose.yml data
+tar_rc=$?
+set -e
+[[ "$tar_rc" -eq 0 || "$tar_rc" -eq 1 ]] || exit "$tar_rc"
 
 [[ -s "$TEMP_DUMP" ]] || { echo "PostgreSQL backup is empty" >&2; exit 1; }
 [[ -s "$TEMP_FILES" ]] || { echo "file backup is empty" >&2; exit 1; }
