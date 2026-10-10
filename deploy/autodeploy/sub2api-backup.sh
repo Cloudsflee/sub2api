@@ -16,8 +16,11 @@ chmod 700 "$(dirname "$BACKUP_DIR")" "$BACKUP_DIR" 2>/dev/null || true
 TEMP_DUMP=$(mktemp "$BACKUP_DIR/.postgres-$STAMP.XXXXXX.dump")
 TEMP_FILES=$(mktemp "$BACKUP_DIR/.files-$STAMP.XXXXXX.tar.gz")
 
+TEMP_MANIFEST=$(mktemp "$BACKUP_DIR/.manifest-$STAMP.XXXXXX")
+TEMP_MANIFEST_AFTER=$(mktemp "$BACKUP_DIR/.manifest-after-$STAMP.XXXXXX")
+
 cleanup() {
-  rm -f "$TEMP_DUMP" "$TEMP_FILES"
+  rm -f "$TEMP_DUMP" "$TEMP_FILES" "$TEMP_MANIFEST" "$TEMP_MANIFEST_AFTER"
 }
 trap cleanup EXIT
 
@@ -26,26 +29,34 @@ cd "$APP_DIR"
 docker exec sub2api-postgres sh -c \
   'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' >"$TEMP_DUMP"
 
-# Runtime logs and the product catalog cache are continuously updated and are not
-# restoration inputs. Excluding them keeps the archive consistent.
+# Enumerate restoration inputs explicitly. Atomic replacement of excluded cache
+# files changes the parent directory mtime, but must not invalidate unchanged
+# restoration inputs. --no-recursion archives each listed entry once.
+# Keep tar's normal file-change checks and reject added/removed included paths.
+backup_manifest() {
+  printf '%s\0' .env docker-compose.yml
+  find data \( -path 'data/logs' \
+    -o -path 'data/public-account-import-products.json' \
+    -o -path 'data/.public-account-import-products-*' \
+    -o -path 'data/upstream-sync-request*' \
+    -o -path 'data/upstream-sync-status' \) -prune -o -print0
+}
 for attempt in 1 2 3; do
-  if tar \
-    --exclude='data/logs' \
-    --exclude='data/public-account-import-products.json' \
-    --exclude='data/upstream-sync-request*' \
-    --exclude='data/upstream-sync-status' \
-    -czf "$TEMP_FILES" \
-    .env docker-compose.yml data; then
-    break
+  backup_manifest | LC_ALL=C sort -z >"$TEMP_MANIFEST"
+  if tar --no-recursion --null -czf "$TEMP_FILES" -T "$TEMP_MANIFEST"; then
+    backup_manifest | LC_ALL=C sort -z >"$TEMP_MANIFEST_AFTER"
+    if cmp -s "$TEMP_MANIFEST" "$TEMP_MANIFEST_AFTER"; then
+      break
+    fi
+    tar_rc=1
+    echo 'Included backup paths changed during archive creation' >&2
   else
     tar_rc=$?
-    # Never publish an inconsistent archive: retry transient changes, but fail
-    # on unreadable files, fatal errors, or repeated concurrent modification.
-    if [[ "$tar_rc" -ne 1 || "$attempt" -eq 3 ]]; then
-      exit "$tar_rc"
-    fi
-    printf 'Archive changed during attempt %s; retrying\n' "$attempt" >&2
   fi
+  if [[ "$tar_rc" -ne 1 || "$attempt" -eq 3 ]]; then
+    exit "$tar_rc"
+  fi
+  printf 'Archive changed during attempt %s; retrying\n' "$attempt" >&2
 done
 tar -tzf "$TEMP_FILES" >/dev/null
 
@@ -55,6 +66,7 @@ tar -tzf "$TEMP_FILES" >/dev/null
 mv "$TEMP_DUMP" "$FINAL_DUMP"
 mv "$TEMP_FILES" "$FINAL_FILES"
 chmod 600 "$FINAL_DUMP" "$FINAL_FILES"
+rm -f "$TEMP_MANIFEST" "$TEMP_MANIFEST_AFTER"
 trap - EXIT
 
 find "$BACKUP_DIR" -maxdepth 1 -type f \
