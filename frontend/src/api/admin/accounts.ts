@@ -1130,6 +1130,7 @@ export async function refreshOpenCodeGoUsage(id: number): Promise<OpenCodeGoUsag
   const { data } = await apiClient.post<OpenCodeGoUsageState>(`/admin/accounts/${id}/opencode-go-usage/refresh`)
   return data
 }
+
 export const accountsAPI = {
   list,
   listWithEtag,

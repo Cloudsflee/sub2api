@@ -511,7 +511,7 @@ func TestGetOpenAIUsageDoesNotClearRecoverableErrorFromPersistedSnapshotAlone(t 
 	require.Equal(t, StatusError, stored.Status)
 }
 
-func TestGetOpenAIUsageClearsRecoverableErrorAfterVerifiedProbe(t *testing.T) {
+func TestGetOpenAIUsagePreservesRefreshTokenErrorAfterVerifiedProbe(t *testing.T) {
 	cache := NewUsageCache()
 	svc, shadow, repo := newSparkUsageTestService(t, func(w http.ResponseWriter, _ *http.Request) {
 		writeSparkUsageResponse(w)
@@ -523,9 +523,11 @@ func TestGetOpenAIUsageClearsRecoverableErrorAfterVerifiedProbe(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, usage.FiveHour)
-	require.Equal(t, int32(1), repo.clearCalls.Load())
+	// A successful access-token usage probe cannot verify refresh-token recovery.
+	// Preserve the upstream v0.2.15 authentication fix for custom Spark shadows too.
+	require.Zero(t, repo.clearCalls.Load())
 	stored, err := repo.GetByID(context.Background(), shadow.ID)
 	require.NoError(t, err)
-	require.Equal(t, StatusActive, stored.Status)
-	require.Empty(t, stored.ErrorMessage)
+	require.Equal(t, StatusError, stored.Status)
+	require.Equal(t, "token refresh failed: transient", stored.ErrorMessage)
 }

@@ -169,4 +169,20 @@ if check_migration_compatibility "$ADD_NULL_COMMIT" "$MODIFIED"; then
   exit 1
 fi
 
+# Only the exact reviewed platform catalog migration may drop these checks.
+git -C "$REPO" checkout -b reviewed-platform "$BASELINE" >/dev/null
+cp "$ROOT_DIR/backend/migrations/243_drop_platform_check_constraints.sql" "$REPO/backend/migrations/"
+git -C "$REPO" add .
+git -C "$REPO" commit -m reviewed-platform >/dev/null
+REVIEWED=$(git -C "$REPO" rev-parse HEAD)
+check_migration_compatibility "$BASELINE" "$REVIEWED"
+printf '\nDROP TABLE users;\n' >>"$REPO/backend/migrations/243_drop_platform_check_constraints.sql"
+git -C "$REPO" add .
+git -C "$REPO" commit -m tampered-platform >/dev/null
+TAMPERED=$(git -C "$REPO" rev-parse HEAD)
+if check_migration_compatibility "$BASELINE" "$TAMPERED"; then
+  echo 'tampered reviewed platform migration was not rejected' >&2
+  exit 1
+fi
+
 echo 'migration gate tests passed'

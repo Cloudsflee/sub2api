@@ -415,11 +415,15 @@ check_migration_compatibility() {
         reviewed_hash=9bf4623f1f82f7b18f8ebc25f7205be6eebd5ed221e4c4be94b531131e479b64 ;;
       backend/migrations/238_opencode_go_platform.sql)
         reviewed_hash=35ce9b168aef3fdf29ac1ab02041abf6ce568d41b9dc18f32924d6fde67cb093 ;;
+      # v0.2.15 delegates only these two platform allowlists to application validation.
+      # No table/column/data is removed; old application rows remain readable.
+      backend/migrations/243_drop_platform_check_constraints.sql)
+        reviewed_hash=89b9ca37806f5725fd01cd3b45d006c119d34820e29e1b8a90c0a8ba461db5bb ;;
     esac
     if [[ -n "$reviewed_hash" ]]; then
       actual_hash=$(git -C "$REPO_DIR" show "$target:$path" | sha256sum | awk '{print $1}')
       if [[ "$actual_hash" == "$reviewed_hash" ]]; then
-        log "migration gate accepted reviewed v0.2.4 migration: $path"
+        log "migration gate accepted reviewed migration: $path"
         continue
       fi
       log "migration gate rejected modified reviewed migration: $path"
