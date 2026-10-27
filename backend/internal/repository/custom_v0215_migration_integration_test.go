@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The custom production baseline already includes every SQL migration except
-// 243. Exercise the actual runner on an isolated database, including its
+// The v0.2.15 custom production baseline excludes the five v0.2.18 migrations.
+// Exercise the actual runner on an isolated database, including its
 // checksum ledger and the older runner's view of the upgraded schema.
 func TestCustomV0215MigrationUpgradeReplayAndRollback(t *testing.T) {
 	ctx := context.Background()
@@ -25,14 +25,17 @@ func TestCustomV0215MigrationUpgradeReplayAndRollback(t *testing.T) {
 	entries, err := fs.ReadDir(dbmigrations.FS, ".")
 	require.NoError(t, err)
 	for _, entry := range entries {
-		if entry.Name() == "243_drop_platform_check_constraints.sql" {
+		switch entry.Name() {
+		case "242_group_i18n.sql", "243_gemini_cached_contents.sql",
+			"244_gemini_cached_contents_channel_usage.sql", "245_gemini_cached_contents_mutation_lease.sql",
+			"246_enable_gemini_image_generation_groups.sql":
 			continue
 		}
 		body, readErr := dbmigrations.FS.ReadFile(entry.Name())
 		require.NoError(t, readErr)
 		baseline[entry.Name()] = &fstest.MapFile{Data: body}
 	}
-	require.Len(t, baseline, 299, "update this explicit production-baseline boundary for future upgrades")
+	require.Len(t, baseline, 300, "update this explicit production-baseline boundary for future upgrades")
 
 	for _, fresh := range []bool{false, true} {
 		t.Run(strconv.FormatBool(fresh), func(t *testing.T) {
@@ -74,7 +77,7 @@ FROM users u JOIN user_platform_quotas q ON q.user_id = u.id WHERE u.id = $1`, u
 			require.Equal(t, []float64{7, 12, 3, 4, 5}, []float64{balance, limit, daily, weekly, monthly})
 			var count int
 			require.NoError(t, db.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count))
-			require.Equal(t, 300, count)
+			require.Equal(t, 305, count)
 		})
 	}
 }
