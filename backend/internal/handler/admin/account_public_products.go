@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -9,6 +11,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -1498,6 +1501,21 @@ func writePublicAccountImportProductsResponse(c *gin.Context, result PublicAccou
 		response.InternalError(c, "Failed to encode product catalog")
 		return
 	}
+	// The grace period can substantially enlarge the public catalog. Compress
+	// this buffered JSON response only; gateway streaming responses are unaffected.
+	c.Writer.Header().Add("Vary", "Accept-Encoding")
+	if len(body) >= 1024 && publicAccountImportProductsAcceptsGzip(c.GetHeader("Accept-Encoding")) {
+		var compressed bytes.Buffer
+		writer, err := gzip.NewWriterLevel(&compressed, gzip.BestSpeed)
+		if err == nil {
+			_, err = writer.Write(body)
+			closeErr := writer.Close()
+			if err == nil && closeErr == nil {
+				body = compressed.Bytes()
+				c.Header("Content-Encoding", "gzip")
+			}
+		}
+	}
 	sum := sha256.Sum256(body)
 	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
 	c.Header("Cache-Control", "public, no-cache")
@@ -1510,6 +1528,30 @@ func writePublicAccountImportProductsResponse(c *gin.Context, result PublicAccou
 		}
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", body)
+}
+
+func publicAccountImportProductsAcceptsGzip(acceptEncoding string) bool {
+	wildcard := false
+	for _, part := range strings.Split(acceptEncoding, ",") {
+		encoding, params, err := mime.ParseMediaType(strings.TrimSpace(part))
+		if err != nil {
+			continue
+		}
+		quality := 1.0
+		if value, ok := params["q"]; ok {
+			quality, err = strconv.ParseFloat(value, 64)
+			if err != nil || math.IsNaN(quality) || quality < 0 || quality > 1 {
+				quality = 0
+			}
+		}
+		if encoding == "gzip" {
+			return quality > 0
+		}
+		if encoding == "*" {
+			wildcard = quality > 0
+		}
+	}
+	return wildcard
 }
 
 func selectPublicAccountImportProductSyncShop(shops []PublicAccountImportShop, store publicAccountImportProductStore, now time.Time) *PublicAccountImportShop {
