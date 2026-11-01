@@ -703,7 +703,7 @@
         <div v-else-if="filteredProducts.length === 0" class="py-10 text-center text-sm text-gray-500 dark:text-dark-400">
           {{ t('publicAccountImport.noProducts') }}
         </div>
-        <div v-else class="mt-5 grid gap-4 sm:grid-cols-2">
+        <div v-else class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <article
             v-for="product in pagedProducts"
             :key="product.id"
