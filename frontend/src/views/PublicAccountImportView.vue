@@ -72,7 +72,7 @@
           @click="activeMainTab = tab.value"
         >
           {{ tab.label }}
-          <span v-if="tab.value === 'products' && products.length" class="ml-1 text-xs">({{ products.length }})</span>
+          <span v-if="tab.value === 'products' && filteredProducts.length" class="ml-1 text-xs">({{ filteredProducts.length }})</span>
         </button>
       </div>
 
@@ -619,7 +619,7 @@
             </div>
           </div>
           <div class="w-full sm:w-80">
-            <div class="mb-1.5 flex items-center">
+            <div class="mb-1.5 flex flex-wrap items-center gap-x-1 gap-y-2">
               <label for="public-product-search" class="input-label mb-0">
                 {{ t('publicAccountImport.productSearchLabel') }}
               </label>
@@ -646,6 +646,16 @@
                   </code>
                 </div>
               </HelpTooltip>
+              <label class="ml-auto inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-dark-300">
+                <input
+                  v-model="hideExpiredProducts"
+                  type="checkbox"
+                  role="switch"
+                  data-testid="hide-expired-products"
+                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800"
+                />
+                {{ t('publicAccountImport.hideExpiredProducts') }}
+              </label>
             </div>
             <input
               id="public-product-search"
@@ -730,8 +740,13 @@
                     {{ shopTrustLevelLabel(productShopTrustLevel(product.shop_id)) }}
                   </span>
                 </div>
-                <div class="mt-1 text-xs text-gray-400 dark:text-dark-500" :title="product.updated_at">
-                  {{ t('publicAccountImport.productUpdatedAt', { time: formatProductUpdatedAt(product.updated_at) }) }}
+                <span
+                  v-if="productSnapshotVisibilityByShop[product.shop_id] === 'expired'"
+                  data-product-snapshot-expired
+                  class="mt-2 inline-flex rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
+                >{{ t('publicAccountImport.shopProductsExpired') }}</span>
+                <div class="mt-1 text-xs text-gray-400 dark:text-dark-500" :title="productSnapshotUpdatedAt(product)">
+                  {{ t('publicAccountImport.productUpdatedAt', { time: formatProductUpdatedAt(productSnapshotUpdatedAt(product)) }) }}
                 </div>
                 <div class="mt-1 text-xs text-gray-500 dark:text-dark-400" aria-live="polite">
                   <span v-if="productPriceStatus(product) === 'verified'" class="text-emerald-600 dark:text-emerald-400">
@@ -839,6 +854,8 @@ import {
   publicProductQuoteTime,
   publicProductPayablePrice,
   publicProductUnitPrice,
+  publicProductSnapshotVisibility,
+  type PublicProductSnapshotVisibility,
 } from '@/utils/publicProductCatalog'
 import {
   publicShopProductRefreshDisabled,
@@ -931,7 +948,6 @@ const productSyncWorkerStatus = ref<PublicAccountImportProductSyncWorkerStatus>(
 const queuedProductShops = ref(0)
 const refreshingProductShops = ref(0)
 const failedProductShops = ref(0)
-const expiredProductShops = ref(0)
 const shopProductSyncStatuses = ref<Record<string, TrackedPublicAccountImportProductSyncStatus>>({})
 const shopProductRefreshRequests = ref<Record<string, boolean>>({})
 const shopTrustUpdates = ref<Record<string, boolean>>({})
@@ -939,6 +955,7 @@ const deletingShop = ref<PublicAccountImportShop | null>(null)
 const deletingShopRequest = ref(false)
 const shopProductSyncClock = ref(Date.now())
 const productSearch = ref('')
+const hideExpiredProducts = ref(false)
 const appliedProductSearch = ref('')
 const productPriceOrder = ref<'desc' | 'asc'>('asc')
 const productPage = ref(1)
@@ -985,11 +1002,29 @@ const shopsByID = computed(() => new Map(shops.value.map((shop) => [shop.id, sho
 const productSyncWorkerAvailableLaneCount = computed(() => productSyncWorkerStatus.value.lanes.filter(
   (lane) => lane.availability === 'available'
 ).length)
-const filteredProducts = computed(() => filterAndSortPublicProducts(
+// Sorting depends on catalog/search changes, never on the one-second clock.
+const sortedProducts = computed(() => filterAndSortPublicProducts(
   products.value,
   appliedProductSearch.value,
 	productPriceOrder.value
 ))
+const productSnapshotVisibilityByShop = computed<Record<string, PublicProductSnapshotVisibility>>((previous) => {
+  const next = Object.fromEntries(Object.entries(shopProductSyncStatuses.value).map(([shopID, status]) => (
+    [shopID, publicProductSnapshotVisibility(status, shopProductSyncClock.value)]
+  )))
+  // Preserve identity between boundaries so ticking the clock does not refilter the catalog.
+  return previous && Object.keys(previous).length === Object.keys(next).length
+    && Object.entries(next).every(([shopID, visibility]) => previous[shopID] === visibility)
+    ? previous : next
+})
+const expiredProductShops = computed(() => Object.values(shopProductSyncStatuses.value)
+  .filter((status) => status.snapshot_state === 'expired'
+    || (status.snapshot_state !== 'pending' && status.snapshot_state !== 'legacy'
+      && shopProductSyncClock.value > Date.parse(status.snapshot_expires_at))).length)
+const filteredProducts = computed(() => sortedProducts.value.filter((product) => {
+  const visibility = productSnapshotVisibilityByShop.value[product.shop_id]
+  return visibility !== 'hidden' && (!hideExpiredProducts.value || visibility !== 'expired')
+}))
 const productPageCount = computed(() => Math.max(1, Math.ceil(filteredProducts.value.length / CATALOG_PAGE_SIZE)))
 const pagedProducts = computed(() => {
   const start = (productPage.value - 1) * CATALOG_PAGE_SIZE
@@ -1042,7 +1077,7 @@ watch(productSearch, () => {
     scheduleAutomaticQuotes()
   }, 300)
 })
-watch(productPriceOrder, () => {
+watch([productPriceOrder, hideExpiredProducts], () => {
   productPage.value = 1
   scheduleAutomaticQuotes()
 })
@@ -1319,7 +1354,6 @@ async function loadPublicProducts(showLoading: boolean) {
     queuedProductShops.value = catalog.queued_shops
     refreshingProductShops.value = catalog.refreshing_shops
     failedProductShops.value = catalog.failed_shops
-		expiredProductShops.value = catalog.expired_shops
     mergeShopProductSyncStatuses(catalog.shop_sync_statuses, true)
     productErrorMessage.value = ''
   } catch (error: any) {
@@ -1423,13 +1457,20 @@ function shopProductUpdatedText(shopId: string): string {
     : t('publicAccountImport.shopProductsNeverUpdated')
 }
 
+function productSnapshotUpdatedAt(product: PublicAccountImportProduct): string {
+  return shopProductSyncStatus(product.shop_id)?.snapshot_updated_at || product.updated_at
+}
+
 function shopProductStateText(shopId: string): string {
   const status = shopProductSyncStatus(shopId)
   if (status?.state === 'queued') return t('publicAccountImport.shopProductsQueued')
   if (status?.state === 'refreshing') return t('publicAccountImport.shopProductsRefreshing')
   if (status?.state === 'failed') return t('publicAccountImport.shopProductsFailed')
+	if (status?.snapshot_state === 'expired' || productSnapshotVisibilityByShop.value[shopId] === 'expired'
+    || (status?.snapshot_state === 'stale' && productSnapshotVisibilityByShop.value[shopId] === 'hidden')) {
+    return t('publicAccountImport.shopProductsExpired')
+  }
 	if (status?.snapshot_state === 'stale') return t('publicAccountImport.shopProductsStale')
-	if (status?.snapshot_state === 'expired') return t('publicAccountImport.shopProductsExpired')
 	if (status?.snapshot_state === 'legacy') return t('publicAccountImport.shopProductsLegacy')
   const retryAfter = shopProductRetryAfter(shopId)
   return retryAfter > 0
@@ -1625,7 +1666,6 @@ function updateProductSyncCountersFromStatuses() {
   queuedProductShops.value = statuses.filter((status) => status.state === 'queued').length
   refreshingProductShops.value = statuses.filter((status) => status.state === 'refreshing').length
   failedProductShops.value = statuses.filter((status) => status.state === 'failed').length
-  expiredProductShops.value = statuses.filter((status) => status.snapshot_state === 'expired').length
 }
 
 function shopHref(value: string): string {

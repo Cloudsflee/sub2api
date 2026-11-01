@@ -49,6 +49,7 @@ const (
 	publicAccountImportProductSyncLeaseAge             = 90 * time.Second
 	publicAccountImportProductSyncMaxAge               = 30 * time.Minute
 	publicAccountImportProductMaxCacheAge              = 30 * time.Minute
+	publicAccountImportProductExpiredDisplayGrace      = 3 * time.Hour
 	publicAccountImportProductRefreshMaxAge            = 30 * time.Minute
 	publicAccountImportProductMaxSyncJobs              = 6
 	publicAccountImportProductMaxProducts              = 1000
@@ -1318,9 +1319,8 @@ func publicAccountImportProductSnapshot(shops []PublicAccountImportShop, store p
 		}
 		if snapshotState == "expired" {
 			expired++
-			continue
 		}
-		if snapshotState != "fresh" && snapshotState != "stale" && snapshotState != "legacy" {
+		if !publicAccountImportProductSnapshotIsVisible(shop, cached, now, snapshotState) {
 			continue
 		}
 		for _, product := range cached.Products {
@@ -1381,13 +1381,26 @@ func publicAccountImportProductSnapshotState(shop PublicAccountImportShop, cache
 	if now.Sub(updatedAt) <= publicAccountImportProductRefreshAgeForShop(shop) {
 		return "fresh"
 	}
-	if publicAccountImportProductFailureRetryAfter(cached, now) > 0 {
-		return "stale"
-	}
 	if strictMode && now.Sub(updatedAt) > publicAccountImportProductMaxCacheAgeForShop(shop) {
 		return "expired"
 	}
 	return "stale"
+}
+
+// Expiry describes freshness; visibility may outlive it, but only for a complete,
+// valid snapshot. Retry backoff must never extend either deadline in strict mode.
+func publicAccountImportProductSnapshotIsVisible(shop PublicAccountImportShop, cached publicAccountImportProductShopCache, now time.Time, snapshotState string) bool {
+	switch snapshotState {
+	case "fresh", "stale", "legacy":
+		return true
+	case "expired":
+		updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt)
+		return publicAccountImportProductSnapshotIsAuthoritative(cached) &&
+			!updatedAt.After(now.Add(time.Minute)) &&
+			!now.After(updatedAt.Add(publicAccountImportProductMaxCacheAgeForShop(shop)+publicAccountImportProductExpiredDisplayGrace))
+	default:
+		return false
+	}
 }
 
 func publicAccountImportProductRefreshAgeForShop(shop PublicAccountImportShop) time.Duration {
@@ -1422,6 +1435,7 @@ func publicAccountImportProductRefreshCooldownForShop(shop PublicAccountImportSh
 func publicAccountImportProductSnapshotIsAuthoritative(cached publicAccountImportProductShopCache) bool {
 	if cached.SchemaVersion != publicAccountImportProductSchemaVersion || cached.Products == nil ||
 		cached.SourceProductCount < 0 || cached.SourceProductCount > publicAccountImportProductMaxProducts ||
+		cached.UnavailableProductCount < 0 ||
 		cached.SellableProductCount != len(cached.Products) ||
 		cached.SourceProductCount != cached.SellableProductCount+cached.UnavailableProductCount {
 		return false
@@ -2007,11 +2021,12 @@ func publicAccountImportProductSyncStatusForShop(shop PublicAccountImportShop, c
 	} else if failed || strings.TrimSpace(cached.Error) != "" {
 		state = "failed"
 	}
-	snapshotState := publicAccountImportProductSnapshotState(shop, cached, now, publicAccountImportProductStrictMode())
+	strictMode := publicAccountImportProductStrictMode()
+	snapshotState := publicAccountImportProductSnapshotState(shop, cached, now, strictMode)
 	expiresAt := ""
 	if updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt); !updatedAt.IsZero() {
 		expiresAtValue := updatedAt.Add(publicAccountImportProductMaxCacheAgeForShop(shop))
-		if retryAt := parsePublicAccountImportProductTimestamp(cached.RetryNotBeforeAt); retryAt.After(expiresAtValue) {
+		if retryAt := parsePublicAccountImportProductTimestamp(cached.RetryNotBeforeAt); !strictMode && retryAt.After(expiresAtValue) {
 			expiresAtValue = retryAt
 		}
 		expiresAt = expiresAtValue.Format(time.RFC3339Nano)

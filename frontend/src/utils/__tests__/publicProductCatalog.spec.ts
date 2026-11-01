@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { PublicAccountImportProduct } from '@/api/publicAccountImport'
+import type { PublicAccountImportProduct, PublicAccountImportProductSyncStatus } from '@/api/publicAccountImport'
 import {
   filterAndSortPublicProducts,
+  publicProductSnapshotVisibility,
   livePublicProductAvailability,
 	livePublicProductMinimumQuantity,
 	livePublicProductQuoteAvailability,
@@ -9,6 +10,43 @@ import {
 	publicProductGoodsKey,
 	publicProductUnitPrice,
 } from '../publicProductCatalog'
+
+describe('publicProductSnapshotVisibility', () => {
+  const updatedAt = Date.parse('2026-11-01T00:00:00Z')
+  function status(maxAgeMinutes = 30): PublicAccountImportProductSyncStatus {
+    return {
+      shop_id: 'shop', state: 'failed', retry_after_seconds: 3600,
+      snapshot_state: 'stale', updated_at: new Date(updatedAt).toISOString(),
+      snapshot_updated_at: new Date(updatedAt).toISOString(),
+      snapshot_expires_at: new Date(updatedAt + maxAgeMinutes * 60_000).toISOString(),
+    }
+  }
+
+  it.each([30, 120])('uses the original expiry plus exactly three hours for max age %s', (maxAge) => {
+    const snapshot = status(maxAge)
+    const expiry = Date.parse(snapshot.snapshot_expires_at)
+    expect(publicProductSnapshotVisibility(snapshot, expiry)).toBe('current')
+    expect(publicProductSnapshotVisibility(snapshot, expiry + 1)).toBe('expired')
+    expect(publicProductSnapshotVisibility(snapshot, expiry + 3 * 60 * 60_000)).toBe('expired')
+    expect(publicProductSnapshotVisibility(snapshot, expiry + 3 * 60 * 60_000 + 1)).toBe('hidden')
+  })
+
+  it('honors API expiry and preserves legacy compatibility', () => {
+    expect(publicProductSnapshotVisibility({ ...status(), snapshot_state: 'expired' }, updatedAt)).toBe('expired')
+    expect(publicProductSnapshotVisibility({ ...status(), snapshot_state: 'legacy' }, updatedAt + 86400_000)).toBe('current')
+    expect(publicProductSnapshotVisibility(undefined, updatedAt)).toBe('current')
+  })
+
+  it.each([
+    { snapshot_state: 'pending' as const },
+    { snapshot_updated_at: '' },
+    { snapshot_expires_at: 'invalid' },
+    { snapshot_updated_at: new Date(updatedAt + 120_000).toISOString() },
+    { snapshot_expires_at: new Date(updatedAt - 1).toISOString() },
+  ])('does not restore a snapshot with invalid timing: %o', (invalid) => {
+    expect(publicProductSnapshotVisibility({ ...status(), ...invalid }, updatedAt)).toBe('hidden')
+  })
+})
 
 const product: PublicAccountImportProduct = {
   id: 'product-1',

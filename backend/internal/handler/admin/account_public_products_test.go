@@ -824,6 +824,8 @@ func TestPublicAccountImportProductFailureRetryNotBeforePreservesSnapshot(t *tes
 
 	retryStatus := publicAccountImportProductSyncStatusForShop(shop, cached, now)
 	require.Equal(t, "failed", retryStatus.State)
+	require.Equal(t, "expired", retryStatus.SnapshotState)
+	require.Equal(t, now.Add(-30*time.Minute).Format(time.RFC3339Nano), retryStatus.SnapshotExpiresAt)
 	require.Equal(t, 3600, retryStatus.RetryAfterSeconds)
 	require.Empty(t, selectPublicAccountImportProductSyncShops([]PublicAccountImportShop{shop}, store, now.Add(59*time.Minute+59*time.Second), 1))
 	require.Equal(t, []PublicAccountImportShop{shop}, selectPublicAccountImportProductSyncShops([]PublicAccountImportShop{shop}, store, now.Add(time.Hour), 1))
@@ -894,7 +896,8 @@ func TestPublicAccountImportProductSnapshotAppliesSoftAndHardExpiryPerShop(t *te
 	}}
 
 	products, pending, _, _, _, expired := publicAccountImportProductSnapshot(shops, store, now)
-	require.Equal(t, []string{"stale-product", "fresh-product"}, []string{products[0].ID, products[1].ID})
+	require.Len(t, products, 3)
+	require.Equal(t, []string{"expired-product", "stale-product", "fresh-product"}, []string{products[0].ID, products[1].ID, products[2].ID})
 	require.Equal(t, 2, pending)
 	require.Equal(t, 1, expired)
 
@@ -911,7 +914,7 @@ func TestPublicAccountImportProductCompatibilityModeKeepsPastDueAuthoritativeSna
 	now := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
 	shops := []PublicAccountImportShop{{ID: "past-due"}}
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
-		"past-due": authoritativeProductCache("past-due", now.Add(-31*time.Minute), 1),
+		"past-due": authoritativeProductCache("past-due", now.Add(-6*time.Hour), 1),
 	}}
 
 	products, pending, _, _, _, expired := publicAccountImportProductSnapshot(shops, store, now)
@@ -926,7 +929,7 @@ func TestPublicAccountImportProductStrictModeHidesLegacySnapshots(t *testing.T) 
 	shops := []PublicAccountImportShop{{ID: "legacy"}}
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
 		"legacy": {
-			UpdatedAt: now.Add(-time.Hour).Format(time.RFC3339Nano),
+			UpdatedAt: now.Add(-6 * time.Hour).Format(time.RFC3339Nano),
 			Products:  []PublicAccountImportProduct{{ID: "legacy-product", Stock: 1, MinimumQuantity: 1}},
 		},
 	}}
