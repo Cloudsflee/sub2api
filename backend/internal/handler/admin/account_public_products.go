@@ -52,7 +52,6 @@ const (
 	publicAccountImportProductSyncLeaseAge             = 90 * time.Second
 	publicAccountImportProductSyncMaxAge               = 30 * time.Minute
 	publicAccountImportProductMaxCacheAge              = 30 * time.Minute
-	publicAccountImportProductExpiredDisplayGrace      = 3 * time.Hour
 	publicAccountImportProductRefreshMaxAge            = 30 * time.Minute
 	publicAccountImportProductMaxSyncJobs              = 6
 	publicAccountImportProductMaxProducts              = 1000
@@ -1323,7 +1322,7 @@ func publicAccountImportProductSnapshot(shops []PublicAccountImportShop, store p
 		if snapshotState == "expired" {
 			expired++
 		}
-		if !publicAccountImportProductSnapshotIsVisible(shop, cached, now, snapshotState) {
+		if !publicAccountImportProductSnapshotIsVisible(cached, now, snapshotState) {
 			continue
 		}
 		for _, product := range cached.Products {
@@ -1390,17 +1389,16 @@ func publicAccountImportProductSnapshotState(shop PublicAccountImportShop, cache
 	return "stale"
 }
 
-// Expiry describes freshness; visibility may outlive it, but only for a complete,
-// valid snapshot. Retry backoff must never extend either deadline in strict mode.
-func publicAccountImportProductSnapshotIsVisible(shop PublicAccountImportShop, cached publicAccountImportProductShopCache, now time.Time, snapshotState string) bool {
+// Complete, valid snapshots remain visible after expiry until replaced by a
+// successful sync. Retry backoff does not change the original expiry time.
+func publicAccountImportProductSnapshotIsVisible(cached publicAccountImportProductShopCache, now time.Time, snapshotState string) bool {
 	switch snapshotState {
 	case "fresh", "stale", "legacy":
 		return true
 	case "expired":
 		updatedAt := parsePublicAccountImportProductTimestamp(cached.UpdatedAt)
 		return publicAccountImportProductSnapshotIsAuthoritative(cached) &&
-			!updatedAt.After(now.Add(time.Minute)) &&
-			!now.After(updatedAt.Add(publicAccountImportProductMaxCacheAgeForShop(shop)+publicAccountImportProductExpiredDisplayGrace))
+			!updatedAt.After(now.Add(time.Minute))
 	default:
 		return false
 	}
@@ -1501,7 +1499,7 @@ func writePublicAccountImportProductsResponse(c *gin.Context, result PublicAccou
 		response.InternalError(c, "Failed to encode product catalog")
 		return
 	}
-	// The grace period can substantially enlarge the public catalog. Compress
+	// Retaining expired snapshots can substantially enlarge the catalog. Compress
 	// this buffered JSON response only; gateway streaming responses are unaffected.
 	c.Writer.Header().Add("Vary", "Accept-Encoding")
 	if len(body) >= 1024 && publicAccountImportProductsAcceptsGzip(c.GetHeader("Accept-Encoding")) {

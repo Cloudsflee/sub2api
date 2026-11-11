@@ -3,7 +3,6 @@ import { isPublicShopHostname, PUBLIC_SHOP_CANONICAL_ORIGIN } from '@/utils/publ
 
 const productNameCollator = new Intl.Collator(undefined, { numeric: true })
 const inventorylessGoodsTypes = new Set(['article', 'resource', 'equity'])
-const expiredSnapshotDisplayGraceMs = 3 * 60 * 60 * 1000
 
 export type PublicProductSnapshotVisibility = 'current' | 'expired' | 'hidden'
 
@@ -18,7 +17,6 @@ export function publicProductSnapshotVisibility(
   const expiresAt = Date.parse(status.snapshot_expires_at)
   if (!Number.isFinite(updatedAt) || !Number.isFinite(expiresAt)
     || updatedAt > now + 60_000 || expiresAt < updatedAt) return 'hidden'
-  if (now > expiresAt + expiredSnapshotDisplayGraceMs) return 'hidden'
   return status.snapshot_state === 'expired' || now > expiresAt ? 'expired' : 'current'
 }
 

@@ -240,36 +240,36 @@ describe('PublicAccountImportView expired snapshots', () => {
     vi.restoreAllMocks()
   })
 
-  it('shows expired snapshots by default, hides only expired products, and resets the switch on remount', async () => {
+  it('shows long-expired snapshots by default, hides all expired products, and resets the switch on remount', async () => {
     const view = await openCatalog([
-      product('expired', 'expired', 1), product('fresh', 'fresh', 2), product('too-old', 'too-old', 3),
-      product('legacy', 'legacy', 4),
-    ], [snapshot('expired', 60), snapshot('fresh', 5), snapshot('too-old', 211),
+      product('expired', 'expired', 1), product('fresh', 'fresh', 2), product('old', 'old', 3),
+      product('year-old', 'year-old', 4), product('legacy', 'legacy', 5),
+    ], [snapshot('expired', 60), snapshot('fresh', 5), snapshot('old', 211), snapshot('year-old', 365 * 24 * 60),
       { ...snapshot('legacy', 500), snapshot_state: 'legacy' }])
-    expect(ids()).toEqual(['expired', 'fresh', 'legacy'])
+    expect(ids()).toEqual(['expired', 'fresh', 'old', 'year-old', 'legacy'])
     const card = view.get('[data-product-id="expired"]')
     expect(card.get('[data-product-snapshot-expired]').text()).toBe('publicAccountImport.shopProductsExpired')
     expect(card.find('[title="2026-11-01T11:00:00.000Z"]').exists()).toBe(true)
-    expect(view.findAll('[data-product-snapshot-expired]')).toHaveLength(1)
+    expect(view.findAll('[data-product-snapshot-expired]')).toHaveLength(3)
     const toggle = view.get('[data-testid="hide-expired-products"]')
     expect((toggle.element as HTMLInputElement).checked).toBe(false)
     await toggle.setValue(true)
     expect(ids()).toEqual(['fresh', 'legacy'])
     await toggle.setValue(false)
-    expect(ids()).toEqual(['expired', 'fresh', 'legacy'])
+    expect(ids()).toEqual(['expired', 'fresh', 'old', 'year-old', 'legacy'])
     await toggle.setValue(true)
     view.unmount()
     wrapper = mountView()
     await flushPromises()
     expect((wrapper.get('[data-testid="hide-expired-products"]').element as HTMLInputElement).checked).toBe(false)
-    expect(ids()).toEqual(['expired', 'fresh', 'legacy'])
+    expect(ids()).toEqual(['expired', 'fresh', 'old', 'year-old', 'legacy'])
   })
 
   it('combines expiry, inclusion/exclusion search, price sorting, and pagination resets', async () => {
     const products = Array.from({ length: 24 }, (_, i) => product(
       String(i + 1), i < 12 ? 'fresh' : 'expired', i + 1, i === 11 ? 'Key skip' : 'Key product'
     ))
-    const view = await openCatalog(products, [snapshot('fresh', 5), snapshot('expired', 60)])
+    const view = await openCatalog(products, [snapshot('fresh', 5), snapshot('expired', 365 * 24 * 60)])
     // Use the pagination control rather than changing component internals.
     const nextPage = view.findAll('button').find(button => button.text() === 'publicAccountImport.nextPage')!
     await nextPage.trigger('click')
@@ -286,7 +286,7 @@ describe('PublicAccountImportView expired snapshots', () => {
     expect(view.text()).toContain('publicAccountImport.pageStatus 1 3')
   })
 
-  it('crosses both time boundaries while polling fails without re-sorting on each clock tick', async () => {
+  it('expires while open and stays visible past the former cutoff without re-sorting on clock ticks', async () => {
     const sort = vi.spyOn(productCatalog, 'filterAndSortPublicProducts')
     const view = await openCatalog([product('boundary', 'boundary')], [snapshot('boundary', 30)])
     const initialSorts = sort.mock.calls.length
@@ -302,18 +302,29 @@ describe('PublicAccountImportView expired snapshots', () => {
     await vi.advanceTimersByTimeAsync(1000)
     expect(ids()).toEqual(['boundary'])
     await vi.advanceTimersByTimeAsync(1000)
+    expect(ids()).toEqual(['boundary'])
+    vi.setSystemTime(now + 365 * 86400_000)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(ids()).toEqual(['boundary'])
+    expect(view.find('[data-product-snapshot-expired]').exists()).toBe(true)
+    await view.get('[data-testid="hide-expired-products"]').setValue(true)
     expect(ids()).toEqual([])
+    await view.get('[data-testid="hide-expired-products"]').setValue(false)
+    expect(ids()).toEqual(['boundary'])
     expect(sort).toHaveBeenCalledTimes(initialSorts)
   })
 
   it('keeps expired results on failed refresh and clears the badge after a successful snapshot refresh', async () => {
     const item = product('one', 'one')
-    const view = await openCatalog([item], [snapshot('one', 60)])
+    const oldSnapshot = snapshot('one', 365 * 24 * 60)
+    const view = await openCatalog([item], [oldSnapshot])
     getProducts.mockRejectedValue(new Error('refresh failed'))
     window.dispatchEvent(new Event('focus'))
     await flushPromises()
     expect(ids()).toEqual(['one'])
     expect(view.find('[data-product-snapshot-expired]').exists()).toBe(true)
+    expect(view.find(`[title="${oldSnapshot.snapshot_updated_at}"]`).exists()).toBe(true)
+    expect(view.find(`[title="${item.quote_verified_at}"]`).exists()).toBe(true)
     await view.get('[data-testid="hide-expired-products"]').setValue(true)
     expect(ids()).toEqual([])
     getProducts.mockResolvedValue({ ...catalog([snapshot('one', 0)]), products: [item] })
@@ -321,6 +332,11 @@ describe('PublicAccountImportView expired snapshots', () => {
     await flushPromises()
     expect(ids()).toEqual(['one'])
     expect(view.find('[data-product-snapshot-expired]').exists()).toBe(false)
+    // A successful shop sync follows the latest catalog, including removals.
+    getProducts.mockResolvedValue({ ...catalog([snapshot('one', 0)]), products: [] })
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(ids()).toEqual([])
   })
 
   it('hides newly expired products automatically when the switch is enabled, including on a 304 response', async () => {

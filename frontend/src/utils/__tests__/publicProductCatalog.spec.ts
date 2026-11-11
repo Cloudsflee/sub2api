@@ -22,13 +22,15 @@ describe('publicProductSnapshotVisibility', () => {
     }
   }
 
-  it.each([30, 120])('uses the original expiry plus exactly three hours for max age %s', (maxAge) => {
+  it.each([30, 120])('keeps the original expiry and retains old snapshots for max age %s', (maxAge) => {
     const snapshot = status(maxAge)
     const expiry = Date.parse(snapshot.snapshot_expires_at)
+    expect(publicProductSnapshotVisibility(snapshot, expiry - 1)).toBe('current')
     expect(publicProductSnapshotVisibility(snapshot, expiry)).toBe('current')
     expect(publicProductSnapshotVisibility(snapshot, expiry + 1)).toBe('expired')
     expect(publicProductSnapshotVisibility(snapshot, expiry + 3 * 60 * 60_000)).toBe('expired')
-    expect(publicProductSnapshotVisibility(snapshot, expiry + 3 * 60 * 60_000 + 1)).toBe('hidden')
+    expect(publicProductSnapshotVisibility(snapshot, expiry + 3 * 60 * 60_000 + 1)).toBe('expired')
+    expect(publicProductSnapshotVisibility(snapshot, expiry + 365 * 86400_000)).toBe('expired')
   })
 
   it('honors API expiry and preserves legacy compatibility', () => {

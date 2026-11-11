@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPublicProductExpiredDisplayGraceByTrustLevel(t *testing.T) {
+func TestPublicProductExpiredSnapshotsRemainVisibleByTrustLevel(t *testing.T) {
 	t.Setenv(publicAccountImportProductStrictModeEnv, "true")
 	updatedAt := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	for _, trust := range []struct {
@@ -34,12 +34,13 @@ func TestPublicProductExpiredDisplayGraceByTrustLevel(t *testing.T) {
 				{"before expiry", trust.age - time.Nanosecond, "stale", 1},
 				{"at expiry", trust.age, "stale", 1},
 				{"after expiry", trust.age + time.Nanosecond, "expired", 1},
-				{"at grace end", trust.age + 3*time.Hour, "expired", 1},
-				{"after grace end", trust.age + 3*time.Hour + time.Nanosecond, "expired", 0},
+				{"at former grace end", trust.age + 3*time.Hour, "expired", 1},
+				{"after former grace end", trust.age + 3*time.Hour + time.Nanosecond, "expired", 1},
+				{"one year after expiry", trust.age + 365*24*time.Hour, "expired", 1},
 			} {
 				t.Run(boundary.name, func(t *testing.T) {
 					now := updatedAt.Add(boundary.elapsed)
-					// Even an active failure backoff cannot move either boundary.
+					// Even an active failure backoff cannot move the original expiry.
 					cached.RetryNotBeforeAt = now.Add(time.Hour).Format(time.RFC3339Nano)
 					cached.Error = "proxy backoff"
 					store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{shop.ID: cached}}
@@ -63,7 +64,7 @@ func TestPublicProductExpiredDisplayGraceByTrustLevel(t *testing.T) {
 	}
 }
 
-func TestPublicProductGraceNeverRestoresInvalidSnapshots(t *testing.T) {
+func TestPublicProductRetentionNeverRestoresInvalidSnapshots(t *testing.T) {
 	now := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
 	shop := PublicAccountImportShop{ID: "shop"}
 	for _, tc := range []struct {
@@ -87,15 +88,17 @@ func TestPublicProductGraceNeverRestoresInvalidSnapshots(t *testing.T) {
 		{"sold out", func(c *publicAccountImportProductShopCache) { c.Products[0].Stock = 0 }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cached := authoritativeProductCache(shop.ID, now.Add(-time.Hour), 1)
-			cached.RetryNotBeforeAt = now.Add(time.Hour).Format(time.RFC3339Nano)
-			tc.mutate(&cached)
-			for _, mode := range []string{"true", "false"} {
-				t.Setenv(publicAccountImportProductStrictModeEnv, mode)
-				products, _, _, _, _, _ := publicAccountImportProductSnapshot([]PublicAccountImportShop{shop}, publicAccountImportProductStore{
-					Shops: map[string]publicAccountImportProductShopCache{shop.ID: cached},
-				}, now)
-				require.Empty(t, products)
+			for _, age := range []time.Duration{time.Hour, 365 * 24 * time.Hour} {
+				cached := authoritativeProductCache(shop.ID, now.Add(-age), 1)
+				cached.RetryNotBeforeAt = now.Add(time.Hour).Format(time.RFC3339Nano)
+				tc.mutate(&cached)
+				for _, mode := range []string{"true", "false"} {
+					t.Setenv(publicAccountImportProductStrictModeEnv, mode)
+					products, _, _, _, _, _ := publicAccountImportProductSnapshot([]PublicAccountImportShop{shop}, publicAccountImportProductStore{
+						Shops: map[string]publicAccountImportProductShopCache{shop.ID: cached},
+					}, now)
+					require.Empty(t, products, "age=%s strict=%s", age, mode)
+				}
 			}
 		})
 	}
@@ -106,7 +109,7 @@ func TestPublicProductFailureDoesNotRenewSnapshot(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			now := time.Now().UTC()
 			shop := PublicAccountImportShop{ID: "shop", URL: "https://wzyp.cn/shop/shop"}
-			cached := authoritativeProductCache(shop.ID, now.Add(-time.Hour), 1)
+			cached := authoritativeProductCache(shop.ID, now.Add(-90*24*time.Hour), 1)
 			cached.SyncAttemptID = "attempt"
 			cached.SyncStartedAt = now.Format(time.RFC3339Nano)
 			cached.SyncHeartbeatAt = cached.SyncStartedAt
@@ -124,14 +127,15 @@ func TestPublicProductFailureDoesNotRenewSnapshot(t *testing.T) {
 			require.Equal(t, cached.Products, store.Shops[shop.ID].Products)
 			status := publicAccountImportProductSyncStatusForShop(shop, store.Shops[shop.ID], now)
 			require.Equal(t, "expired", status.SnapshotState)
-			require.Equal(t, now.Add(-30*time.Minute).Format(time.RFC3339Nano), status.SnapshotExpiresAt)
+			require.Equal(t, cached.UpdatedAt, status.SnapshotUpdatedAt)
+			require.Equal(t, now.Add(-90*24*time.Hour+30*time.Minute).Format(time.RFC3339Nano), status.SnapshotExpiresAt)
 			products, _, _, _, _, _ := publicAccountImportProductSnapshot([]PublicAccountImportShop{shop}, store, now)
 			require.Len(t, products, 1)
 		})
 	}
 }
 
-func TestPublicProductAPITimeBoundariesInvalidateETagWithoutDeletingStorage(t *testing.T) {
+func TestPublicProductAPIExpiryChangesETagButRetentionDoesNot(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		now := time.Now().UTC()
 		shop := PublicAccountImportShop{ID: "shop", URL: "https://wzyp.cn/shop/shop"}
@@ -156,7 +160,8 @@ func TestPublicProductAPITimeBoundariesInvalidateETagWithoutDeletingStorage(t *t
 			{0, "stale", 1, 0, http.StatusOK},
 			{time.Nanosecond, "expired", 1, 1, http.StatusOK},
 			{3*time.Hour - time.Nanosecond, "", 0, 0, http.StatusNotModified},
-			{time.Nanosecond, "expired", 0, 1, http.StatusOK},
+			{time.Nanosecond, "", 0, 0, http.StatusNotModified},
+			{365 * 24 * time.Hour, "", 0, 0, http.StatusNotModified},
 		} {
 			time.Sleep(step.advance)
 			recorder := httptest.NewRecorder()
@@ -171,6 +176,19 @@ func TestPublicProductAPITimeBoundariesInvalidateETagWithoutDeletingStorage(t *t
 				require.Equal(t, step.state, result.ShopSyncStatuses[0].SnapshotState)
 				require.Equal(t, now.Format(time.RFC3339Nano), result.ShopSyncStatuses[0].SnapshotExpiresAt)
 				require.NotEqual(t, etag, recorder.Header().Get("ETag"))
+			} else {
+				require.Equal(t, etag, recorder.Header().Get("ETag"))
+				require.Empty(t, recorder.Body.Bytes())
+				// A client without a cached response still receives the old products.
+				full := performPublicProductRequest(t, router, http.MethodGet, "/products", nil)
+				require.Equal(t, http.StatusOK, full.Code)
+				require.Equal(t, etag, full.Header().Get("ETag"))
+				result := decodePublicProductResponse[PublicAccountImportProductsResponse](t, full.Body.Bytes())
+				require.Len(t, result.Products, 1)
+				require.Equal(t, 1, result.ExpiredShops)
+				require.Equal(t, "expired", result.ShopSyncStatuses[0].SnapshotState)
+				require.Equal(t, cached.UpdatedAt, result.ShopSyncStatuses[0].SnapshotUpdatedAt)
+				require.Equal(t, now.Format(time.RFC3339Nano), result.ShopSyncStatuses[0].SnapshotExpiresAt)
 			}
 			etag = recorder.Header().Get("ETag")
 		}
@@ -181,7 +199,7 @@ func TestPublicProductAPITimeBoundariesInvalidateETagWithoutDeletingStorage(t *t
 		require.NoError(t, err)
 		require.Equal(t, cached.Products, store.Shops[shop.ID].Products)
 
-		// A successful full refresh restores a hidden snapshot with new original deadlines.
+		// A successful full refresh replaces the old catalog and renews its deadlines.
 		jobResponse := performPublicProductRequest(t, router, http.MethodGet, "/products/sync-job", nil)
 		require.Equal(t, http.StatusOK, jobResponse.Code, jobResponse.Body.String())
 		job := decodePublicProductResponse[PublicAccountImportProductSyncJobResponse](t, jobResponse.Body.Bytes()).Job
@@ -193,6 +211,7 @@ func TestPublicProductAPITimeBoundariesInvalidateETagWithoutDeletingStorage(t *t
 		fresh := performPublicProductRequest(t, router, http.MethodGet, "/products", nil)
 		result := decodePublicProductResponse[PublicAccountImportProductsResponse](t, fresh.Body.Bytes())
 		require.Len(t, result.Products, 1)
+		require.NotEqual(t, cached.Products[0].ID, result.Products[0].ID)
 		require.Zero(t, result.ExpiredShops)
 		require.Equal(t, "fresh", result.ShopSyncStatuses[0].SnapshotState)
 		require.Equal(t, refreshedAt.Format(time.RFC3339Nano), result.ShopSyncStatuses[0].SnapshotUpdatedAt)
