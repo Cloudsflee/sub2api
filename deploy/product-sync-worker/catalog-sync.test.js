@@ -53,6 +53,59 @@ test('collectProductQuote follows detail, channel, and quote order and preserves
   assert.equal(result.url, 'https://wzyp.cn/item/paid-article')
 })
 
+test('collectProductQuote validates resolved card inventory before requesting the matching quantity', async (t) => {
+  for (const [name, details, expectedStock, expectedMinimum] of [
+    ['flat fields', { stock: 12, minimum_quantity: 3 }, 12, 3],
+    ['detail aliases', { stock_count: '14', limit_count: '2' }, 14, 2],
+    ['catalog fields', { extend: { stock_count: 16, limit_count: 4 } }, 16, 4],
+    ['cached fields when omitted', {}, 20, 5],
+    ['zero minimum means one', { stock: 7, minimum_quantity: 0 }, 7, 1],
+  ]) {
+    await t.test(name, async () => {
+      const calls = []
+      const result = await collectProductQuote({
+        shopToken: 'shop-token', goodsKey: 'card',
+        product: { name: 'Card', url: 'https://wzyp.cn/item/card', goods_type: 'card', price: 2, stock: 20, minimum_quantity: 5 },
+        post: async (requestPath, body) => {
+          calls.push({ path: requestPath, body })
+          if (requestPath.endsWith('/goodsInfo')) return { code: 1, data: { goods: { goods_key: 'card', ...details }, token: 'detail-token' } }
+          if (requestPath.endsWith('/getUserChannel')) return clone(fixture.channels)
+          return { code: 1, data: { total_amount: 9 } }
+        },
+      })
+      assert.equal(result.stock, expectedStock)
+      assert.equal(result.minimum_quantity, expectedMinimum)
+      assert.equal(result.payable_price, 9)
+      assert.equal(calls.at(-1).body.quantity, expectedMinimum)
+      assert.equal(calls.at(-1).path, '/shopApi/Shop/getGoodsPrice')
+    })
+  }
+})
+
+test('collectProductQuote preserves explicit invalid or unavailable details instead of using cached stock', async (t) => {
+  for (const [name, details, unavailable] of [
+    ['invalid stock', { stock: 'invalid' }, false],
+    ['invalid minimum', { minimum_quantity: -1 }, false],
+    ['empty stock', { stock: '' }, false],
+    ['insufficient stock', { stock: 2, minimum_quantity: 3 }, true],
+    ['off shelf', { status: false }, true],
+    ['nested off shelf', { extend: { status: false } }, true],
+  ]) {
+    await t.test(name, async () => {
+      const collect = () => collectProductQuote({
+        shopToken: 'shop-token', goodsKey: 'card',
+        product: { name: 'Card', url: 'https://wzyp.cn/item/card', goods_type: 'card', price: 2, stock: 20, minimum_quantity: 5 },
+        post: async (requestPath) => {
+          assert.equal(requestPath, '/shopApi/Shop/goodsInfo', 'invalid inventory must not reach payment lookup')
+          return { code: 1, data: { goods: { goods_key: 'card', ...details }, token: 'detail-token' } }
+        },
+      })
+      if (unavailable) assert.deepEqual(await collect(), { unavailable: true, goods_key: 'card' })
+      else await assert.rejects(collect, /invalid stock or minimum quantity/)
+    })
+  }
+})
+
 test('collectAuthoritativeSnapshot uses goodsList totals and publishes one complete verified shop snapshot', async () => {
   const calls = []
   const mismatchedInfo = clone(fixture.info)

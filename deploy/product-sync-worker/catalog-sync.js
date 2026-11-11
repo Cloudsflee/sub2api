@@ -27,28 +27,28 @@ async function collectProductQuote(options) {
   if (detailGoodsKey && detailGoodsKey !== String(goodsKey).trim()) {
     throw new ShopSyncError('unknown', 'goods info identity does not match the requested product')
   }
+  const goodsType = String(item.goods_type || product.goods_type || 'card').trim().toLowerCase()
+  const inventoryless = ['article', 'resource', 'equity'].includes(goodsType)
   const merged = {
     ...product,
     ...item,
     goods_key: goodsKey,
+    goods_type: goodsType,
     // Details occasionally omit the public link; preserve the cached identity.
     link: item.link || item.url || product.link || product.url,
+    // Detail responses and cached jobs use flat inventory fields, while the
+    // catalog validator expects extend. Resolve the same quote quantity before
+    // validating so valid card details are not rejected before payment lookup.
+    extend: {
+      ...item.extend,
+      stock_count: item.stock ?? item.stock_count ?? item.extend?.stock_count ?? (inventoryless ? 1 : product.stock),
+      limit_count: item.minimum_quantity ?? item.limit_count ?? item.extend?.limit_count ?? (inventoryless ? 1 : product.minimum_quantity),
+    },
   }
-  const state = catalogProductState(merged, product.goods_type || item.goods_type || 'card')
+  const state = catalogProductState(merged, goodsType)
   if (state.state === 'unknown') throw new ShopSyncError('unknown', state.reason)
   if (state.state === 'unavailable') return { unavailable: true, goods_key: goodsKey }
-  const goodsType = state.product.goods_type || product.goods_type || 'card'
-  const inventoryless = ['article', 'resource', 'equity'].includes(goodsType)
-  const detailMinimum = item.minimum_quantity ?? item.limit_count ?? item.extend?.limit_count
-  const detailStock = item.stock ?? item.stock_count ?? item.extend?.stock_count
-  const minimumRaw = detailMinimum ?? (inventoryless ? 1 : product.minimum_quantity)
-  const parsedMinimum = minimumRaw == null || minimumRaw === '' ? 1 : normalizeNonNegativeInteger(minimumRaw)
-  if (parsedMinimum === null) throw new ShopSyncError('unknown', 'goods info minimum quantity is invalid')
-  const minimum = Math.max(parsedMinimum, 1)
-  const stockRaw = detailStock ?? (inventoryless ? 1 : product.stock)
-  const stock = stockRaw == null || stockRaw === '' ? 1 : normalizeNonNegativeInteger(stockRaw)
-  if (stock === null) throw new ShopSyncError('unknown', 'goods info stock is invalid')
-  if (stock < minimum) return { unavailable: true, goods_key: goodsKey }
+  const { stock, minimum_quantity: minimum } = state.product
   const token = String(
     data.user?.token || data.shop?.token || data.user_token || data.shop_token || data.token
       || item.user?.token || item.shop?.token || item.shop_token || item.token || ''
