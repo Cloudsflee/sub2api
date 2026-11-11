@@ -112,47 +112,66 @@ describe('PublicAccountImportView product task flow', () => {
     vi.restoreAllMocks()
   })
 
-  it('opens the real link immediately while the refresh task starts in parallel', async () => {
-    post.mockResolvedValue({ data: { accepted: true, state: 'queued' } })
-    get.mockResolvedValue({ data: { state: 'running' } })
+  it.each([
+    '2026-09-12T23:59:30Z',
+    '2026-09-12T23:58:59Z',
+    '2020-01-01T00:00:00Z',
+  ])('opens the real link without requesting a quote last verified at %s', async (verifiedAt) => {
+    getProducts.mockResolvedValue({
+      ...catalog,
+      products: [{ ...catalog.products[0], quote_verified_at: verifiedAt }],
+    })
     const wrapper = mountView()
     const event = await clickProduct(wrapper)
+    await vi.advanceTimersByTimeAsync(5_000)
 
     expect(event.defaultPrevented).toBe(false)
-    expect(post).toHaveBeenCalledWith('/public/account-import/products/refresh-one', {
-      shop_id: 'shop',
-      product_id: 'product',
-    })
+    expect(post).not.toHaveBeenCalled()
+    expect(get).not.toHaveBeenCalled()
     expect(wrapper.find('a[href="https://wzyp.cn/item/goods"]').attributes('target')).toBe('_blank')
     expect(wrapper.find('a[href="https://wzyp.cn/item/goods"]').attributes('href')).toBe('https://wzyp.cn/item/goods')
+    expect(wrapper.find('[data-product-id="product"]').attributes('aria-busy')).toBe('false')
+    expect(wrapper.find('[data-product-refresh="product"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).toContain('¥4')
+    expect(wrapper.text()).toContain('publicAccountImport.priceVerifiedAt')
+    expect(wrapper.text()).not.toContain('publicAccountImport.priceChecking')
     expect(wrapper.text()).not.toContain('about:blank')
     wrapper.unmount()
   })
 
-  it('keeps navigation usable when refresh fails and preserves the cached quote', async () => {
+  it('refreshes only on request and preserves navigation and the cached quote on failure', async () => {
     post.mockResolvedValue({ data: { accepted: true, state: 'queued' } })
     get.mockResolvedValue({ data: { state: 'failed' } })
     const wrapper = mountView()
+    await productLink(wrapper)
+    expect(post).not.toHaveBeenCalled()
+    await wrapper.get('[data-product-refresh="product"]').trigger('click')
+    expect(wrapper.text()).toContain('publicAccountImport.priceChecking')
     const event = await clickProduct(wrapper)
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post).toHaveBeenCalledWith('/public/account-import/products/refresh-one', {
+      shop_id: 'shop',
+      product_id: 'product',
+    })
     await vi.advanceTimersByTimeAsync(1_000)
     await flushPromises()
 
     expect(event.defaultPrevented).toBe(false)
-    expect(wrapper.text()).toContain('publicAccountImport.productVerificationFailed')
+    expect(wrapper.text()).toContain('publicAccountImport.priceCheckFailed')
     expect(wrapper.text()).toContain('¥4')
     expect(wrapper.find('a[href="https://wzyp.cn/item/goods"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
-  it('keeps the already-open link independent when the worker reports unavailable', async () => {
+  it('removes a product when manual refresh reports it unavailable', async () => {
     post.mockResolvedValue({ data: { accepted: true, state: 'queued' } })
     get.mockResolvedValue({ data: { state: 'unavailable' } })
     const wrapper = mountView()
-    const event = await clickProduct(wrapper)
+    await productLink(wrapper)
+    await wrapper.get('[data-product-refresh="product"]').trigger('click')
     await vi.advanceTimersByTimeAsync(1_000)
     await flushPromises()
 
-    expect(event.defaultPrevented).toBe(false)
     expect(wrapper.text()).toContain('publicAccountImport.productUnavailable')
     expect(wrapper.find('[data-product-id="product"]').exists()).toBe(false)
     wrapper.unmount()

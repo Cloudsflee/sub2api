@@ -21,7 +21,7 @@ export type PublicProductQuoteResult =
   | { kind: 'unavailable' | 'invalid' | 'cancelled' }
   | { kind: 'failed'; url: string; reason: string }
 
-type Intent = 'automatic' | 'click' | 'refresh'
+type Intent = 'automatic' | 'refresh'
 type StoredQuote = PublicProductQuote & Pick<PublicAccountImportProduct, 'price'>
 interface Task {
   key: string

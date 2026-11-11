@@ -44,7 +44,7 @@ describe('browser product quotes', () => {
       throw new Error('Unexpected catalog request')
     })
     const q = setup([base, { ...base, id: 'two', name: 'Other' }])
-    const task = q.request(base, 'click')
+    const task = q.request(base, 'refresh')
     expect(q.refreshDisabled(base)).toBe(true)
     await vi.advanceTimersByTimeAsync(2_000)
     await expect(task).resolves.toEqual({ kind: 'success', url: base.url })
@@ -64,12 +64,12 @@ describe('browser product quotes', () => {
     expect(q.products.value[0]).toEqual(newer)
   })
 
-  it('shares duplicate clicks and keeps the previous quote on failure', async () => {
+  it('shares duplicate refreshes and keeps the previous quote on failure', async () => {
     post.mockResolvedValue({ data: { accepted: true, state: 'queued' } })
     get.mockResolvedValue({ data: { state: 'failed', product: null } })
     const q = setup()
-    const first = q.request(base, 'click')
-    expect(q.request(base, 'click')).toBe(first)
+    const first = q.request(base, 'refresh')
+    expect(q.request(base, 'refresh')).toBe(first)
     await vi.advanceTimersByTimeAsync(1_000)
     await expect(first).resolves.toMatchObject({ kind: 'failed' })
     expect(q.products.value[0]).toMatchObject({ payable_price: 4, unit_price: 2, stock: 8 })
@@ -189,7 +189,7 @@ describe('browser product quotes', () => {
     post.mockResolvedValue({ data: { accepted: true, state: 'running' } })
     get.mockResolvedValue({ data: { state: 'running' } })
     const q = setup()
-    const task = q.request(base, 'click')
+    const task = q.request(base, 'refresh')
     await vi.advanceTimersByTimeAsync(120_000)
     await expect(task).resolves.toMatchObject({ kind: 'failed', reason: 'timeout' })
     q.dispose()

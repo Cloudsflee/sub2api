@@ -1537,24 +1537,7 @@ function handleProductClick(event: MouseEvent, product: PublicAccountImportProdu
     return
   }
 
-  // Keep the anchor's native navigation independent from quote refresh. The
-  // target tab opens the real product URL immediately; the same-origin task
-  // runs in the background and can update this catalog without ever holding
-  // the user on a placeholder tab.
-  void productQuotes.request(product, 'click').then((result) => {
-    if (!productCatalogMounted) return
-    if (result.kind === 'unavailable') {
-      productVerificationMessage.value = t('publicAccountImport.productUnavailable')
-    } else if (result.kind === 'invalid') {
-      productVerificationMessage.value = t('publicAccountImport.productLinkInvalid')
-    } else if (result.kind === 'failed') {
-      productVerificationMessage.value = t('publicAccountImport.productVerificationFailed')
-    }
-  }).catch(() => {
-    // Navigation has already been handed to the browser. A refresh transport
-    // error is shown in the catalog only and must never cancel that navigation.
-    if (productCatalogMounted) productVerificationMessage.value = t('publicAccountImport.productVerificationFailed')
-  })
+  // Follow the native link. Only the refresh button requests a product quote.
 }
 
 function clearShopMessages() {
