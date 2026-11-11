@@ -1,9 +1,9 @@
 name: Security Scan
 
 on:
+  # Push/PR scans are invoked by backend-ci.yml; avoid a second parallel scan.
   workflow_call:
-  push:
-  pull_request:
+  workflow_dispatch:
   schedule:
     - cron: '0 3 * * 1'
 

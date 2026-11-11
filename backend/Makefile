@@ -1,4 +1,4 @@
-.PHONY: build generate test test-unit test-integration test-e2e
+.PHONY: build generate test test-ci test-unit test-integration test-e2e
 
 VERSION ?= $(shell ./scripts/resolve-version.sh)
 LDFLAGS ?= -s -w -X main.Version=$(VERSION)
@@ -13,6 +13,11 @@ generate:
 test:
 	go test ./...
 	golangci-lint run ./...
+
+# Include both tagged suites while running shared untagged tests only once.
+# Fail if Docker is unavailable instead of skipping the repository package.
+test-ci:
+	CI=true go test -tags=unit,integration ./...
 
 test-unit:
 	go test -tags=unit ./...

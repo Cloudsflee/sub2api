@@ -232,16 +232,18 @@ git add ent/       # 生成的文件也要提交
 
 ---
 
-### 坑 11：PR 提交前检查清单
+### 坑 11：按改动范围验证，避免重复检查
 
-提交 PR 前务必本地验证：
+按 2026-11-11 运维方约定，普通改动本地验证受影响范围即可；完整 CI 的既有门禁按仓库配置执行。
+验证范围、构建复用与发布流程统一见 [本项目部署文档](deploy/autodeploy/README_CN.md#当前手动发布与精简验证约定)。
 
-- [ ] `go test -tags=unit ./...` 通过
-- [ ] `go test -tags=integration ./...` 通过
-- [ ] `golangci-lint run ./...` 无新增问题
-- [ ] `pnpm-lock.yaml` 已同步（如果改了 package.json）
+- [ ] 受影响测试与修改文件的只读 lint 通过；已有检查结果不重复执行
+- [ ] `pnpm-lock.yaml` 已同步（如果改了依赖）
 - [ ] 所有 test stub 补全新接口方法（如果改了 interface）
 - [ ] Ent 生成的代码已提交（如果改了 schema）
+
+完整 CI 使用 `make -C backend test-ci` 合并 unit、integration 和未标记测试；需要 Docker，缺失时明确失败。
+前端 CI 直接运行现有 lint、完整测试、类型检查和 Vite 构建命令，每项一次；独立 `pnpm run build` 仍自带语言键及类型检查。
 
 ## 五、常用命令速查
 

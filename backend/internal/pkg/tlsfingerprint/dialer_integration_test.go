@@ -108,6 +108,11 @@ func TestJA3Fingerprint(t *testing.T) {
 	} else {
 		t.Errorf("✗ JA4 cipher hash mismatch: got %s, expected containing %s", fpResp.TLS.JA4, expectedJA4CipherHash)
 	}
+
+	// TLS 1.3 with the expected cipher, extension, and ALPN signature.
+	if !strings.HasPrefix(fpResp.TLS.JA4, "t13d1714h1") && !strings.HasPrefix(fpResp.TLS.JA4, "t13i1714h1") {
+		t.Errorf("JA4 prefix mismatch: got %s, expected t13d1714h1 or t13i1714h1", fpResp.TLS.JA4)
+	}
 }
 
 // TestAllProfiles tests multiple TLS fingerprint profiles against tls.peet.ws.

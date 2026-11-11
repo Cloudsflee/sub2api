@@ -66,15 +66,9 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.27.3'
-      - name: Unit tests
+      - name: Backend unit and integration tests (shared tests run once)
         working-directory: backend
-        run: make test-unit
-      - name: Full backend tests
-        working-directory: backend
-        run: go test ./...
-      - name: Integration tests
-        working-directory: backend
-        run: make test-integration
+        run: make test-ci
 
   frontend:
     runs-on: ubuntu-latest
@@ -93,13 +87,14 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
-      - name: Frontend typecheck, full tests, lint and build
+      - name: Frontend tests, lint and build
         working-directory: frontend
+        # Full tests include locale completeness; each check runs once.
         run: |
-          pnpm run typecheck
-          pnpm run test:run
           pnpm run lint:check
-          pnpm run build
+          pnpm run test:run
+          pnpm run typecheck
+          pnpm exec vite build
 
   product-sync-worker:
     runs-on: ubuntu-latest

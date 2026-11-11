@@ -51,14 +51,13 @@ build-backend:
 build-frontend:
 	@pnpm --dir frontend run build
 
-# 运行测试（后端 + 前端）
-test: test-backend test-frontend
+# 运行测试（后端 + 前端 + Worker，各一次）
+test: test-backend test-frontend test-worker
 
 test-backend:
 	@$(MAKE) -C backend test
 
 test-frontend:
-	@$(MAKE) test-worker
 	@pnpm --dir frontend run lint:check
 	@pnpm --dir frontend run typecheck
 	@$(MAKE) test-frontend-critical
