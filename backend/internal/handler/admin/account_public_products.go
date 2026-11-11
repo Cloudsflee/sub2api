@@ -40,9 +40,12 @@ const (
 	publicAccountImportProductStoreVersion             = 1
 	publicAccountImportProductSchemaVersion            = 2
 	publicAccountImportProductSyncInterval             = time.Second
-	publicAccountImportProductTrustedRefreshAge        = 5 * time.Minute
-	publicAccountImportProductRefreshAge               = 15 * time.Minute
-	publicAccountImportProductUntrustedRefreshAge      = 60 * time.Minute
+	publicAccountImportProductTrustedRefreshAge        = 15 * time.Minute
+	publicAccountImportProductRefreshAge               = time.Hour
+	publicAccountImportProductUntrustedRefreshAge      = 4 * time.Hour
+	publicAccountImportProductTrustedFreshAge          = 5 * time.Minute
+	publicAccountImportProductFreshAge                 = 15 * time.Minute
+	publicAccountImportProductUntrustedFreshAge        = time.Hour
 	publicAccountImportProductRefreshCooldown          = 5 * time.Minute
 	publicAccountImportSingleProductCooldown           = 15 * time.Second
 	publicAccountImportSingleProductMaxQueued          = 100
@@ -52,6 +55,7 @@ const (
 	publicAccountImportProductSyncLeaseAge             = 90 * time.Second
 	publicAccountImportProductSyncMaxAge               = 30 * time.Minute
 	publicAccountImportProductMaxCacheAge              = 30 * time.Minute
+	publicAccountImportProductUntrustedMaxCacheAge     = 2 * time.Hour
 	publicAccountImportProductRefreshMaxAge            = 30 * time.Minute
 	publicAccountImportProductMaxSyncJobs              = 6
 	publicAccountImportProductMaxProducts              = 1000
@@ -1380,7 +1384,7 @@ func publicAccountImportProductSnapshotState(shop PublicAccountImportShop, cache
 		}
 		return "legacy"
 	}
-	if now.Sub(updatedAt) <= publicAccountImportProductRefreshAgeForShop(shop) {
+	if now.Sub(updatedAt) <= publicAccountImportProductFreshAgeForShop(shop) {
 		return "fresh"
 	}
 	if strictMode && now.Sub(updatedAt) > publicAccountImportProductMaxCacheAgeForShop(shop) {
@@ -1416,7 +1420,22 @@ func publicAccountImportProductRefreshAgeForShop(shop PublicAccountImportShop) t
 }
 
 func publicAccountImportProductMaxCacheAgeForShop(shop PublicAccountImportShop) time.Duration {
-	return max(publicAccountImportProductMaxCacheAge, 2*publicAccountImportProductRefreshAgeForShop(shop))
+	if normalizePublicAccountImportShopTrustLevel(shop.TrustLevel) == publicAccountImportShopUntrusted {
+		return publicAccountImportProductUntrustedMaxCacheAge
+	}
+	return publicAccountImportProductMaxCacheAge
+}
+
+// Snapshot freshness is independent of automatic collection frequency.
+func publicAccountImportProductFreshAgeForShop(shop PublicAccountImportShop) time.Duration {
+	switch normalizePublicAccountImportShopTrustLevel(shop.TrustLevel) {
+	case publicAccountImportShopTrusted:
+		return publicAccountImportProductTrustedFreshAge
+	case publicAccountImportShopUntrusted:
+		return publicAccountImportProductUntrustedFreshAge
+	default:
+		return publicAccountImportProductFreshAge
+	}
 }
 
 func publicAccountImportProductRetryAgeForShop(shop PublicAccountImportShop) time.Duration {
@@ -1586,7 +1605,9 @@ func selectPublicAccountImportProductSyncShops(shops []PublicAccountImportShop, 
 			continue
 		}
 		manual := publicAccountImportProductRefreshIsPending(cached, now)
-		if !manual && publicAccountImportProductSnapshotState(shops[i], cached, now, false) == "fresh" {
+		// A valid snapshot may be stale or expired before its next automatic sync.
+		if !manual && publicAccountImportProductSnapshotIsAuthoritative(cached) &&
+			publicAccountImportProductCacheIsFresh(cached, now, publicAccountImportProductRefreshAgeForShop(shops[i])) {
 			continue
 		}
 		attempt := parsePublicAccountImportProductTimestamp(cached.LastAttempt)

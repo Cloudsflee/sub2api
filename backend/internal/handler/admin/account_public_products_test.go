@@ -216,7 +216,7 @@ func TestSelectPublicAccountImportProductSyncShopsLeasesDistinctBatch(t *testing
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
 		"stale": {
 			SchemaVersion: publicAccountImportProductSchemaVersion,
-			UpdatedAt:     now.Add(-time.Hour).Format(time.RFC3339),
+			UpdatedAt:     now.Add(-publicAccountImportProductRefreshAge - time.Second).Format(time.RFC3339),
 			LastAttempt:   now.Add(-10 * time.Minute).Format(time.RFC3339),
 			Products:      []PublicAccountImportProduct{},
 		},
@@ -449,7 +449,7 @@ func TestPublicAccountImportProductSyncLeasesSixJobsAndWithholdsTheSeventh(t *te
 		})
 		store.Shops[shopID] = publicAccountImportProductShopCache{
 			SchemaVersion: publicAccountImportProductSchemaVersion,
-			UpdatedAt:     now.Add(-time.Hour).Format(time.RFC3339Nano),
+			UpdatedAt:     now.Add(-publicAccountImportProductRefreshAge - time.Second).Format(time.RFC3339Nano),
 			Products:      []PublicAccountImportProduct{},
 		}
 	}
@@ -541,6 +541,7 @@ func TestPublicAccountImportProductSingleShopRefreshFlow(t *testing.T) {
 	list := performPublicProductRequest(t, router, http.MethodGet, "/products", nil)
 	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
 	listData := decodePublicProductResponse[PublicAccountImportProductsResponse](t, list.Body.Bytes())
+	require.Equal(t, 3600, listData.RefreshSeconds)
 	require.Equal(t, 2, listData.ShopCount)
 	require.Equal(t, 1, listData.QueuedShops)
 	require.Zero(t, listData.RefreshingShops)
@@ -739,14 +740,27 @@ func TestPublicAccountImportProductAutoRefreshBoundariesByTrustLevel(t *testing.
 		name       string
 		trustLevel string
 		age        time.Duration
+		freshAge   time.Duration
 	}{
-		{name: "trusted", trustLevel: publicAccountImportShopTrusted, age: 5 * time.Minute},
-		{name: "neutral", trustLevel: publicAccountImportShopNeutral, age: 15 * time.Minute},
-		{name: "untrusted", trustLevel: publicAccountImportShopUntrusted, age: 60 * time.Minute},
+		{name: "trusted", trustLevel: publicAccountImportShopTrusted, age: 15 * time.Minute, freshAge: 5 * time.Minute},
+		{name: "neutral", trustLevel: publicAccountImportShopNeutral, age: time.Hour, freshAge: 15 * time.Minute},
+		{name: "untrusted", trustLevel: publicAccountImportShopUntrusted, age: 4 * time.Hour, freshAge: time.Hour},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			shop := PublicAccountImportShop{ID: tt.name, TrustLevel: tt.trustLevel}
+			cached := authoritativeProductCache(shop.ID, now.Add(-tt.freshAge), 1)
+			require.Equal(t, "fresh", publicAccountImportProductSnapshotState(shop, cached, now, true))
+			cached = authoritativeProductCache(shop.ID, now.Add(-tt.freshAge-time.Second), 1)
+			require.Equal(t, "stale", publicAccountImportProductSnapshotState(shop, cached, now, true))
+			waiting := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{shop.ID: cached}}
+			require.Empty(t, selectPublicAccountImportProductSyncShops([]PublicAccountImportShop{shop}, waiting, now, 1))
+
+			// Manual requests still run before the next automatic collection is due.
+			cached.RefreshRequestedAt = now.Format(time.RFC3339Nano)
+			waiting.Shops[shop.ID] = cached
+			require.Equal(t, []PublicAccountImportShop{shop}, selectPublicAccountImportProductSyncShops([]PublicAccountImportShop{shop}, waiting, now, 1))
+
 			atBoundary := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{
 				shop.ID: authoritativeProductCache(shop.ID, now.Add(-tt.age), 1),
 			}}
