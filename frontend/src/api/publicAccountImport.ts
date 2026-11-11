@@ -95,6 +95,8 @@ export interface PublicAccountImportProductRefreshOneResponse {
   product_id: string
   state: PublicAccountImportProductRefreshOneState
   retry_after_seconds: number
+  // Missing on older backends; null explicitly means there is no current product.
+  product?: PublicAccountImportProduct | null
 }
 
 export async function requestPublicAccountImportProductRefreshOne(shopId: string, productId: string): Promise<PublicAccountImportProductRefreshOneResponse> {
@@ -123,6 +125,7 @@ function normalizePublicAccountImportProductRefreshOneResponse(
       ? state
       : 'idle',
     retry_after_seconds: normalizeNonNegativeInteger(value?.retry_after_seconds),
+    ...(value && Object.prototype.hasOwnProperty.call(value, 'product') ? { product: value.product } : {}),
   }
 }
 export type PublicAccountImportProductSnapshotState = 'pending' | 'legacy' | 'fresh' | 'stale' | 'expired'

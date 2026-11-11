@@ -64,6 +64,19 @@ func TestPublicProductExpiredSnapshotsRemainVisibleByTrustLevel(t *testing.T) {
 	}
 }
 
+func TestPublicProductOldDirectoryAllowsIndependentQuoteTime(t *testing.T) {
+	now := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
+	shop := PublicAccountImportShop{ID: "shop"}
+	for _, quoteTime := range []time.Time{now.Add(-365 * 24 * time.Hour), now, now.Add(time.Minute)} {
+		cached := authoritativeProductCache(shop.ID, now.Add(-24*time.Hour), 1)
+		cached.Products[0].QuoteVerifiedAt = quoteTime.Format(time.RFC3339Nano)
+		for _, strict := range []bool{false, true} {
+			state := publicAccountImportProductSnapshotState(shop, cached, now, strict)
+			require.True(t, publicAccountImportProductSnapshotIsVisible(cached, now, state), "quote=%s strict=%t", quoteTime, strict)
+		}
+	}
+}
+
 func TestPublicProductRetentionNeverRestoresInvalidSnapshots(t *testing.T) {
 	now := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
 	shop := PublicAccountImportShop{ID: "shop"}
@@ -83,7 +96,7 @@ func TestPublicProductRetentionNeverRestoresInvalidSnapshots(t *testing.T) {
 		{"incomplete price", func(c *publicAccountImportProductShopCache) { c.Products[0].UnitPrice = nil }},
 		{"invalid quote time", func(c *publicAccountImportProductShopCache) { c.Products[0].QuoteVerifiedAt = "invalid" }},
 		{"future quote", func(c *publicAccountImportProductShopCache) {
-			c.Products[0].QuoteVerifiedAt = now.Format(time.RFC3339Nano)
+			c.Products[0].QuoteVerifiedAt = now.Add(time.Minute + time.Nanosecond).Format(time.RFC3339Nano)
 		}},
 		{"sold out", func(c *publicAccountImportProductShopCache) { c.Products[0].Stock = 0 }},
 	} {

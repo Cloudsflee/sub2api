@@ -1,6 +1,10 @@
 import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
 import { apiClient } from '@/api/client'
-import type { PublicAccountImportProduct } from '@/api/publicAccountImport'
+import {
+  getPublicAccountImportProductRefreshOneStatus,
+  requestPublicAccountImportProductRefreshOne,
+  type PublicAccountImportProduct,
+} from '@/api/publicAccountImport'
 import {
   publicProductGoodsKey,
   publicProductHref,
@@ -18,6 +22,7 @@ export type PublicProductQuoteResult =
   | { kind: 'failed'; url: string; reason: string }
 
 type Intent = 'automatic' | 'click' | 'refresh'
+type StoredQuote = PublicProductQuote & Pick<PublicAccountImportProduct, 'price'>
 interface Task {
   key: string
   product: PublicAccountImportProduct
@@ -38,13 +43,26 @@ function identity(product: PublicAccountImportProduct): string {
   return JSON.stringify([product.id, product.shop_id, publicProductGoodsKey(product.url) || product.url])
 }
 
+function productQuote(product: PublicAccountImportProduct): StoredQuote {
+  return {
+    price: product.price,
+    market_price: product.market_price,
+    payable_price: product.payable_price!,
+    unit_price: product.unit_price!,
+    minimum_quantity: product.minimum_quantity,
+    stock: product.stock,
+    goods_type: product.goods_type,
+    quote_verified_at: product.quote_verified_at!,
+  }
+}
+
 class PressureError extends Error {
   constructor(message: string, readonly delay = SUCCESS_TTL) { super(message) }
 }
 
 /** One scheduler and memory-only quote overlay per mounted catalog page. */
 export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]>) {
-  const overrides = ref<Record<string, PublicProductQuote>>({})
+  const overrides = ref<Record<string, StoredQuote>>({})
   const states = ref<Record<string, { status: 'checking' | 'failed'; at: number }>>({})
   const unavailable = ref<Record<string, number>>({})
   const clock = ref(Date.now())
@@ -60,8 +78,15 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
   const products = computed(() => catalog.value.flatMap(product => {
     const key = identity(product)
     if (unavailable.value[key] !== undefined) return []
-    return [{ ...product, ...overrides.value[key] }]
+    return [withQuoteOverlay(product)]
   }))
+
+  function withQuoteOverlay(product: PublicAccountImportProduct): PublicAccountImportProduct {
+    const quote = overrides.value[identity(product)]
+    return quote && Date.parse(quote.quote_verified_at) >= publicProductQuoteTime(product)
+      ? { ...product, ...quote }
+      : product
+  }
 
   function status(product: PublicAccountImportProduct) {
     const state = states.value[identity(product)]
@@ -86,7 +111,7 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
     return Math.max(0, Math.ceil((ATTEMPT_INTERVAL - (clock.value - attempt.at)) / 1_000))
   }
 
-  function finish(task: Task, result: PublicProductQuoteResult, quote?: PublicProductQuote) {
+  function finish(task: Task, result: PublicProductQuoteResult, product?: PublicAccountImportProduct) {
     if (task.done) return
     task.done = true
     clearTimeout(task.timer)
@@ -98,10 +123,15 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
     if (!disposed && current.value.has(task.key)) {
       clock.value = Date.now()
       delete states.value[task.key]
-      if (quote) {
-        const base = current.value.get(task.key)!
-        if (publicProductQuoteTime(base) <= Date.parse(quote.quote_verified_at)) overrides.value[task.key] = quote
-      } else if (result.kind === 'unavailable') {
+      if (product) {
+        const base = withQuoteOverlay(current.value.get(task.key)!)
+        // Equal timestamps retain the quote already displayed. Keep the chosen
+        // quote even if a delayed catalog response later replaces the base.
+        overrides.value[task.key] = productQuote(publicProductQuoteTime(product) > publicProductQuoteTime(base) ? product : base)
+        const index = catalog.value.findIndex(item => identity(item) === task.key)
+        catalog.value[index] = { ...product, ...overrides.value[task.key] }
+      }
+      if (result.kind === 'unavailable') {
         unavailable.value[task.key] = Date.now()
       } else if (result.kind === 'failed' || result.kind === 'invalid') {
         states.value[task.key] = { status: 'failed', at: Date.now() }
@@ -124,17 +154,15 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
   async function execute(task: Task) {
     const url = publicProductHref(task.product.url)
     try {
-      // The browser talks only to the same-origin task API.  The worker owns
-      // all upstream requests and publishes the resulting quote to the
-      // catalog consumed below.
-      const accepted = await apiClient.post('/public/account-import/products/refresh-one', {
-        shop_id: task.product.shop_id,
-        product_id: task.product.id,
-      })
+      // The worker owns upstream requests; the status API returns its saved quote.
+      let response = await requestPublicAccountImportProductRefreshOne(task.product.shop_id, task.product.id)
       if (task.done) return
-      let state = accepted.data?.state || 'queued'
       const started = Date.now()
-      while (!task.done && Date.now() - started < 120_000 && (state === 'queued' || state === 'running')) {
+      // A cooldown can make the POST return a terminal state immediately.
+      if (response.state !== 'queued' && response.state !== 'running') {
+        response = await getPublicAccountImportProductRefreshOneStatus(task.product.shop_id, task.product.id)
+      }
+      while (!task.done && Date.now() - started < TIMEOUT && (response.state === 'queued' || response.state === 'running')) {
         // Poll once per second through the first ten seconds, then back off
         // to five-second probes for the remainder of the two-minute window.
         await new Promise<void>(resolve => {
@@ -144,28 +172,38 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
           }, Date.now() - started <= 10_000 ? 1_000 : 5_000)
         })
         if (task.done) return
-        const statusResponse = await apiClient.get('/public/account-import/products/refresh-one/status', {
-          params: { shop_id: task.product.shop_id, product_id: task.product.id },
-        })
-        state = statusResponse.data?.state || 'idle'
+        response = await getPublicAccountImportProductRefreshOneStatus(task.product.shop_id, task.product.id)
+      }
+      if (task.done) return
+      const state = response.state
+      if (response.shop_id !== task.product.shop_id || response.product_id !== task.product.id) {
+        finish(task, { kind: 'failed', url, reason: 'identity-mismatch' }); return
       }
       if (state === 'succeeded' || state === 'superseded') {
-        // A successful worker commit and a superseded result both require a
-        // fresh catalog read.  Merge only the requested product so unrelated
-        // cards retain their local overlays and ordering.
-        const catalogResponse = await apiClient.get('/public/account-import/products')
-        const latest = (catalogResponse.data?.products || []).find((item: PublicAccountImportProduct) =>
-          item.id === task.product.id && item.shop_id === task.product.shop_id
-        )
-        if (latest) {
-          const index = catalog.value.findIndex(item => item.id === latest.id && item.shop_id === latest.shop_id)
-          if (index >= 0) catalog.value[index] = latest
+        let latest = response.product
+        if (!Object.prototype.hasOwnProperty.call(response, 'product')) {
+          // Compatibility with backends that do not yet return a single product.
+          const catalogResponse = await apiClient.get('/public/account-import/products')
+          if (task.done) return
+          latest = (catalogResponse.data?.products || []).find((item: PublicAccountImportProduct) =>
+            item.id === task.product.id && item.shop_id === task.product.shop_id
+          ) || null
+        }
+        if (latest === null) {
+          finish(task, { kind: 'unavailable' }); return
+        }
+        if (!latest || identity(latest) !== task.key || !publicProductGoodsKey(latest.url)) {
+          finish(task, { kind: 'failed', url, reason: 'identity-mismatch' }); return
+        }
+        const verifiedAt = publicProductQuoteTime(latest)
+        if (!verifiedAt || verifiedAt > Date.now() + 60_000) {
+          finish(task, { kind: 'failed', url, reason: 'invalid-quote' }); return
         }
         if (state === 'superseded') {
-          finish(task, { kind: 'failed', url, reason: 'superseded' })
+          finish(task, { kind: 'failed', url, reason: 'superseded' }, latest)
           return
         }
-        finish(task, { kind: 'success', url }); return
+        finish(task, { kind: 'success', url }, latest); return
       }
       if (state === 'unavailable') { finish(task, { kind: 'unavailable' }); return }
       if (state === 'queued' || state === 'running') { finish(task, { kind: 'failed', url, reason: 'timeout' }); return }
@@ -220,7 +258,7 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
       }
       return existing.promise
     }
-    const merged = { ...current.value.get(key)!, ...overrides.value[key] }
+    const merged = withQuoteOverlay(current.value.get(key)!)
     const age = Date.now() - publicProductQuoteTime(merged)
     if (intent !== 'refresh' && age >= 0 && age < SUCCESS_TTL && states.value[key]?.status !== 'failed') {
       return Promise.resolve({ kind: 'success', url })
@@ -269,8 +307,11 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
     const keys = current.value
     for (const key of Object.keys(overrides.value)) {
       const base = keys.get(key)
-      if (!base || publicProductQuoteTime(base) > Date.parse(overrides.value[key].quote_verified_at)) {
+      if (!base) {
         delete overrides.value[key]
+        delete states.value[key]
+      } else if (publicProductQuoteTime(base) > Date.parse(overrides.value[key].quote_verified_at)) {
+        overrides.value[key] = productQuote(base)
         delete states.value[key]
       }
     }

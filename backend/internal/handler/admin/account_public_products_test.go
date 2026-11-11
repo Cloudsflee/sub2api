@@ -1040,7 +1040,7 @@ func TestSubmitPublicAccountImportProductSyncPublishesVerifiedEmptySnapshot(t *t
 	require.Empty(t, cached.Products)
 	require.Equal(t, 3, cached.SourceProductCount)
 	require.Equal(t, 3, cached.UnavailableProductCount)
-	require.True(t, publicAccountImportProductSnapshotIsAuthoritative(cached))
+	require.True(t, publicAccountImportProductSnapshotIsAuthoritative(cached, now))
 }
 
 func TestPublicAccountImportProductWorkerRoutesRequireBearerAuthentication(t *testing.T) {
@@ -1291,7 +1291,10 @@ func newPublicProductTestRouter(t *testing.T, shops []PublicAccountImportShop, s
 	router.GET("/products", h.ListPublicAccountImportProducts)
 	router.GET("/products/sync-job", h.GetPublicAccountImportProductSyncJob)
 	router.POST("/products/refresh", h.RequestPublicAccountImportProductRefresh)
+	router.POST("/products/refresh-one", h.RequestPublicAccountImportProductRefreshOne)
+	router.GET("/products/refresh-one/status", h.GetPublicAccountImportProductRefreshOneStatus)
 	router.POST("/products/sync", h.SubmitPublicAccountImportProductSync)
+	router.POST("/products/sync-one", h.SubmitPublicAccountImportProductSyncOne)
 	router.POST("/products/sync-failure", h.FailPublicAccountImportProductSync)
 	router.POST("/products/sync-heartbeat", h.HeartbeatPublicAccountImportProductSync)
 	return router

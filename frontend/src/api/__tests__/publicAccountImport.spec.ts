@@ -15,6 +15,7 @@ import {
   deletePublicAccountImportShop,
   getPublicAccountImportShops,
   getPublicAccountImportProducts,
+	getPublicAccountImportProductRefreshOneStatus,
 	getPublicAccountImportProductsWithETag,
   requestPublicAccountImportProductRefresh,
   submitPublicAccountImportUpstream,
@@ -27,6 +28,19 @@ describe('public account import product API', () => {
     post.mockReset()
     patch.mockReset()
     del.mockReset()
+  })
+
+  it('preserves missing, null and populated single-product status fields', async () => {
+    const product = { id: 'one', shop_id: 'shop', price: 2 }
+    get.mockResolvedValueOnce({ data: { state: 'succeeded' } })
+      .mockResolvedValueOnce({ data: { state: 'superseded', product: null } })
+      .mockResolvedValueOnce({ data: { state: 'succeeded', product } })
+
+    const legacy = await getPublicAccountImportProductRefreshOneStatus('shop', 'one')
+    expect(legacy).not.toHaveProperty('product')
+    expect(legacy).toMatchObject({ shop_id: 'shop', product_id: 'one', state: 'succeeded' })
+    expect(await getPublicAccountImportProductRefreshOneStatus('shop', 'one')).toHaveProperty('product', null)
+    expect(await getPublicAccountImportProductRefreshOneStatus('shop', 'one')).toHaveProperty('product', product)
   })
 
   it('posts authenticated URL + Key imports with an idempotency key', async () => {
