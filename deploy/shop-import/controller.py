@@ -201,6 +201,15 @@ def growing(history, now):
             and window[-1]['existing_due'] > window[0]['existing_due'])
 
 
+def resources_recovered(item):
+    # Due work accumulates while dispatch is paused and cannot drain until it
+    # resumes. Gate dispatch recovery on resources; gate new shops separately
+    # on the original queue and normal-window conditions.
+    return (not item['heavy'] and not item['upstream'] and item['lanes'] >= 5
+            and item['worker_memory'] is not None and item['worker_memory'] < .88
+            and item['host_available'] >= .20 and (item['cpu'] is None or item['cpu'] <= .85))
+
+
 def pressure_sample(host, scheduler, state):
     now = timestamp(host['at'])
     previous = state['history'][-1] if state['history'] else None
@@ -475,13 +484,17 @@ class Controller:
             self.save()
             return
         if state.get('resource_hold'):
-            if not recovery15:
+            if not continuous(history, 15 * MINUTE, resources_recovered, now):
                 self.save()
                 return
             self.change(automatic_paused=False)
-            state.update(resource_hold=False, hold_since=None, validation_started=now,
-                         settle_until=now + 15 * MINUTE)
-            self.event('resource_pressure_recovered', evidence='15 continuous minutes below 88% memory with lanes/host/queue recovered')
+            state.update(resource_hold=False, hold_since=now, validation_started=now,
+                         settle_until=now + 15 * MINUTE, history=[], pressure_since=None)
+            if state.pop('resource_rebaseline', False):
+                state.update(baseline_started=None, baseline_due=None, settle_until=now + 20 * MINUTE)
+            self.event('resource_dispatch_resumed', evidence='15 continuous minutes below 88% memory with upstream/lanes/host recovered; new admissions still wait for queue recovery')
+            self.save()
+            return
         if self.control['automatic_paused']:
             # A pause inherited from another operator/controller is never silently lifted.
             state['external_pause'] = True

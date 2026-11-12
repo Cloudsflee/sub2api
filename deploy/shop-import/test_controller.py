@@ -190,6 +190,42 @@ class ControllerTests(unittest.TestCase):
         self.tick()
         self.assertEqual(self.controller.state['phase'], 'batch_observation')
 
+    def test_paused_queue_can_recover_without_admitting_new_shops(self):
+        self.baseline()
+        self.tick(memory=.96)
+        self.tick(memory=.96)
+        state = self.controller.state
+        for index in range(16):
+            key = 'existing-' + str(index)
+            state['existing_ids'].append(key)
+            self.api.stats[key] = {'shop_id': key, 'automatic_due': True, 'waiting_seconds': index * 60}
+            self.tick()
+        self.assertFalse(self.api.config['automatic_paused'], 'paused work cannot drain until dispatch resumes')
+        self.assertFalse(state['resource_hold'])
+        self.assertEqual(len(self.api.registered), 0, 'queue recovery must still gate new candidates')
+        self.assertEqual(self.api.config['interval_multiplier'], 1)
+        self.tick()
+        self.assertEqual(len(self.api.registered), 0)
+
+    def test_resource_resize_baseline_starts_after_dispatch_resumes(self):
+        self.baseline()
+        self.tick(memory=.96)
+        self.tick(memory=.96)
+        state = self.controller.state
+        state['resource_rebaseline'] = True
+        for _ in range(16):
+            self.tick()
+        self.assertFalse(self.api.config['automatic_paused'])
+        self.assertIsNone(state['baseline_started'])
+        self.assertIsNone(state['baseline_due'])
+        self.assertEqual(state['history'], [])
+        for _ in range(20):
+            self.tick()
+        self.assertIsNone(state['baseline_due'], 'need a full 20 minutes under live workload')
+        self.assertEqual(len(self.api.registered), 0)
+        self.tick()
+        self.assertEqual(state['baseline_due'], 0)
+
     def test_upstream_uniform_backoff_and_scale_rollback(self):
         self.baseline()
         self.tick()
