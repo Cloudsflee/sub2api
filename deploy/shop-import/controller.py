@@ -375,6 +375,7 @@ class Controller:
                  'platform_ids': [row['platform_id'] for row in rows], 'size': len(rows), 'ai': stage}
         self.state['batches'].append(batch)
         self.state['phase'] = 'importing'
+        self.state.pop('batch_reduced', None)  # The recovery size is now in use.
         self.event('batch_started', **batch)
         self.save()
 

@@ -142,6 +142,9 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(all(row['trust_level'] == 'neutral' for row in self.api.registered))
 
     def test_partial_failure_empty_and_observation_before_growth(self):
+        # A pressure episode before admission is already accounted for by the
+        # initial two-shop batch, rather than shrinking the next normal batch.
+        self.controller.state['batch_reduced'] = True
         self.baseline()
         self.tick()
         self.api.complete('ID0', count=0)
