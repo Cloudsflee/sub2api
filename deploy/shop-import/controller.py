@@ -195,10 +195,16 @@ def continuous(history, seconds, predicate, now):
 
 def growing(history, now):
     window = [item for item in history if item['time'] >= now - 10 * MINUTE - 10]
-    return (len(window) >= 11 and window[-1]['time'] - window[0]['time'] >= 10 * MINUTE
-            and all(0 < b['time'] - a['time'] <= 90 and b['existing_due'] >= a['existing_due']
-                    for a, b in zip(window, window[1:]))
-            and window[-1]['existing_due'] > window[0]['existing_due'])
+    if (len(window) < 11 or window[-1]['time'] - window[0]['time'] < 10 * MINUTE
+            or not all(0 < b['time'] - a['time'] <= 90 and b['existing_due'] >= a['existing_due']
+                       for a, b in zip(window, window[1:]))):
+        return False
+    # One arrival after ten empty minutes is not ten minutes of queue growth.
+    # Require an increase in each two-minute part of the full observation window.
+    checkpoints = [next(item['existing_due'] for item in reversed(window)
+                        if item['time'] <= now - minutes * MINUTE)
+                   for minutes in (10, 8, 6, 4, 2, 0)]
+    return all(b > a for a, b in zip(checkpoints, checkpoints[1:]))
 
 
 def resources_recovered(item):
@@ -460,8 +466,6 @@ class Controller:
             state['pressure_since'] = None
         state['history'].append(sample)
         state['history'] = [item for item in state['history'] if item['time'] >= now - 30 * MINUTE]
-        with (self.directory / 'samples.jsonl').open('a', encoding='utf-8') as stream:
-            stream.write(json.dumps({'host': host, 'scheduler': scheduler, 'pressure': sample}, ensure_ascii=False) + '\n')
         self.reconcile(self.api.shops(), scheduler, now)
         if state.get('baseline_started') is None:
             state['baseline_started'] = now
@@ -473,8 +477,11 @@ class Controller:
                 self.event('baseline_completed', existing_due_max=state['baseline_due'], samples=len(window))
         history = state['history']
         queue_growing = growing(history, now)
+        sample['queue_growing'] = queue_growing
         if queue_growing:
             sample['normal'] = sample['recovery'] = False
+        with (self.directory / 'samples.jsonl').open('a', encoding='utf-8') as stream:
+            stream.write(json.dumps({'host': host, 'scheduler': scheduler, 'pressure': sample}, ensure_ascii=False) + '\n')
         normal15 = continuous(history, 15 * MINUTE, lambda item: item['normal'], now) and not queue_growing
         recovery15 = continuous(history, 15 * MINUTE, lambda item: item['recovery'], now) and not queue_growing
         light = sample['upstream'] or queue_growing or continuous(history, 5 * MINUTE, lambda item: item['resource_light'], now)

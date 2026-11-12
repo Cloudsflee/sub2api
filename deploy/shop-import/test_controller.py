@@ -256,6 +256,23 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.state['batch_size'], 5)
         self.assertEqual(len(self.api.registered), 0)
 
+    def test_queue_growth_requires_growth_throughout_the_window(self):
+        def growing(counts, gaps=None):
+            history = [{'time': 100000 + n * 60, 'existing_due': count}
+                       for n, count in enumerate(counts)]
+            if gaps:
+                history = [row for n, row in enumerate(history) if n not in gaps]
+            return c.growing(history, history[-1]['time'])
+
+        self.assertFalse(growing([0] * 10 + [3]))
+        self.assertFalse(growing([5] * 10 + [8]))
+        self.assertFalse(growing([0, 3] + [3] * 9))
+        self.assertFalse(growing([0, 1, 2, 3, 4, 5, 4, 5, 6, 7, 8]))
+        self.assertTrue(growing(list(range(11))))
+        self.assertTrue(growing([0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5]))
+        self.assertFalse(growing(list(range(11)), gaps={5}))
+        self.assertFalse(growing(list(range(10))))
+
     def test_gaps_restart_and_full_final_cycle(self):
         self.baseline()
         state = self.controller.state
