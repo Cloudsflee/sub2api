@@ -274,6 +274,13 @@ type PublicAccountImportProductSyncHeartbeatRequest struct {
 }
 
 type publicAccountImportProductShopCache struct {
+	FirstStartedAt           string                                             `json:"first_started_at,omitempty"`
+	FirstSyncedAt            string                                             `json:"first_synced_at,omitempty"`
+	SuccessCount             int                                                `json:"success_count,omitempty"`
+	FailureCount             int                                                `json:"failure_count,omitempty"`
+	ConsecutiveFailures      int                                                `json:"consecutive_failures,omitempty"`
+	LastFailureKind          string                                             `json:"last_failure_kind,omitempty"`
+	LastFailureAt            string                                             `json:"last_failure_at,omitempty"`
 	ShopID                   string                                             `json:"shop_id"`
 	SchemaVersion            int                                                `json:"schema_version"`
 	SourceProductCount       int                                                `json:"source_product_count"`
@@ -468,7 +475,12 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 		return
 	}
 	limit = min(limit, availableSlots)
-	selected := selectPublicAccountImportProductSyncShops(shops, publicProductCache, now, limit)
+	control, err := loadPublicAccountImportSyncControlLocked()
+	if err != nil {
+		response.InternalError(c, "Failed to load sync control")
+		return
+	}
+	selected := selectPublicAccountImportProductSyncShopsWithControl(shops, publicProductCache, now, limit, control)
 	if len(selected) == 0 {
 		response.Success(c, PublicAccountImportProductSyncJobResponse{})
 		return
@@ -479,6 +491,15 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 	for _, shop := range selected {
 		token, tokenErr := publicAccountImportShopToken(shop.URL)
 		cached := publicProductCache.Shops[shop.ID]
+		if cached.SyncAttemptID != "" && !publicAccountImportProductSyncIsActive(cached, now) {
+			cached.FailureCount++
+			cached.ConsecutiveFailures++
+			cached.LastFailureKind = "lease_expired"
+			cached.LastFailureAt = now.Format(time.RFC3339Nano)
+		}
+		if cached.FirstStartedAt == "" {
+			cached.FirstStartedAt = now.Format(time.RFC3339Nano)
+		}
 		cached.ShopID = shop.ID
 		cached.LastAttempt = now.Format(time.RFC3339Nano)
 		if tokenErr != nil {
@@ -860,6 +881,11 @@ func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
 	cached.SourceProductCount = *req.SourceProductCount
 	cached.SellableProductCount = *req.SellableProductCount
 	cached.UnavailableProductCount = *req.UnavailableProductCount
+	cached.SuccessCount++
+	cached.ConsecutiveFailures = 0
+	if cached.FirstSyncedAt == "" {
+		cached.FirstSyncedAt = updatedAt
+	}
 	cached.Error = ""
 	cached.RetryNotBeforeAt = ""
 	cached.SyncStartedAt = ""
@@ -1096,6 +1122,10 @@ func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 	if req.Kind == "shop_closed" {
 		retryAfterSeconds = int(publicAccountImportProductFailureRetryMaxAge.Seconds())
 	}
+	cached.FailureCount++
+	cached.ConsecutiveFailures++
+	cached.LastFailureKind = publicAccountImportProductSyncError(req.Kind)
+	cached.LastFailureAt = now.Format(time.RFC3339Nano)
 	cached.Error = publicAccountImportProductSyncError(req.Error)
 	cached.RetryNotBeforeAt = ""
 	if retryAfterSeconds > 0 {
@@ -1642,6 +1672,10 @@ func selectPublicAccountImportProductSyncShop(shops []PublicAccountImportShop, s
 }
 
 func selectPublicAccountImportProductSyncShops(shops []PublicAccountImportShop, store publicAccountImportProductStore, now time.Time, limit int) []PublicAccountImportShop {
+	return selectPublicAccountImportProductSyncShopsWithControl(shops, store, now, limit, defaultPublicAccountImportSyncControl())
+}
+
+func selectPublicAccountImportProductSyncShopsWithControl(shops []PublicAccountImportShop, store publicAccountImportProductStore, now time.Time, limit int, control PublicAccountImportSyncControl) []PublicAccountImportShop {
 	if limit <= 0 {
 		return []PublicAccountImportShop{}
 	}
@@ -1663,21 +1697,17 @@ func selectPublicAccountImportProductSyncShops(shops []PublicAccountImportShop, 
 		if publicAccountImportProductSyncIsActive(cached, now) {
 			continue
 		}
-		if publicAccountImportProductFailureRetryAfter(cached, now) > 0 {
+		manual := publicAccountImportProductRefreshIsPending(cached, now)
+		_, quarantined := control.QuarantinedShops[shops[i].ID]
+		if !manual && (control.AutomaticPaused || quarantined) {
 			continue
 		}
-		manual := publicAccountImportProductRefreshIsPending(cached, now)
-		// A valid snapshot may be stale or expired before its next automatic sync.
-		if !manual && publicAccountImportProductSnapshotIsAuthoritative(cached, now) &&
-			publicAccountImportProductCacheIsFresh(cached, now, publicAccountImportProductRefreshAgeForShop(shops[i])) {
+		if !publicAccountImportProductSyncEligible(shops[i], cached, now, control.IntervalMultiplier, manual) {
 			continue
 		}
 		attempt := parsePublicAccountImportProductTimestamp(cached.LastAttempt)
 		if attempt.After(now.Add(time.Minute)) {
 			attempt = time.Time{}
-		}
-		if !attempt.IsZero() && now.Sub(attempt) < publicAccountImportProductRetryAgeForShop(shops[i]) {
-			continue
 		}
 		candidates = append(candidates, candidate{shop: shops[i], attempt: attempt, manual: manual})
 	}

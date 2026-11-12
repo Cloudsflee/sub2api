@@ -127,7 +127,7 @@ func (h *AccountHandler) SubmitPublicAccountImportShop(c *gin.Context) {
 		return
 	}
 	for _, shop := range shops {
-		if shop.URL == shopURL {
+		if publicAccountImportSameShop(shop.URL, shopURL) {
 			response.Success(c, PublicAccountImportShopSubmission{Shop: shop, Created: false})
 			return
 		}
@@ -354,6 +354,29 @@ func normalizePublicAccountImportShopURL(value string) (string, error) {
 func publicAccountImportShopID(shopURL string) string {
 	sum := sha256.Sum256([]byte(shopURL))
 	return hex.EncodeToString(sum[:12])
+}
+
+// Platform identity is independent of domain aliases, category and query.
+// Return the stored entry intact so names, trust levels and product IDs survive.
+func publicAccountImportSameShop(a, b string) bool {
+	if a == b {
+		return true
+	}
+	aToken, aErr := publicAccountImportShopIdentity(a)
+	bToken, bErr := publicAccountImportShopIdentity(b)
+	return aErr == nil && bErr == nil && aToken == bToken
+}
+
+func publicAccountImportShopIdentity(raw string) (string, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.User != nil || (!strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https")) {
+		return "", errors.New("invalid shop identity")
+	}
+	if port := parsed.Port(); port != "" && port != "80" && port != "443" {
+		return "", errors.New("invalid shop port")
+	}
+	parsed.Scheme = "https"
+	return publicAccountImportShopToken(parsed.String())
 }
 
 func publicAccountImportTimestamp() string {

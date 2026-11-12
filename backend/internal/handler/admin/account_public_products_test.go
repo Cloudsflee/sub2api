@@ -1290,6 +1290,8 @@ func newPublicProductTestRouter(t *testing.T, shops []PublicAccountImportShop, s
 	router := gin.New()
 	router.GET("/products", h.ListPublicAccountImportProducts)
 	router.GET("/products/sync-job", h.GetPublicAccountImportProductSyncJob)
+	router.GET("/products/sync-control", h.GetPublicAccountImportSyncControl)
+	router.PUT("/products/sync-control", h.PutPublicAccountImportSyncControl)
 	router.POST("/products/refresh", h.RequestPublicAccountImportProductRefresh)
 	router.POST("/products/refresh-one", h.RequestPublicAccountImportProductRefreshOne)
 	router.GET("/products/refresh-one/status", h.GetPublicAccountImportProductRefreshOneStatus)
