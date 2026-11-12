@@ -288,6 +288,45 @@ class ControllerTests(unittest.TestCase):
         self.tick(pressure=True)
         self.assertEqual(self.api.config['interval_multiplier'], 1)
 
+    def test_brief_lane_dip_does_not_reset_window_but_submission_needs_five(self):
+        original = self.api.control
+        lanes = 6
+
+        def control():
+            result = original()
+            result['worker']['available_lane_count'] = lanes
+            return result
+
+        with patch.object(self.api, 'control', side_effect=control):
+            for minute in range(21):
+                lanes = 4 if minute == 10 else 6
+                self.tick()
+            self.assertEqual(self.controller.state['phase'], 'importing')
+            lanes = 4
+            self.tick()
+            self.assertEqual(len(self.api.registered), 0)
+            lanes = 6
+            self.tick()
+            self.assertEqual(len(self.api.registered), 2)
+
+    def test_sustained_lane_loss_and_memory_still_require_recovery(self):
+        self.baseline()
+        history = copy.deepcopy(self.controller.state['history'])
+        now = history[-1]['time']
+        for row in history[7:13]:
+            row['lanes'] = 4
+        self.assertFalse(c.normal_window(history, now))
+        for minute in range(16):
+            row = copy.deepcopy(history[-1])
+            row.update(time=now + (minute + 1) * 60, lanes=6)
+            history.append(row)
+        self.assertTrue(c.normal_window(history, history[-1]['time']))
+        history[-8]['worker_memory'] = .91
+        self.assertFalse(c.normal_window(history, history[-1]['time']))
+        history[-8]['worker_memory'] = .89
+        self.assertTrue(c.normal_window(history, history[-1]['time']))
+        self.assertFalse(c.normal_window(history, history[-1]['time'], memory_limit=.88))
+
     def test_batch_observation_can_overlap_pressure_recovery(self):
         self.baseline()
         self.tick()

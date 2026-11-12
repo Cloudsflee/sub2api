@@ -220,6 +220,26 @@ def resources_recovered(item):
             and item['host_available'] >= .20 and (item['cpu'] is None or item['cpu'] <= .85))
 
 
+def normal_window(history, now, memory_limit=.90, include_queue=True):
+    """15-minute recovery, tolerating only operator-approved brief lane dips."""
+    anchors = [index for index, item in enumerate(history) if item['time'] <= now - 15 * MINUTE]
+    if not anchors or history[-1]['lanes'] < 5:
+        return False
+
+    def healthy(item):
+        return (not item['heavy'] and not item['upstream']
+                and item['worker_memory'] is not None and item['worker_memory'] < memory_limit
+                and item['host_available'] >= .20 and (item['cpu'] is None or item['cpu'] <= .85)
+                and (not include_queue or not (item['queue_pressure'] or item.get('queue_growing', False))))
+
+    if not continuous(history, 15 * MINUTE, healthy, now):
+        return False
+    # A sustained low-lane episode still needs a complete recovery window.
+    # Use preceding samples too, so an episode crossing the window is counted.
+    return not any(continuous(history[:index + 1], 5 * MINUTE, lambda row: row['lanes'] < 5, item['time'])
+                   for index, item in enumerate(history) if index >= anchors[-1])
+
+
 def pressure_sample(host, scheduler, state):
     now = timestamp(host['at'])
     previous = state['history'][-1] if state['history'] else None
@@ -497,8 +517,8 @@ class Controller:
             sample['normal'] = sample['recovery'] = False
         with (self.directory / 'samples.jsonl').open('a', encoding='utf-8') as stream:
             stream.write(json.dumps({'host': host, 'scheduler': scheduler, 'pressure': sample}, ensure_ascii=False) + '\n')
-        normal15 = continuous(history, 15 * MINUTE, lambda item: item['normal'], now) and not queue_growing
-        recovery15 = continuous(history, 15 * MINUTE, lambda item: item['recovery'], now) and not queue_growing
+        normal15 = normal_window(history, now)
+        recovery15 = normal_window(history, now, memory_limit=.88)
         light = sample['upstream'] or queue_growing or continuous(history, 5 * MINUTE, lambda item: item['resource_light'], now)
         if sample['heavy']:
             if not self.control['automatic_paused']:
@@ -510,7 +530,7 @@ class Controller:
             self.save()
             return
         if state.get('resource_hold'):
-            if not continuous(history, 15 * MINUTE, resources_recovered, now):
+            if not normal_window(history, now, memory_limit=.88, include_queue=False):
                 self.save()
                 return
             self.change(automatic_paused=False)
