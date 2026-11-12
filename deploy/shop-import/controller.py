@@ -31,7 +31,11 @@ TERMINAL = {'products', 'empty', 'no_sellable', 'closed', 'quarantined', 'pressu
 def timestamp(value):
     if not value:
         return 0.0
-    return dt.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+    # Go emits RFC3339Nano; Python 3.10 accepts only millisecond/microsecond
+    # fractions. Normalize without losing precision relevant to minute gates.
+    normalized = re.sub(r'\.(\d+)(?=Z$|[+-]\d{2}:\d{2}$)',
+                        lambda match: '.' + (match.group(1) + '000000')[:6], value)
+    return dt.datetime.fromisoformat(normalized.replace('Z', '+00:00')).timestamp()
 
 
 def iso(value):

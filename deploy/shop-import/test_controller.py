@@ -116,6 +116,16 @@ class ControllerTests(unittest.TestCase):
         raw = csv_bytes().decode('utf-8-sig').replace('已显示店铺', '页面明确提示不存在', 1).encode()
         self.assertEqual(c.candidates(raw, [])[1]['excluded'], 1)
 
+    def test_rfc3339_nano_from_go_is_compatible_with_python310(self):
+        base = c.timestamp('2026-11-12T06:22:36Z')
+        for fraction in ('1', '12', '123', '1234', '12345', '123456', '1234567', '12345678', '123456789'):
+            expected = base + int((fraction + '000000')[:6]) / 1000000
+            self.assertAlmostEqual(c.timestamp('2026-11-12T06:22:36.' + fraction + 'Z'), expected, places=5)
+            self.assertAlmostEqual(c.timestamp('2026-11-12T14:22:36.' + fraction + '+08:00'), expected, places=5)
+        self.assertEqual(c.timestamp(None), 0)
+        with self.assertRaises(ValueError):
+            c.timestamp('invalid')
+
     def test_preview_is_repeatable_and_refuses_changed_source(self):
         old = json.loads((self.path / 'state.json').read_text())
         with patch.object(c.API, 'shops', side_effect=AssertionError('no need to re-query')):
