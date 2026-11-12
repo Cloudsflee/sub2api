@@ -540,13 +540,17 @@ class Controller:
                        resource_light=sample['resource_light'], next_batch_size=state['batch_size'])
         if state.get('hold_since') and request_pressure:
             state['pressure_since'] = state.get('pressure_since') or now
-        elif not request_pressure:
+        elif continuous(history, 15 * MINUTE,
+                        lambda item: not (item['upstream'] or item['queue_pressure'] or item.get('queue_growing', False)), now):
+            # A brief quiet gap is not recovery from recurring upstream pressure.
+            # Clear this timer only after a full request/queue recovery window;
+            # resource-only holds must not keep an old request episode alive.
             state['pressure_since'] = None
-        if state.get('pressure_since') and now - state['pressure_since'] >= 20 * MINUTE:
+        if request_pressure and state.get('pressure_since') and now - state['pressure_since'] >= 20 * MINUTE:
             if state['multiplier'] < 4:
                 self.change(interval_multiplier=state['multiplier'] * 2)
                 state.update(pressure_since=now, validation_started=now)
-                self.event('uniform_interval_increased', evidence='upstream/queue pressure persisted 20 minutes without admissions')
+                self.event('uniform_interval_increased', evidence='upstream/queue pressure present after 20 minutes without admissions or a verified request/queue recovery window')
             else:
                 self.roll_back_scale(now)
             self.save()

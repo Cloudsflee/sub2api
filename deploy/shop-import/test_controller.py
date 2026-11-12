@@ -266,6 +266,28 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.state['batch_size'], 5)
         self.assertEqual(len(self.api.registered), 0)
 
+    def test_recurring_pressure_requires_verified_recovery_to_reset(self):
+        self.baseline()
+        for _ in range(10):
+            self.tick(pressure=True)
+        for _ in range(7):
+            self.tick()
+        self.assertEqual(self.api.config['interval_multiplier'], 1)
+        for _ in range(4):
+            self.tick(pressure=True)
+        self.assertEqual(self.api.config['interval_multiplier'], 2)
+        self.assertEqual(len(self.api.registered), 0)
+
+    def test_resolved_request_pressure_does_not_inherit_resource_hold(self):
+        self.baseline()
+        self.tick(pressure=True)
+        for _ in range(25):
+            self.tick(memory=.91)
+        self.assertIsNone(self.controller.state['pressure_since'])
+        self.assertEqual(self.api.config['interval_multiplier'], 1)
+        self.tick(pressure=True)
+        self.assertEqual(self.api.config['interval_multiplier'], 1)
+
     def test_batch_observation_can_overlap_pressure_recovery(self):
         self.baseline()
         self.tick()
