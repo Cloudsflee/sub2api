@@ -243,6 +243,15 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.api.config['interval_multiplier'], 4)
         self.assertEqual(state['failed_faster_multiplier'], 2)
 
+    def test_final_cycle_tolerates_only_subthreshold_resource_fluctuation(self):
+        self.baseline()
+        state = self.controller.state
+        state.update(phase='final_observation', validation_started=self.now, boundary=True)
+        for index in range(61):
+            self.tick(memory=.91 if index == 5 else .5)
+        self.assertTrue(state['finished'])
+        self.assertEqual(state['verified_multiplier'], 1)
+
     def test_continuous_rejects_missing_samples_and_short_windows(self):
         rows = [{'time': index * 60, 'ok': True} for index in range(16)]
         self.assertTrue(c.continuous(rows, 900, lambda item: item['ok'], 900))

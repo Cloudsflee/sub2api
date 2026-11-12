@@ -541,8 +541,10 @@ class Controller:
                     state['batch_size'] = 5 if state['batch_size'] == 2 else 10
                 self.start_batch(now)
         elif phase == 'final_observation':
-            if not sample['normal'] or queue_growing:
-                state['validation_started'] = now
+            # Observe a complete cycle, then require a normal 15-minute tail.
+            # Sustained light/heavy pressure resets this timer on recovery above;
+            # a single sub-threshold resource fluctuation must not restart a
+            # whole multi-hour cycle. Missing samples/restarts still reset it.
             cycle = state['multiplier'] * 60 * MINUTE
             if now - state.get('validation_started', now) >= cycle and normal15:
                 state['verified_multiplier'] = state['multiplier']
