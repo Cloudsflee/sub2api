@@ -365,8 +365,11 @@ class Controller:
     def start_batch(self, now):
         pending = [row for row in self.state['shops'] if row['status'] == 'unsubmitted']
         if not pending or self.state.get('boundary'):
-            self.state.update(phase='final_observation', validation_started=now)
-            self.event('final_cycle_started', multiplier=self.state['multiplier'])
+            batch = self.current_batch()
+            started = timestamp(batch['finished_at']) if batch and batch.get('finished_at') else now
+            started = max(started, self.state.get('validation_started') or 0)
+            self.state.update(phase='final_observation', validation_started=started)
+            self.event('final_cycle_started', multiplier=self.state['multiplier'], observed_since=iso(started))
             self.save()
             return
         stage = pending[0]['ai']

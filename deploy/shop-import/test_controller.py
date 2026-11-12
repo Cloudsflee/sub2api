@@ -291,6 +291,29 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(state['finished'])
         self.assertEqual(state['verified_multiplier'], 1)
 
+    def test_last_batch_observation_counts_toward_full_final_cycle(self):
+        small = self.path / 'small'
+        small.mkdir()
+        (small / 'input.csv').write_bytes(csv_bytes(2))
+        with patch.object(c.API, 'shops', return_value=[]):
+            c.preview(small / 'input.csv', self.api.target, 'test-environment', small, 2)
+        self.controller = c.Controller(small, self.api, owner='test-owner')
+        self.baseline()
+        self.tick()
+        self.api.complete('ID0')
+        self.api.complete('ID1')
+        self.tick()
+        state = self.controller.state
+        finished = c.timestamp(state['batches'][-1]['finished_at'])
+        for _ in range(15):
+            self.tick()
+        self.assertEqual(state['phase'], 'final_observation')
+        self.assertEqual(state['validation_started'], finished)
+        for _ in range(45):
+            self.tick()
+        self.assertTrue(state['finished'])
+        self.assertEqual(state['verified_multiplier'], 1)
+
     def test_continuous_rejects_missing_samples_and_short_windows(self):
         rows = [{'time': index * 60, 'ok': True} for index in range(16)]
         self.assertTrue(c.continuous(rows, 900, lambda item: item['ok'], 900))
