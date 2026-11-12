@@ -173,6 +173,23 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.controller.state['resource_hold'])
         self.assertEqual(self.controller.state['batch_size'], 2)
 
+    def test_isolated_inflight_shops_still_occupy_first_sync_capacity(self):
+        self.baseline()
+        self.tick()
+        for stat in self.api.stats.values():
+            stat.update(active=True, consecutive_failures=2, failure_count=2)
+        self.tick()
+        self.assertEqual(len(self.api.config['quarantined_shops']), 2)
+        self.assertEqual(self.controller.state['phase'], 'importing')
+        for _ in range(16):
+            self.tick()
+        self.assertEqual(len(self.api.registered), 2)
+        self.assertEqual(self.controller.state['phase'], 'importing')
+        for stat in self.api.stats.values():
+            stat['active'] = False
+        self.tick()
+        self.assertEqual(self.controller.state['phase'], 'batch_observation')
+
     def test_upstream_uniform_backoff_and_scale_rollback(self):
         self.baseline()
         self.tick()

@@ -326,6 +326,7 @@ class Controller:
             if not stat:
                 continue
             row.update(last_failure_kind=stat.get('last_failure_kind'),
+                       active=stat.get('active', False),
                        consecutive_failures=stat['consecutive_failures'], failure_count=stat['failure_count'],
                        last_error=stat.get('error'), last_attempt=stat.get('last_attempt'),
                        retry_not_before_at=stat.get('retry_not_before_at'))
@@ -370,7 +371,8 @@ class Controller:
 
     def submit(self, now):
         # Count all unresolved new shops, including any previous partial batch.
-        unresolved = sum(bool(row.get('shop_id')) and row['status'] not in TERMINAL for row in self.state['shops'])
+        unresolved = sum(bool(row.get('shop_id')) and not row.get('first_synced_at') and
+                         (row['status'] not in TERMINAL or row.get('active', False)) for row in self.state['shops'])
         batch = self.current_batch()
         for row in self.batch_rows(batch):
             if unresolved >= 2:
@@ -525,7 +527,8 @@ class Controller:
             self.start_batch(now)
         elif phase == 'importing':
             batch = self.current_batch()
-            if all(row['status'] in TERMINAL for row in self.batch_rows(batch)):
+            if all(row['status'] in TERMINAL and not (row.get('active') and not row.get('first_synced_at'))
+                   for row in self.batch_rows(batch)):
                 batch['finished_at'] = iso(now)
                 batch['elapsed_seconds'] = now - timestamp(batch['started_at'])
                 state['phase'] = 'batch_observation'
