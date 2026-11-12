@@ -1,0 +1,23 @@
+[Unit]
+Description=Controlled shop import (%i)
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+ConditionPathExists=/opt/sub2api-shop-import-%i/run/state.json
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/sub2api-shop-import-%i
+ExecStart=/usr/bin/python3 -u /opt/sub2api-shop-import-%i/controller.py run --state /opt/sub2api-shop-import-%i/run
+Restart=on-failure
+# The previous target lease expires within 180 seconds after an abrupt exit.
+RestartSec=190
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+StandardOutput=append:/opt/sub2api-shop-import-%i/controller.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

@@ -93,4 +93,26 @@ PUT 支持部分配置替换，必须带 GET 返回的 `expected_revision`：
 报告按登记、完整首采、有商品、空目录、关闭、异常隔离、压力隔离、未提交分别统计，保留批次耗时与事件。
 这些运行产物不提交仓库。发布、备份和回退复用 [本项目发布约定](../autodeploy/README_CN.md)。
 
+## 后台自主运行
+
+`sub2api-shop-import@.service` 按实例名使用 `/opt/sub2api-shop-import-<实例>/` 中的脚本与
+`run/` 状态目录。例如本轮实例为 `20261112`。切换到服务前先停止原控制器，并释放其自身租约，
+或等待最多 180 秒租约到期；本地锁和目标租约继续阻止并行导入。
+
+```bash
+install -m 644 sub2api-shop-import@.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now sub2api-shop-import@20261112.service
+systemctl status sub2api-shop-import@20261112.service
+cat /opt/sub2api-shop-import-20261112/run/report.json
+```
+
+服务随服务器启动，异常退出后等待 190 秒再从原状态续跑。完成全部候选或验证规模边界后正常退出，
+不会自动开启新一轮接入。报告每分钟更新，事件追加到 `controller.log`；暂停、隔离、统一降频和
+恢复仍由控制器按上述规则执行，无需人工逐批操作。自动部署定时器继续保持停止。
+
+临时停止导入控制器使用 `systemctl stop sub2api-shop-import@20261112.service`；再次启动同一
+服务即可续跑。停止控制器不修改已有的派单配置；若要暂停自动采集，使用受认证保护的控制接口。
+完成后需要继续已验证边界以外的候选，先保持服务停止，再使用前述 `--continue-after-boundary` 命令。
+
 验证：`python3 -m unittest -v test_controller`；Go 运行受影响的 handler、routes 测试及一次 vet。
