@@ -471,6 +471,17 @@ class Controller:
         state['history'].append(sample)
         state['history'] = [item for item in state['history'] if item['time'] >= now - 30 * MINUTE]
         self.reconcile(self.api.shops(), scheduler, now)
+        # Recording completed work is independent of admission pressure. Its
+        # observation window can overlap recovery; all pressure gates below
+        # still apply before a following batch can start.
+        if state['phase'] == 'importing':
+            batch = self.current_batch()
+            if all(row['status'] in TERMINAL and not (row.get('active') and not row.get('first_synced_at'))
+                   for row in self.batch_rows(batch)):
+                batch['finished_at'] = iso(now)
+                batch['elapsed_seconds'] = now - timestamp(batch['started_at'])
+                state['phase'] = 'batch_observation'
+                self.event('batch_completed', number=batch['number'], elapsed_seconds=batch['elapsed_seconds'])
         if state.get('baseline_started') is None:
             state['baseline_started'] = now
         if state['baseline_due'] is None and now - state['baseline_started'] >= 20 * MINUTE:
@@ -554,14 +565,7 @@ class Controller:
         if phase == 'baseline' and normal15:
             self.start_batch(now)
         elif phase == 'importing':
-            batch = self.current_batch()
-            if all(row['status'] in TERMINAL and not (row.get('active') and not row.get('first_synced_at'))
-                   for row in self.batch_rows(batch)):
-                batch['finished_at'] = iso(now)
-                batch['elapsed_seconds'] = now - timestamp(batch['started_at'])
-                state['phase'] = 'batch_observation'
-                self.event('batch_completed', number=batch['number'], elapsed_seconds=batch['elapsed_seconds'])
-            elif sample['normal']:
+            if sample['normal']:
                 self.submit(now)
         elif phase == 'batch_observation':
             if now - timestamp(self.current_batch()['finished_at']) >= 15 * MINUTE and normal15:

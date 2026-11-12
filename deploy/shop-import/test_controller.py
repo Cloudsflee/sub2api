@@ -266,6 +266,25 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.state['batch_size'], 5)
         self.assertEqual(len(self.api.registered), 0)
 
+    def test_batch_observation_can_overlap_pressure_recovery(self):
+        self.baseline()
+        self.tick()
+        self.api.complete('ID0')
+        self.api.complete('ID1')
+        completed = self.now
+        self.tick(pressure=True)
+        state = self.controller.state
+        self.assertEqual(state['phase'], 'batch_observation')
+        self.assertEqual(c.timestamp(state['batches'][0]['finished_at']), completed)
+        for _ in range(15):
+            self.tick()
+        self.assertEqual(len(state['batches']), 1)
+        self.assertEqual(len(self.api.registered), 2)
+        self.tick()
+        self.assertEqual(len(state['batches']), 2)
+        self.assertEqual(state['batches'][1]['size'], 2)
+        self.assertEqual(len(self.api.registered), 2)
+
     def test_queue_growth_requires_growth_throughout_the_window(self):
         def growing(counts, gaps=None):
             history = [{'time': 100000 + n * 60, 'existing_due': count}
