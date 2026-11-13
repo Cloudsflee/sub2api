@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -71,7 +72,8 @@ func TestPublicShopScheduleAnonymousReadOnlyAndETag(t *testing.T) {
 	require.NoError(t, savePublicProductCacheLocked())
 	before, err := os.ReadFile(publicAccountImportProductsPath())
 	require.NoError(t, err)
-	first := performPublicProductRequest(t, router, http.MethodGet, "/products", nil)
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/products", nil))
 	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
 	result := decodePublicProductResponse[PublicAccountImportProductsResponse](t, first.Body.Bytes())
 	require.Equal(t, "1-10", result.ShopSyncStatuses[0].Schedule.Tier)
@@ -81,7 +83,8 @@ func TestPublicShopScheduleAnonymousReadOnlyAndETag(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, before, after, "reading the public schedule must not persist or claim work")
 	publicProductCache.Adaptive.Multiplier = 3.6
-	second := performPublicProductRequest(t, router, http.MethodGet, "/products", nil)
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/products", nil))
 	require.Equal(t, 12960, decodePublicProductResponse[PublicAccountImportProductsResponse](t, second.Body.Bytes()).ShopSyncStatuses[0].Schedule.QuoteSeconds)
 	require.NotEqual(t, first.Header().Get("ETag"), second.Header().Get("ETag"))
 }
