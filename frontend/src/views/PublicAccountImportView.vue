@@ -516,6 +516,10 @@
                 <span class="block break-all text-xs text-gray-500 dark:text-dark-400">
                   {{ shop.url }}
                 </span>
+                <PublicShopSchedule
+                  v-if="shopProductSyncStatuses[shop.id]?.schedule"
+                  :schedule="shopProductSyncStatuses[shop.id]!.schedule!"
+                />
               </span>
               <Icon name="externalLink" size="sm" class="shrink-0 text-gray-400" />
             </a>
@@ -823,6 +827,7 @@
 </template>
 
 <script setup lang="ts">
+import PublicShopSchedule from '@/components/account/PublicShopSchedule.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
@@ -1425,7 +1430,8 @@ function mergeShopProductSyncStatuses(statuses: PublicAccountImportProductSyncSt
   const next = replace ? {} : { ...shopProductSyncStatuses.value }
   for (const status of statuses) {
     if (!status.shop_id) continue
-    next[status.shop_id] = trackPublicShopProductSyncStatus(status, now)
+    const schedule = status.schedule ?? (!replace ? next[status.shop_id]?.schedule : undefined)
+    next[status.shop_id] = trackPublicShopProductSyncStatus({ ...status, ...(schedule ? { schedule } : {}) }, now)
   }
   shopProductSyncStatuses.value = next
   shopProductSyncClock.value = now

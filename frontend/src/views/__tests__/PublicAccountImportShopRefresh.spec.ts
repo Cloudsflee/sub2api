@@ -371,6 +371,51 @@ describe('PublicAccountImportView per-shop product refresh', () => {
 		vi.restoreAllMocks()
   })
 
+  it('shows confirmed tiers and pending classification without inferring from visible products', async () => {
+    const one = { ...status('one'), schedule: {
+      tier: '11-50' as const, state: 'active' as const, effective_count: 51,
+      catalog_seconds: 6480, quote_seconds: 25920, tier_pending: true,
+    } }
+    const two = { ...status('two'), schedule: {
+      tier: 'pending' as const, state: 'pending' as const, effective_count: null,
+      catalog_seconds: 0, quote_seconds: 0, tier_pending: false,
+    } }
+    getProducts.mockResolvedValue(catalog([one, two]))
+    const wrapper = mountView()
+    await flushPromises()
+    await openShopsTab(wrapper)
+    const row = wrapper.get('[data-shop-id="one"]')
+    expect(row.get('[data-shop-tier]').attributes('data-shop-tier')).toBe('11-50')
+    expect(row.text()).toContain('publicAccountImport.shopEffectiveProducts 51')
+    expect(row.text()).toContain('publicAccountImport.shopTierConfirming')
+    expect(row.text()).toContain('publicAccountImport.shopIntervalHours 7.2')
+    expect(wrapper.get('[data-shop-id="two"]').text()).toContain('publicAccountImport.shopTier_pending')
+    expect(wrapper.get('[data-shop-id="two"]').text()).not.toContain('publicAccountImport.shopEffectiveProducts')
+    expect(wrapper.get('[data-shop-id="other"]').find('[data-shop-schedule]').exists()).toBe(false)
+    requestRefresh.mockResolvedValue({ ...status('one', 'queued'), accepted: true })
+    await row.get('button[data-shop-product-refresh]').trigger('click')
+    await flushPromises()
+    expect(row.get('[data-shop-tier]').attributes('data-shop-tier')).toBe('11-50')
+    wrapper.unmount()
+  })
+
+  it('shows zero sellable items without quote cycles and retains the tier during pressure pauses', async () => {
+    getProducts.mockResolvedValue(catalog([
+      { ...status('one'), schedule: { tier: 'unavailable', state: 'dormant', effective_count: 0, catalog_seconds: 28800, quote_seconds: 0, tier_pending: false } },
+      { ...status('two'), schedule: { tier: '201-1000', state: 'pressure_paused', effective_count: 800, catalog_seconds: 0, quote_seconds: 0, tier_pending: false } },
+    ]))
+    const wrapper = mountView()
+    await flushPromises()
+    await openShopsTab(wrapper)
+    expect(wrapper.get('[data-shop-id="one"]').text()).toContain('publicAccountImport.shopEffectiveProducts 0')
+    expect(wrapper.get('[data-shop-id="one"]').text()).toContain('publicAccountImport.shopNoAutomaticQuotes')
+    const paused = wrapper.get('[data-shop-id="two"]')
+    expect(paused.get('[data-shop-tier]').attributes('data-shop-tier')).toBe('201-1000')
+    expect(paused.text()).toContain('publicAccountImport.shopSchedule_pressure_paused')
+    expect(paused.text()).not.toContain('publicAccountImport.shopQuotePeriod')
+    wrapper.unmount()
+  })
+
   it('returns anonymous administrator sign-in to the account import page', async () => {
     const wrapper = mountView()
     await flushPromises()

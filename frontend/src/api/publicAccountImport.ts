@@ -182,7 +182,17 @@ export interface PublicAccountImportProductSyncWorkerStatus {
   lanes: PublicAccountImportProductSyncWorkerLaneStatus[]
 }
 
+export interface PublicAccountImportShopSchedule {
+  tier: 'pending' | '1-10' | '11-50' | '51-200' | '201-1000' | 'empty' | 'unavailable' | 'closed'
+  state: 'pending' | 'active' | 'dormant' | 'exception' | 'pressure_paused' | 'paused' | 'isolated'
+  effective_count: number | null
+  catalog_seconds: number
+  quote_seconds: number
+  tier_pending: boolean
+}
+
 export interface PublicAccountImportProductSyncStatus {
+  schedule?: PublicAccountImportShopSchedule
   shop_id: string
   state: PublicAccountImportProductSyncState
   updated_at: string
@@ -400,7 +410,9 @@ function normalizePublicAccountImportProductSyncStatus(
 ): PublicAccountImportProductSyncStatus {
   const state = value?.state
 	const snapshotState = value?.snapshot_state
+  const schedule = normalizePublicAccountImportShopSchedule(value?.schedule)
   return {
+    ...(schedule ? { schedule } : {}),
     shop_id: typeof value?.shop_id === 'string' ? value.shop_id : fallbackShopId,
     state: state === 'queued' || state === 'refreshing' || state === 'failed' ? state : 'idle',
     updated_at: typeof value?.updated_at === 'string' ? value.updated_at : '',
@@ -412,6 +424,21 @@ function normalizePublicAccountImportProductSyncStatus(
 			: typeof value?.updated_at === 'string' ? value.updated_at : '',
 		snapshot_expires_at: typeof value?.snapshot_expires_at === 'string' ? value.snapshot_expires_at : '',
     retry_after_seconds: normalizeNonNegativeInteger(value?.retry_after_seconds),
+  }
+}
+
+function normalizePublicAccountImportShopSchedule(value: PublicAccountImportShopSchedule | null | undefined): PublicAccountImportShopSchedule | undefined {
+  if (!value) return undefined
+  const tiers = ['pending', '1-10', '11-50', '51-200', '201-1000', 'empty', 'unavailable', 'closed']
+  const states = ['pending', 'active', 'dormant', 'exception', 'pressure_paused', 'paused', 'isolated']
+  return {
+    tier: tiers.includes(value.tier) ? value.tier : 'pending',
+    state: states.includes(value.state) ? value.state : 'pending',
+    effective_count: typeof value.effective_count === 'number' && Number.isInteger(value.effective_count) && value.effective_count >= 0
+      ? value.effective_count : null,
+    catalog_seconds: normalizeNonNegativeInteger(value.catalog_seconds),
+    quote_seconds: normalizeNonNegativeInteger(value.quote_seconds),
+    tier_pending: value.tier_pending === true,
   }
 }
 

@@ -112,13 +112,14 @@ type PublicAccountImportProductsResponse struct {
 }
 
 type PublicAccountImportProductSyncStatus struct {
-	ShopID            string `json:"shop_id"`
-	State             string `json:"state"`
-	UpdatedAt         string `json:"updated_at"`
-	SnapshotState     string `json:"snapshot_state"`
-	SnapshotUpdatedAt string `json:"snapshot_updated_at"`
-	SnapshotExpiresAt string `json:"snapshot_expires_at"`
-	RetryAfterSeconds int    `json:"retry_after_seconds"`
+	Schedule          *PublicAccountImportShopSchedule `json:"schedule,omitempty"`
+	ShopID            string                           `json:"shop_id"`
+	State             string                           `json:"state"`
+	UpdatedAt         string                           `json:"updated_at"`
+	SnapshotState     string                           `json:"snapshot_state"`
+	SnapshotUpdatedAt string                           `json:"snapshot_updated_at"`
+	SnapshotExpiresAt string                           `json:"snapshot_expires_at"`
+	RetryAfterSeconds int                              `json:"retry_after_seconds"`
 }
 
 type PublicAccountImportProductSyncWorkerLaneStatus struct {
@@ -1927,9 +1928,17 @@ func publicAccountImportProductRefreshStatusForShops(shops []PublicAccountImport
 }
 
 func publicAccountImportProductSyncStatuses(shops []PublicAccountImportShop, store publicAccountImportProductStore, now time.Time) []PublicAccountImportProductSyncStatus {
+	publicProductCacheMu.Lock()
+	control, controlErr := loadPublicAccountImportSyncControlLocked()
+	publicProductCacheMu.Unlock()
 	statuses := make([]PublicAccountImportProductSyncStatus, 0, len(shops))
 	for _, shop := range shops {
-		statuses = append(statuses, publicAccountImportProductSyncStatusForShop(shop, store.Shops[shop.ID], now))
+		cached := store.Shops[shop.ID]
+		status := publicAccountImportProductSyncStatusForShop(shop, cached, now)
+		if controlErr == nil {
+			status.Schedule = publicShopSchedule(shop.ID, cached.Adaptive, store.Adaptive, control)
+		}
+		statuses = append(statuses, status)
 	}
 	return statuses
 }

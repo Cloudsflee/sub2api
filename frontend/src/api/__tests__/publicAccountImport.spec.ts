@@ -125,6 +125,20 @@ describe('public account import product API', () => {
     ])
   })
 
+  it('preserves public schedule counts, pending classification and adjusted periods', async () => {
+    get.mockResolvedValue({ data: { products: [], shop_sync_statuses: [
+      { shop_id: 'empty', schedule: { tier: 'empty', state: 'dormant', effective_count: 0, catalog_seconds: 86400, quote_seconds: 0, tier_pending: false } },
+      { shop_id: 'pending', schedule: { tier: 'pending', state: 'pending', effective_count: null, catalog_seconds: 0, quote_seconds: 0 } },
+      { shop_id: 'sized', schedule: { tier: '11-50', state: 'active', effective_count: 51, catalog_seconds: 6480, quote_seconds: 25920, tier_pending: true } },
+      { shop_id: 'legacy' },
+    ] } })
+    const rows = (await getPublicAccountImportProducts()).shop_sync_statuses
+    expect(rows[0]?.schedule?.effective_count).toBe(0)
+    expect(rows[1]?.schedule?.effective_count).toBeNull()
+    expect(rows[2]?.schedule).toMatchObject({ tier: '11-50', effective_count: 51, quote_seconds: 25920, tier_pending: true })
+    expect(rows[3]).not.toHaveProperty('schedule')
+  })
+
   it('normalizes six public product update lane statuses and keeps their reasons', async () => {
     get.mockResolvedValue({
       data: {
