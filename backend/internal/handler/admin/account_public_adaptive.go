@@ -118,6 +118,7 @@ type productResourceObservation struct {
 }
 
 type productAdaptiveState struct {
+	QueueScopeSince        time.Time                    `json:"queue_scope_since"`
 	AdmissionCapacityLimit float64                      `json:"admission_capacity_limit"`
 	ShadowTasks            uint64                       `json:"shadow_tasks"`
 	ShadowRequests         float64                      `json:"shadow_requests"`
@@ -266,9 +267,10 @@ func adaptiveQuoteLimit(a *productAdaptiveShop) int {
 	return min(adaptiveBatchSize, max(1, int(30/seconds)-1))
 }
 
-func adaptiveCostHistory(store publicAccountImportProductStore) map[string]productCost {
+func adaptiveCostHistory(store publicAccountImportProductStore, shops []PublicAccountImportShop) map[string]productCost {
 	h := map[string]productCost{}
-	for _, c := range store.Shops {
+	for _, shop := range shops {
+		c := store.Shops[shop.ID]
 		if a := c.Adaptive; a != nil {
 			for kind, cost := range map[string]productCost{"catalog": a.CatalogStream.Cost, "quote_batch": a.QuoteStream.Cost} {
 				key := a.Tier + ":" + kind

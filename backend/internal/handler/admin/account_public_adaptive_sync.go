@@ -437,6 +437,7 @@ func (h *AccountHandler) SubmitPublicAccountImportResources(c *gin.Context) {
 	if next.Adaptive == nil {
 		next.Adaptive = &productAdaptiveState{Multiplier: 4, BatchLimit: 2}
 	}
+	shops = adaptiveReconcileShopScope(&next, shops, now)
 	s := next.Adaptive
 	if len(s.History) > 0 {
 		last := s.History[len(s.History)-1]

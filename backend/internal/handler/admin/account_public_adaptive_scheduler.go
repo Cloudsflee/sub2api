@@ -111,6 +111,7 @@ func adaptiveAdvance(store *publicAccountImportProductStore, shops []PublicAccou
 	if store.Adaptive == nil {
 		store.Adaptive = &productAdaptiveState{Multiplier: 4, BatchLimit: 2}
 	}
+	shops = adaptiveReconcileShopScope(store, shops, now)
 	s := store.Adaptive
 	s.AdmissionCapacityLimit = adaptiveAdmissionCapacityLimit
 	if s.Mode != control.Mode {
@@ -128,13 +129,14 @@ func adaptiveAdvance(store *publicAccountImportProductStore, shops []PublicAccou
 		s.LastTick = now
 		if control.Mode == "adaptive" {
 			s.VirtualTime = 0
-			for id, c := range store.Shops {
+			for _, shop := range shops {
+				c := store.Shops[shop.ID]
 				if c.Adaptive != nil && c.Adaptive.Generation == 0 {
 					c.Adaptive.CatalogStream.Next = time.Time{}
 					c.Adaptive.QuoteStream.Next = time.Time{}
 					c.Adaptive.CatalogStream.Finish = 0
 					c.Adaptive.QuoteStream.Finish = 0
-					store.Shops[id] = c
+					store.Shops[shop.ID] = c
 				}
 			}
 		}
@@ -181,7 +183,7 @@ func adaptiveAdvance(store *publicAccountImportProductStore, shops []PublicAccou
 		lanes = float64(w.AvailableLaneCount)
 	}
 	s.LaneBudget = lanes * .8
-	history := adaptiveCostHistory(*store)
+	history := adaptiveCostHistory(*store, shops)
 	requests, occupancy := 0.0, 0.0
 	quoteOccupancy := 0.0
 	for _, shop := range shops {
@@ -209,7 +211,7 @@ func adaptiveAdvance(store *publicAccountImportProductStore, shops []PublicAccou
 	stableSample := false
 	if len(s.History) > 0 {
 		v := s.History[len(s.History)-1]
-		stableSample = now.Sub(v.At) <= 90*time.Second && !v.Pressure && v.WorkerMemory < .88 && v.HostAvailable >= .2 && v.CPU <= .85 && v.OldestDueSeconds < 120 && w.AvailableLaneCount >= 5
+		stableSample = !v.At.Before(s.QueueScopeSince) && now.Sub(v.At) <= 90*time.Second && !v.Pressure && v.WorkerMemory < .88 && v.HostAvailable >= .2 && v.CPU <= .85 && v.OldestDueSeconds < 120 && w.AvailableLaneCount >= 5
 	}
 	if target > old {
 		s.Multiplier = target
@@ -322,10 +324,15 @@ func adaptiveAdvance(store *publicAccountImportProductStore, shops []PublicAccou
 	if recovery && w.AvailableLaneCount >= 5 && heavy == "" {
 		s.AutomaticHold = ""
 	}
-	growing := adaptiveGrowing(s.History, now)
+	queueHistory := s.History
+	for len(queueHistory) > 0 && queueHistory[0].At.Before(s.QueueScopeSince) {
+		queueHistory = queueHistory[1:]
+	}
+	growing := adaptiveGrowing(queueHistory, now)
+	queueRecovered := adaptiveHistoryWindow(queueHistory, 900, now, func(v productResourceObservation) bool { return !v.Pressure && v.OldestDueSeconds < 120 })
 	cpuHigh := adaptiveHistoryWindow(s.History, 300, now, func(v productResourceObservation) bool { return v.CPU > .85 })
 	light := upstream || v.Pressure || w.AvailableLaneCount < 5 || v.WorkerMemory >= .9 || cpuHigh || growing
-	requestPressure := upstream || v.Pressure || growing || (v.Due > 0 && v.OldestDueSeconds > 120)
+	requestPressure := upstream || v.Pressure || growing || (!v.At.Before(s.QueueScopeSince) && v.Due > 0 && v.OldestDueSeconds > 120)
 	if s.AutomaticHold != "" || requestPressure || v.WorkerMemory >= .9 || cpuHigh {
 		s.ValidatedSince = now
 	}
@@ -334,13 +341,13 @@ func adaptiveAdvance(store *publicAccountImportProductStore, shops []PublicAccou
 			s.PressureSince = now
 		}
 		s.ValidatedSince = now
-	} else if adaptiveHistoryWindow(s.History, 900, now, func(v productResourceObservation) bool { return !v.Pressure && v.OldestDueSeconds < 120 }) {
+	} else if queueRecovered {
 		s.PressureSince = time.Time{}
 	}
 	if light || s.AutomaticHold != "" {
 		s.AdmissionHold = "pressure recovery requires 15 stable minutes"
 		s.RecoverySince = time.Time{}
-	} else if recovery && v.OldestDueSeconds < 120 {
+	} else if recovery && queueRecovered {
 		s.AdmissionHold = ""
 	}
 	if s.RequiredMultiplier > adaptiveAdmissionCapacityLimit {
@@ -411,9 +418,11 @@ func adaptiveClaimLocked(c *gin.Context, shops []PublicAccountImportShop, contro
 }
 
 func adaptiveDispatch(store *publicAccountImportProductStore, shops []PublicAccountImportShop, control PublicAccountImportSyncControl, now time.Time) []PublicAccountImportProductSyncJob {
+	shops = supportedPublicAccountImportProductShops(shops)
 	s := store.Adaptive
 	active, quotes, first := 0, 0, 0
-	for _, cached := range (*store).Shops {
+	for _, shop := range shops {
+		cached := store.Shops[shop.ID]
 		if publicAccountImportProductSyncIsActive(cached, now) {
 			active++
 			if a := cached.Adaptive; a != nil && a.Lease != nil {
@@ -441,7 +450,7 @@ func adaptiveDispatch(store *publicAccountImportProductStore, shops []PublicAcco
 		indices                []int
 	}
 	var chosen *candidate
-	history := adaptiveCostHistory((*store))
+	history := adaptiveCostHistory((*store), shops)
 	if active < publicAccountImportProductMaxSyncJobs {
 		for _, shop := range shops {
 			cached := (*store).Shops[shop.ID]
@@ -564,6 +573,11 @@ func adaptiveDispatch(store *publicAccountImportProductStore, shops []PublicAcco
 // Admission is decided by the backend for every submit, including importers.
 // Call before taking the shop-file lock: handlers never invert the lock order.
 func adaptiveAdmission() (int, string, error) {
+	shops, err := snapshotPublicAccountImportShops()
+	if err != nil {
+		return 0, "", err
+	}
+	shops = supportedPublicAccountImportProductShops(shops)
 	publicProductCacheMu.Lock()
 	defer publicProductCacheMu.Unlock()
 	control, err := loadPublicAccountImportSyncControlLocked()
@@ -585,7 +599,8 @@ func adaptiveAdmission() (int, string, error) {
 	if control.AutomaticPaused || s.AutomaticHold != "" || s.AdmissionHold != "" || adaptiveUpstream(w, now) || w.AvailableLaneCount < 5 {
 		return 0, "new admission frozen by capacity protection", nil
 	}
-	for _, c := range publicProductCache.Shops {
+	for _, shop := range shops {
+		c := publicProductCache.Shops[shop.ID]
 		if c.Adaptive != nil && c.Adaptive.PauseReason != "" {
 			return 0, "restore pressure-paused shops first", nil
 		}

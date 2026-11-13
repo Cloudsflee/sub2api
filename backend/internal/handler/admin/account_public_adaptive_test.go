@@ -319,7 +319,7 @@ func TestPublicAdaptiveCapacityBoundaryAndFailureIsolation(t *testing.T) {
 	store := publicAccountImportProductStore{Shops: map[string]publicAccountImportProductShopCache{}, Adaptive: &productAdaptiveState{Mode: "adaptive", Multiplier: 4, LastTick: now, History: []productResourceObservation{{At: now, WorkerMemory: .7, HostAvailable: .4, DiskFree: 2 << 30, Lanes: 6}}}}
 	for i := 0; i < 500; i++ {
 		id := fmt.Sprint(i)
-		shops = append(shops, PublicAccountImportShop{ID: id})
+		shops = append(shops, PublicAccountImportShop{ID: id, URL: "https://wzyp.cn/shop/" + id})
 		store.Shops[id] = publicAccountImportProductShopCache{Adaptive: &productAdaptiveShop{Tier: "201-1000", EffectiveCount: 1000, SourceCount: 1000, QuoteStream: productStream{Cost: productCost{Samples: 1, Requests: 2, LaneSeconds: 20}}}}
 	}
 	c := defaultPublicAccountImportSyncControl()
