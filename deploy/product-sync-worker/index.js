@@ -2,6 +2,7 @@ const { chromium, firefox } = require('playwright-core')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
+const { CandidateProbes, candidateProbeHold, collectCandidateProbe } = require('./candidate-probes')
 const { collectAuthoritativeSnapshot, collectProductQuote, collectCatalog, collectQuoteBatch } = require('./catalog-sync')
 const {
   AdaptiveRateLimiter,
@@ -97,6 +98,7 @@ const camoufoxPath = process.env.CAMOUFOX_PATH || '/opt/camoufox/camoufox'
 const browserExecutablePath = browserEngine === 'camoufox' ? camoufoxPath : chromePath
 const browserType = browserEngine === 'camoufox' ? firefox : chromium
 const statusFile = process.env.STATUS_FILE || '/data/status.json'
+const candidateProbes = new CandidateProbes(path.dirname(statusFile))
 const challengeSessionDirectory = process.env.PRODUCT_SYNC_CHALLENGE_SESSION_DIR || '/data/challenge-sessions'
 const browserProfileDirectory = process.env.PRODUCT_SYNC_BROWSER_PROFILE_DIR || '/data/browser-profiles'
 const camoufoxWindow = { width: 1024, height: 824 }
@@ -1628,6 +1630,45 @@ async function recoverLaneAfterPressure(
   }
 }
 
+async function runCandidateProbe(lane, dependencies = {}) {
+  const backendClient = dependencies.backend || backend
+  const publish = dependencies.publishLaneStatus || publishLaneStatus
+  return (dependencies.probes || candidateProbes).run({
+    control: () => backendClient('/api/v1/public/account-import/products/sync-control'),
+    errorMessage,
+    execute: async (row) => {
+      const started = performance.now()
+      const deadlineAt = Date.now() + 5 * 60_000
+      lane.syncCost = { requests: 0, logical: 0, verification_seconds: 0, automatic: true, probe: true }
+      const measuredCost = () => ({ requests: lane.syncCost.requests, retries: Math.max(0, lane.syncCost.requests - lane.syncCost.logical),
+        lane_seconds: (performance.now() - started) / 1000, verification_seconds: lane.syncCost.verification_seconds })
+      publish(lane, { state: 'syncing', active_candidate_id: row.platform_id })
+      const heartbeat = setInterval(() => publish(lane, {}), heartbeatMilliseconds)
+      try {
+        const result = await (dependencies.collectCandidateProbe || collectCandidateProbe)(row.platform_id, {
+          signal: workerStopController.signal,
+          post: async (requestPath, body) => {
+            const hold = candidateProbeHold(await backendClient('/api/v1/public/account-import/products/sync-control'), Date.now(), true)
+            if (hold) throw new ShopSyncError('probe_paused', hold)
+            lane.syncCost.logical++
+            return (dependencies.post || postShopAPIWithPressureRecovery)(lane, row.platform_id, requestPath, body, deadlineAt, workerStopController.signal)
+          },
+        })
+        result.cost = measuredCost()
+        return result
+      } catch (error) {
+        error.cost = measuredCost()
+        if (workerStopController.signal.aborted) error.candidateProbeInterrupted = true
+        throw error
+      } finally {
+        clearInterval(heartbeat)
+        lane.syncCost = null
+        publish(lane, { state: 'idle', active_candidate_id: '' })
+      }
+    },
+  })
+}
+
 async function runLane(lane) {
   while (activeBrowser?.isConnected() && !stopping) {
     try {
@@ -1642,6 +1683,12 @@ async function runLane(lane) {
         ...(job ? {} : { pressure_failure_count: 0 }),
       })
       if (!job) {
+        try {
+          await runCandidateProbe(lane)
+        } catch (error) {
+          if (error?.restartLane || error?.restartBrowser) throw error
+          console.warn(`${new Date().toISOString()} candidate probe skipped: ${errorMessage(error)}`)
+        }
         await sleep(idlePollMilliseconds)
         continue
       }
@@ -1928,6 +1975,7 @@ module.exports = {
   recoverLaneAfterPressure,
   startJobHeartbeat,
   reportJobFailure,
+  runCandidateProbe,
   retryAccessDeniedAfterHomeReview,
   syncJob,
   syncJobFinalError,

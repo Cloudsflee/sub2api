@@ -54,6 +54,7 @@ WORKER_BUILD_PATHS=(
   deploy/product-sync-worker/adaptive-rate.js
   deploy/product-sync-worker/Dockerfile
   deploy/product-sync-worker/catalog-sync.js
+  deploy/product-sync-worker/candidate-probes.js
   deploy/product-sync-worker/challenge-manager.js
   deploy/product-sync-worker/healthcheck.js
   deploy/product-sync-worker/index.js
