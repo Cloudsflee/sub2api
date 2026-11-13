@@ -11,6 +11,7 @@ const {
 } = require('./worker-utils')
 
 const PRODUCT_SCHEMA_VERSION = 2
+const crypto = require('node:crypto')
 const GOODS_TYPES = ['card', 'article', 'resource', 'equity']
 const PAGE_SIZE = 100
 const MAX_PRODUCTS = 1000
@@ -88,6 +89,7 @@ function verifiedAtISO(now) {
 
 async function collectAuthoritativeSnapshot(options) {
   const {
+    catalogOnly = false,
     shopToken,
     post,
     now = () => new Date(),
@@ -100,11 +102,13 @@ async function collectAuthoritativeSnapshot(options) {
 
   const infoPayload = await post('/shopApi/Shop/info', { token: shopToken, category_key: null })
   if (infoPayload?.code !== 1 && shopClosedForTransactionsMessage(infoPayload?.msg)) {
+    if (catalogOnly) return { schema_version: 1, complete: true, closed: true, source_product_count: 0, products: [] }
     const error = new ShopSyncError('shop_closed', String(infoPayload?.msg || 'shop transactions are closed'))
     error.retryAfterMilliseconds = CLOSED_SHOP_RETRY_MILLISECONDS
     throw error
   }
   if (infoPayload?.code !== 1 && shopUnavailableMessage(infoPayload?.msg)) {
+    if (catalogOnly) return { schema_version: 1, complete: true, closed: true, source_product_count: 0, products: [] }
     return {
       schema_version: PRODUCT_SCHEMA_VERSION,
       source_product_count: 0,
@@ -115,6 +119,7 @@ async function collectAuthoritativeSnapshot(options) {
   }
   requireSuccessfulPayload(infoPayload, 'shop info')
   const candidates = []
+  const catalog = []
   let unavailableCount = 0
   let sourceProductCount = 0
   const seenGoodsKeys = new Set()
@@ -145,7 +150,7 @@ async function collectAuthoritativeSnapshot(options) {
         expectedCount = reportedTotal
         sourceProductCount += expectedCount
         if (sourceProductCount > MAX_PRODUCTS) {
-          throw new ShopSyncError('unknown', `shop contains more than ${MAX_PRODUCTS} products`)
+          throw new ShopSyncError('catalog_limit', `shop contains more than ${MAX_PRODUCTS} products`)
         }
       } else if (reportedTotal !== expectedCount) {
         throw new ShopSyncError('unknown', `${goodsType} catalog count changed during synchronization`)
@@ -162,6 +167,11 @@ async function collectAuthoritativeSnapshot(options) {
           throw new ShopSyncError('unknown', `catalog contains duplicate goods_key ${state.goodsKey}`)
         }
         seenGoodsKeys.add(state.goodsKey)
+        if (catalogOnly) catalog.push({
+          ...(state.product || { goods_key: state.goodsKey }),
+          sellable: state.state !== 'unavailable',
+          source_version: catalogMetadataVersion(item),
+        })
         if (state.state === 'unavailable') unavailableCount += 1
         else candidates.push(state.product)
       }
@@ -174,6 +184,8 @@ async function collectAuthoritativeSnapshot(options) {
   if (seenGoodsKeys.size !== sourceProductCount) {
     throw new ShopSyncError('unknown', 'shop catalog source count is incomplete')
   }
+
+  if (catalogOnly) return { schema_version: 1, complete: true, closed: false, source_product_count: sourceProductCount, products: catalog }
 
   if (candidates.length === 0) {
     return {
@@ -224,6 +236,53 @@ async function collectAuthoritativeSnapshot(options) {
   }
 }
 
+function catalogMetadataVersion(item) {
+  function stable(value) {
+    if (Array.isArray(value)) return value.map(stable)
+    if (!value || typeof value !== 'object') return value
+    return Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])]))
+  }
+  // Preserve unknown price conditions in the digest. Cosmetic metadata has no
+  // effect on a payment quote; all other source fields are conservative inputs.
+  const { name, image, link, category, description, ...conditions } = item
+  return crypto.createHash('sha256').update(JSON.stringify(stable(conditions))).digest('hex')
+}
+
+async function collectCatalog(options) {
+  return collectAuthoritativeSnapshot({ ...options, catalogOnly: true })
+}
+
+async function collectQuoteBatch(options) {
+  const { shopToken, products, post, signal, quoteSemaphore = new Semaphore(1),
+    now = () => new Date(), clock = () => performance.now(), maxSeconds = 30 } = options
+  if (!Array.isArray(products) || products.length < 1 || products.length > 20) throw new Error('quote batch must contain 1-20 products')
+  const started = clock()
+  const results = []
+  try {
+    const channels = await post('/shopApi/Shop/getUserChannel', { token: shopToken })
+    if (channels?.code !== 1 || !Array.isArray(channels.data)) throw new ShopSyncError('unknown', 'payment channel response is invalid')
+    const channel = selectPaymentChannel(channels.data)
+    if (!channel) throw new ShopSyncError('unknown', 'shop has no valid payment channel')
+    for (const product of products) {
+      if (clock() - started >= Math.min(30, maxSeconds) * 1000) break
+      const payload = await quoteSemaphore.run(() => post('/shopApi/Shop/getGoodsPrice', {
+        goods_key: product.goods_key, quantity: product.minimum_quantity, coupon_code: '', channel_id: channel.id,
+      }), signal)
+      const quote = quoteResult(payload)
+      if (quote.state !== 'available' && quote.state !== 'unavailable') throw new ShopSyncError('unknown', quote.reason)
+      results.push({ goods_key: product.goods_key, metadata_version: product.metadata_version,
+        payable_price: quote.state === 'available' ? quote.totalAmount : null,
+        unavailable: quote.state === 'unavailable', quote_verified_at: verifiedAtISO(now) })
+    }
+    return { products: results }
+  } catch (error) {
+    // The caller publishes completed results before propagating pressure to the
+    // existing circuit/recovery path. Lost leases are never published.
+    return { products: results, failure_kind: error.kind || 'unknown', error: String(error.message || error),
+      retry_after_seconds: Math.max(0, Math.ceil((error.retryAfterMilliseconds || 0) / 1000)), failure: error }
+  }
+}
+
 module.exports = {
   GOODS_TYPES,
   CLOSED_SHOP_RETRY_MILLISECONDS,
@@ -232,4 +291,7 @@ module.exports = {
   QUOTE_CONCURRENCY,
   collectAuthoritativeSnapshot,
   collectProductQuote,
+  collectCatalog,
+  collectQuoteBatch,
+  catalogMetadataVersion,
 }

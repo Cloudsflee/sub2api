@@ -749,11 +749,11 @@
                   {{ t('publicAccountImport.productUpdatedAt', { time: formatProductUpdatedAt(productSnapshotUpdatedAt(product)) }) }}
                 </div>
                 <div class="mt-1 text-xs text-gray-500 dark:text-dark-400" aria-live="polite">
-                  <span v-if="productPriceStatus(product) === 'verified'" class="text-emerald-600 dark:text-emerald-400">
+                  <span v-if="productPriceStatus(product) === 'verified' && !product.quote_pending" class="text-emerald-600 dark:text-emerald-400">
                     {{ t('publicAccountImport.priceVerified') }}
                   </span>
-                  <span v-else-if="!publicProductQuoteTime(product)">{{ t('publicAccountImport.pricePending') }}</span>
-                  <span v-if="publicProductQuoteTime(product)" class="block" :title="product.quote_verified_at">
+                  <span v-else-if="!publicProductQuoteTime(product) || product.quote_pending">{{ t('publicAccountImport.pricePending') }}</span>
+                  <span v-if="product.quote_verified_at" class="block" :title="product.quote_verified_at">
                     {{ t('publicAccountImport.priceVerifiedAt', { time: formatProductUpdatedAt(product.quote_verified_at || '') }) }}
                   </span>
                   <span v-if="productPriceStatus(product) === 'failed'" class="block text-amber-600 dark:text-amber-400">
@@ -766,13 +766,14 @@
                       <span class="mr-2 h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-primary-600 dark:border-dark-600 dark:border-t-primary-400"></span>
                       {{ t('publicAccountImport.priceChecking') }}
                     </span>
-                    <span class="text-lg font-bold text-red-600 dark:text-red-400">¥{{ formatPrice(publicProductPayablePrice(product)) }}</span>
-                    <span v-if="product.minimum_quantity === 1 && product.market_price && product.market_price > publicProductPayablePrice(product)" class="ml-2 text-xs text-gray-400 line-through">
+                    <span v-if="publicProductPayablePrice(product) !== null" class="text-lg font-bold text-red-600 dark:text-red-400">¥{{ formatPrice(publicProductPayablePrice(product)) }}</span>
+                    <span v-else data-price-pending class="text-sm text-gray-500 dark:text-dark-400">{{ t('publicAccountImport.pricePending') }}</span>
+                    <span v-if="product.minimum_quantity === 1 && product.market_price && product.market_price > (publicProductPayablePrice(product) ?? Infinity)" class="ml-2 text-xs text-gray-400 line-through">
                       ¥{{ formatPrice(product.market_price) }}
                     </span>
                     <div class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
-                      {{ t('publicAccountImport.productUnitPrice', { price: formatPrice(publicProductUnitPrice(product)) }) }}
-                      · {{ t('publicAccountImport.productMinimumQuantity', { count: product.minimum_quantity }) }}
+                      <template v-if="publicProductUnitPrice(product) !== null">{{ t('publicAccountImport.productUnitPrice', { price: formatPrice(publicProductUnitPrice(product)) }) }} · </template>
+                      {{ t('publicAccountImport.productMinimumQuantity', { count: product.minimum_quantity }) }}
                     </div>
                   </div>
                   <span v-if="product.goods_type === 'card'" class="shrink-0 text-xs text-gray-500 dark:text-dark-400">
@@ -1397,7 +1398,8 @@ function handleProductCatalogFocus() {
 	if (!document.hidden) void loadPublicProducts(false)
 }
 
-function formatPrice(value: number): string {
+function formatPrice(value: number | null): string {
+  if (value === null) return '—'
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')
 }
 
@@ -1458,7 +1460,7 @@ function shopProductUpdatedText(shopId: string): string {
 }
 
 function productSnapshotUpdatedAt(product: PublicAccountImportProduct): string {
-  return shopProductSyncStatus(product.shop_id)?.snapshot_updated_at || product.updated_at
+  return product.catalog_updated_at || shopProductSyncStatus(product.shop_id)?.snapshot_updated_at || product.updated_at
 }
 
 function shopProductStateText(shopId: string): string {

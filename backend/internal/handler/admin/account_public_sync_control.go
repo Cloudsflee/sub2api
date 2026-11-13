@@ -17,52 +17,60 @@ import (
 // The control file shares the product-cache mutex. Reads never claim, extend,
 // expire or save jobs. No in-memory control is changed before a durable rename.
 type PublicAccountImportSyncControl struct {
-	Version            int               `json:"version"`
-	Revision           uint64            `json:"revision"`
-	IntervalMultiplier int               `json:"interval_multiplier"`
-	AutomaticPaused    bool              `json:"automatic_paused"`
-	QuarantinedShops   map[string]string `json:"quarantined_shops"`
-	UpdatedAt          string            `json:"updated_at,omitempty"`
-	ControllerID       string            `json:"controller_id,omitempty"`
-	ControllerUntil    string            `json:"controller_until,omitempty"`
+	ImportedBatches     map[string]int    `json:"imported_batches,omitempty"`
+	PressurePausedShops map[string]string `json:"pressure_paused_shops,omitempty"`
+	Mode                string            `json:"mode"`
+	Version             int               `json:"version"`
+	Revision            uint64            `json:"revision"`
+	IntervalMultiplier  int               `json:"interval_multiplier"`
+	AutomaticPaused     bool              `json:"automatic_paused"`
+	QuarantinedShops    map[string]string `json:"quarantined_shops"`
+	UpdatedAt           string            `json:"updated_at,omitempty"`
+	ControllerID        string            `json:"controller_id,omitempty"`
+	ControllerUntil     string            `json:"controller_until,omitempty"`
 }
 
 type PublicAccountImportSyncControlRequest struct {
-	ExpectedRevision   *uint64            `json:"expected_revision"`
-	IntervalMultiplier *int               `json:"interval_multiplier"`
-	AutomaticPaused    *bool              `json:"automatic_paused"`
-	QuarantinedShops   *map[string]string `json:"quarantined_shops"`
-	ControllerID       string             `json:"controller_id"`
-	LeaseSeconds       int                `json:"lease_seconds"`
+	ImportedBatches     *map[string]int    `json:"imported_batches"`
+	PressurePausedShops *map[string]string `json:"pressure_paused_shops"`
+	Mode                *string            `json:"mode"`
+	ExpectedRevision    *uint64            `json:"expected_revision"`
+	IntervalMultiplier  *int               `json:"interval_multiplier"`
+	AutomaticPaused     *bool              `json:"automatic_paused"`
+	QuarantinedShops    *map[string]string `json:"quarantined_shops"`
+	ControllerID        string             `json:"controller_id"`
+	LeaseSeconds        int                `json:"lease_seconds"`
 }
 
 type PublicAccountImportSyncShopStats struct {
-	ShopID              string `json:"shop_id"`
-	PlatformID          string `json:"platform_id"`
-	TrustLevel          string `json:"trust_level"`
-	AutomaticDue        bool   `json:"automatic_due"`
-	AutomaticEligible   bool   `json:"automatic_eligible"`
-	ManualPending       bool   `json:"manual_pending"`
-	Active              bool   `json:"active"`
-	NextAutomaticAt     string `json:"next_automatic_at"`
-	WaitingSeconds      int    `json:"waiting_seconds"`
-	SnapshotComplete    bool   `json:"snapshot_complete"`
-	SnapshotUpdatedAt   string `json:"snapshot_updated_at"`
-	SourceProductCount  int    `json:"source_product_count"`
-	ProductCount        int    `json:"product_count"`
-	FirstStartedAt      string `json:"first_started_at,omitempty"`
-	FirstSyncedAt       string `json:"first_synced_at,omitempty"`
-	LastAttempt         string `json:"last_attempt,omitempty"`
-	SuccessCount        int    `json:"success_count"`
-	FailureCount        int    `json:"failure_count"`
-	ConsecutiveFailures int    `json:"consecutive_failures"`
-	LastFailureKind     string `json:"last_failure_kind,omitempty"`
-	LastFailureAt       string `json:"last_failure_at,omitempty"`
-	Error               string `json:"error,omitempty"`
-	RetryNotBeforeAt    string `json:"retry_not_before_at,omitempty"`
+	Adaptive            *productAdaptiveShopStats `json:"adaptive,omitempty"`
+	ShopID              string                    `json:"shop_id"`
+	PlatformID          string                    `json:"platform_id"`
+	TrustLevel          string                    `json:"trust_level"`
+	AutomaticDue        bool                      `json:"automatic_due"`
+	AutomaticEligible   bool                      `json:"automatic_eligible"`
+	ManualPending       bool                      `json:"manual_pending"`
+	Active              bool                      `json:"active"`
+	NextAutomaticAt     string                    `json:"next_automatic_at"`
+	WaitingSeconds      int                       `json:"waiting_seconds"`
+	SnapshotComplete    bool                      `json:"snapshot_complete"`
+	SnapshotUpdatedAt   string                    `json:"snapshot_updated_at"`
+	SourceProductCount  int                       `json:"source_product_count"`
+	ProductCount        int                       `json:"product_count"`
+	FirstStartedAt      string                    `json:"first_started_at,omitempty"`
+	FirstSyncedAt       string                    `json:"first_synced_at,omitempty"`
+	LastAttempt         string                    `json:"last_attempt,omitempty"`
+	SuccessCount        int                       `json:"success_count"`
+	FailureCount        int                       `json:"failure_count"`
+	ConsecutiveFailures int                       `json:"consecutive_failures"`
+	LastFailureKind     string                    `json:"last_failure_kind,omitempty"`
+	LastFailureAt       string                    `json:"last_failure_at,omitempty"`
+	Error               string                    `json:"error,omitempty"`
+	RetryNotBeforeAt    string                    `json:"retry_not_before_at,omitempty"`
 }
 
 type PublicAccountImportSyncControlResponse struct {
+	Adaptive             *productAdaptiveState                      `json:"adaptive,omitempty"`
 	Control              PublicAccountImportSyncControl             `json:"control"`
 	ObservedAt           string                                     `json:"observed_at"`
 	AutomaticDue         int                                        `json:"automatic_due"`
@@ -74,7 +82,7 @@ type PublicAccountImportSyncControlResponse struct {
 }
 
 func defaultPublicAccountImportSyncControl() PublicAccountImportSyncControl {
-	return PublicAccountImportSyncControl{Version: 1, IntervalMultiplier: 1, QuarantinedShops: map[string]string{}}
+	return PublicAccountImportSyncControl{Mode: "legacy", Version: 1, IntervalMultiplier: 1, QuarantinedShops: map[string]string{}}
 }
 
 func publicAccountImportSyncControlPath() string {
@@ -82,6 +90,22 @@ func publicAccountImportSyncControlPath() string {
 }
 
 func validPublicAccountImportSyncControl(control PublicAccountImportSyncControl) bool {
+	if len(control.ImportedBatches) > publicAccountImportShopMaxCount || len(control.PressurePausedShops) > publicAccountImportShopMaxCount {
+		return false
+	}
+	for id, batch := range control.ImportedBatches {
+		if id == "" || len(id) > 100 || batch < 1 || batch > 10000 {
+			return false
+		}
+	}
+	for id, reason := range control.PressurePausedShops {
+		if id == "" || len(id) > 100 || reason == "" || len(reason) > 500 {
+			return false
+		}
+	}
+	if control.Mode != "legacy" && control.Mode != "shadow" && control.Mode != "adaptive" {
+		return false
+	}
 	if control.Version != 1 || (control.IntervalMultiplier != 1 && control.IntervalMultiplier != 2 && control.IntervalMultiplier != 4) || len(control.QuarantinedShops) > publicAccountImportShopMaxCount {
 		return false
 	}
@@ -187,6 +211,15 @@ func (h *AccountHandler) PutPublicAccountImportSyncControl(c *gin.Context) {
 	if req.IntervalMultiplier != nil {
 		control.IntervalMultiplier = *req.IntervalMultiplier
 	}
+	if req.Mode != nil {
+		control.Mode = *req.Mode
+	}
+	if req.ImportedBatches != nil {
+		control.ImportedBatches = *req.ImportedBatches
+	}
+	if req.PressurePausedShops != nil {
+		control.PressurePausedShops = *req.PressurePausedShops
+	}
 	if req.AutomaticPaused != nil {
 		control.AutomaticPaused = *req.AutomaticPaused
 	}
@@ -240,6 +273,9 @@ func (h *AccountHandler) GetPublicAccountImportSyncControl(c *gin.Context) {
 	out := PublicAccountImportSyncControlResponse{Control: control, ObservedAt: now.Format(time.RFC3339Nano),
 		OrdinaryCycleSeconds: int(publicAccountImportProductRefreshAge.Seconds()) * control.IntervalMultiplier,
 		Shops:                []PublicAccountImportSyncShopStats{}, Worker: publicAccountImportProductSyncWorkerStatus(now)}
+	if control.Mode != "legacy" {
+		out.Adaptive = publicProductCache.Adaptive
+	}
 	for _, shop := range supportedPublicAccountImportProductShops(shops) {
 		cached := publicProductCache.Shops[shop.ID]
 		platformID, _ := publicAccountImportShopToken(shop.URL)
@@ -256,6 +292,30 @@ func (h *AccountHandler) GetPublicAccountImportSyncControl(c *gin.Context) {
 			SuccessCount: cached.SuccessCount, FailureCount: cached.FailureCount, ConsecutiveFailures: cached.ConsecutiveFailures,
 			LastFailureKind: cached.LastFailureKind, LastFailureAt: cached.LastFailureAt,
 			Error: sanitizePublicAccountImportProductSyncWorkerReason(cached.Error), RetryNotBeforeAt: cached.RetryNotBeforeAt}
+		if control.Mode != "legacy" && cached.Adaptive != nil && publicProductCache.Adaptive != nil {
+			a, s := cached.Adaptive, publicProductCache.Adaptive
+			stat.Adaptive = adaptiveStats(a, s.Multiplier, now)
+			if control.Mode == "adaptive" {
+				next = a.CatalogStream.Next
+				if a.EffectiveCount > 0 && a.ZeroChecks == 0 && a.QuoteStream.Next.Before(next) {
+					next = a.QuoteStream.Next
+				}
+				if a.RetryAt.After(next) {
+					next = a.RetryAt
+				}
+				due = !active && !next.After(now)
+				stat.AutomaticDue = due
+				stat.AutomaticEligible = due && !control.AutomaticPaused && !isolated && s.AutomaticHold == "" && a.PauseReason == ""
+				stat.NextAutomaticAt = next.Format(time.RFC3339Nano)
+				if a.Generation > 0 {
+					stat.ProductCount = len(adaptiveVisibleProducts(cached))
+					stat.SourceProductCount = len(a.Catalog)
+				}
+			}
+		}
+		if control.Mode == "shadow" && adaptiveShadowHold(publicProductCache.Adaptive, now) {
+			stat.AutomaticEligible = false
+		}
 		if due {
 			stat.WaitingSeconds = max(0, int(now.Sub(next).Seconds()))
 			out.AutomaticDue++

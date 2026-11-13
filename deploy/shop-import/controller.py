@@ -299,6 +299,10 @@ def report(state):
                'isolated': sum(bool(row.get('isolation_reason')) for row in rows),
                'pressure_paused': sum(row.get('status') == 'pressure_paused' for row in rows),
                'unsubmitted': sum(not row.get('shop_id') for row in rows)}
+    summary.update(catalog_complete=sum(bool(row.get('first_catalog_at')) for row in rows),
+                   quote_complete=sum(bool(row.get('first_quote_at')) for row in rows),
+                   dormant=sum(row.get('status') == 'dormant' for row in rows),
+                   exception=sum(row.get('status') == 'exception' for row in rows))
     return {'source_sha256': state['source_sha256'], 'environment': state['environment'],
             'phase': state['phase'], 'finished': state['finished'], 'summary': summary,
             'resource_hold': state.get('resource_hold', False), 'pressure_hold_since': state.get('hold_since'),
@@ -473,6 +477,9 @@ class Controller:
         state = self.state
         scheduler = self.api.control()
         self.control = scheduler['control']
+        if self.control.get('mode') == 'adaptive':
+            self.adaptive_tick(host, scheduler)
+            return
         if state['finished']:
             return
         self.change()  # CAS and target-wide controller lease, before any writes.
@@ -618,6 +625,63 @@ class Controller:
             state.update(phase='final_observation', validation_started=now)
         self.save()
 
+    def adaptive_tick(self, host, scheduler):
+        """Registration and progress only; the backend owns every pressure decision."""
+        state = self.state
+        now = timestamp(host['at'])
+        status = scheduler.get('adaptive') or {}
+        state.update(multiplier=status.get('multiplier', 4), phase='adaptive', finished=False)
+        by_platform = {platform_id(shop['url']): shop for shop in self.api.shops()}
+        stats = {row['shop_id']: row for row in scheduler['shops']}
+        for row in state['shops']:
+            shop = by_platform.get(row['platform_id'])
+            if shop and not row.get('shop_id'):
+                row.update(shop_id=shop['id'], registered_at=row.get('submitted_at', iso(now)), created=None)
+            stat = stats.get(row.get('shop_id'), {})
+            adaptive = stat.get('adaptive') or {}
+            if row.get('shop_id'):
+                for field in ('first_catalog_at', 'first_quote_at'):
+                    value = adaptive.get(field)
+                    if value and not value.startswith('0001-'):
+                        row[field] = value
+                row.update(status=adaptive.get('state', 'pending'), reason=adaptive.get('pause_reason') or stat.get('error') or '',
+                           retry_not_before_at=adaptive.get('retry_at'), first_product_count=stat.get('product_count', 0),
+                           source_product_count=stat.get('source_product_count', 0))
+                if row.get('first_quote_at'):
+                    row['first_synced_at'] = row['first_quote_at']
+                row['isolation_reason'] = scheduler['control']['quarantined_shops'].get(row['shop_id'])
+        hold = status.get('admission_hold') or status.get('automatic_hold')
+        state['resource_hold'] = bool(status.get('automatic_hold'))
+        state['boundary'] = status.get('required_multiplier', 1) > status.get('admission_capacity_limit', 4.4)
+        pending = [row for row in state['shops'] if not row.get('shop_id')]
+        if pending and not hold and not scheduler['control']['automatic_paused']:
+            row = pending[0]
+            row.update(status='submitting', submitted_at=row.get('submitted_at', iso(now)), reason='registration intent saved')
+            self.save()
+            try:
+                result = self.api.request('POST', '/shops', {'name': row['name'], 'url': row['url']})
+                row.update(shop_id=result['shop']['id'], created=result['created'], registered_at=row['submitted_at'], status='pending')
+                self.event('shop_registered', platform_id=row['platform_id'], shop_id=row['shop_id'], created=row['created'])
+            except urllib.error.HTTPError as error:
+                if error.code != 429:
+                    raise
+                row['reason'] = 'backend admission budget waiting'
+            except (OSError, ValueError, RuntimeError):
+                row['reason'] = 'registration outcome uncertain; reconcile next minute'
+        periods = [item.get('adaptive', {}).get('quote_seconds', 0) for item in scheduler['shops']
+                   if item.get('adaptive', {}).get('effective_count', 0) > 0]
+        stable = timestamp(status.get('validated_since'))
+        longest = max(periods, default=0)
+        complete = not pending and all(row.get('first_quote_at') or row.get('status') in ('dormant', 'exception', 'pressure_paused')
+                                       or row.get('isolation_reason') for row in state['shops'])
+        if complete and stable and longest and now - stable >= longest and not hold:
+            state.update(finished=True, phase='complete', verified_multiplier=state['multiplier'])
+        state['validation_cycle_seconds'] = longest
+        state['validation_started'] = stable
+        with (self.directory / 'samples.jsonl').open('a', encoding='utf-8') as stream:
+            stream.write(json.dumps({'host': host, 'scheduler': scheduler, 'backend_owned': True}, ensure_ascii=False) + '\n')
+        self.save()
+
     def run(self):
         import fcntl  # Execution is deliberately host-local; preview/report are portable.
         with (self.directory / '.controller.lock').open('a') as lock:
@@ -654,7 +718,7 @@ class Controller:
         self.state['settle_until'] = time.time() + 20 * MINUTE
         self.state['validation_started'] = time.time()
         self.state['resource_hold'] = True
-        if self.control and self.control.get('controller_id') == self.owner:
+        if self.control and self.control.get('mode') != 'adaptive' and self.control.get('controller_id') == self.owner:
             try:
                 self.change(automatic_paused=True)
             except (OSError, ValueError, RuntimeError):
@@ -686,6 +750,8 @@ def main():
     else:
         state = json.loads((Path(args.state) / 'state.json').read_text(encoding='utf-8'))
         controller = Controller(args.state, API(state['target'], worker_token()))
+        if controller.api.control()['control'].get('mode') == 'adaptive':
+            controller.state.update(finished=False, boundary=False, phase='adaptive')
         if args.continue_after_boundary:
             if not state.get('boundary') or not state['finished']:
                 raise ValueError('Only a completed, verified boundary may be explicitly continued')

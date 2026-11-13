@@ -75,19 +75,21 @@ export function publicProductMinimumQuantity(product: PublicAccountImportProduct
   return normalizeMinimumQuantity(product.minimum_quantity)
 }
 
-export function publicProductPayablePrice(product: PublicAccountImportProduct): number {
+export function publicProductPayablePrice(product: PublicAccountImportProduct): number | null {
+  if (product.quote_pending) return null
   const payablePrice = normalizeAPINumber(product.payable_price)
-  return payablePrice !== null && payablePrice >= 0 ? payablePrice : product.price
+  return payablePrice !== null && payablePrice >= 0 ? payablePrice : null
 }
 
-export function publicProductUnitPrice(product: PublicAccountImportProduct): number {
+export function publicProductUnitPrice(product: PublicAccountImportProduct): number | null {
+  if (product.quote_pending) return null
   const unitPrice = normalizeAPINumber(product.unit_price)
   if (unitPrice !== null && unitPrice >= 0) return unitPrice
   const payablePrice = normalizeAPINumber(product.payable_price)
   if (payablePrice !== null && payablePrice >= 0) {
     return payablePrice / publicProductMinimumQuantity(product)
   }
-  return product.price
+  return null
 }
 
 function publicProductNameMatches(
@@ -124,6 +126,10 @@ export function filterAndSortPublicProducts(
   matchedProducts.sort((left, right) => {
 		const leftPrice = publicProductUnitPrice(left)
 		const rightPrice = publicProductUnitPrice(right)
+    if (leftPrice === null || rightPrice === null) {
+      if (leftPrice !== rightPrice) return leftPrice === null ? 1 : -1
+      return productNameCollator.compare(left.name, right.name) || left.id.localeCompare(right.id)
+    }
     const priceDifference = priceOrder === 'desc' ? rightPrice - leftPrice : leftPrice - rightPrice
     if (priceDifference !== 0) return priceDifference
 

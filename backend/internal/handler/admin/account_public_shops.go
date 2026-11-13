@@ -37,11 +37,12 @@ const (
 var publicAccountImportShopLinksMu sync.Mutex
 
 type PublicAccountImportShop struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	URL        string `json:"url"`
-	CreatedAt  string `json:"created_at"`
-	TrustLevel string `json:"trust_level"`
+	ImportBatch int    `json:"import_batch,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	URL         string `json:"url"`
+	CreatedAt   string `json:"created_at"`
+	TrustLevel  string `json:"trust_level"`
 }
 
 type PublicAccountImportShopsResponse struct {
@@ -116,6 +117,28 @@ func (h *AccountHandler) SubmitPublicAccountImportShop(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	// Duplicate registrations remain idempotent even during an admission hold.
+	existing, lookupErr := snapshotPublicAccountImportShops()
+	if lookupErr != nil {
+		response.InternalError(c, "Failed to load shop links")
+		return
+	}
+	for _, shop := range existing {
+		if publicAccountImportSameShop(shop.URL, shopURL) {
+			response.Success(c, PublicAccountImportShopSubmission{Shop: shop, Created: false})
+			return
+		}
+	}
+	batch, hold, admissionErr := adaptiveAdmission()
+	if admissionErr != nil {
+		response.InternalError(c, "Failed to reserve shop admission")
+		return
+	}
+	if hold != "" {
+		c.Header("Retry-After", "60")
+		response.Error(c, http.StatusTooManyRequests, hold)
+		return
+	}
 
 	path := publicAccountImportShopLinksPath()
 	publicAccountImportShopLinksMu.Lock()
@@ -138,11 +161,12 @@ func (h *AccountHandler) SubmitPublicAccountImportShop(c *gin.Context) {
 	}
 
 	shop := PublicAccountImportShop{
-		ID:         publicAccountImportShopID(shopURL),
-		Name:       name,
-		URL:        shopURL,
-		CreatedAt:  publicAccountImportTimestamp(),
-		TrustLevel: publicAccountImportShopNeutral,
+		ImportBatch: batch,
+		ID:          publicAccountImportShopID(shopURL),
+		Name:        name,
+		URL:         shopURL,
+		CreatedAt:   publicAccountImportTimestamp(),
+		TrustLevel:  publicAccountImportShopNeutral,
 	}
 	shops = append([]PublicAccountImportShop{shop}, shops...)
 	if err := savePublicAccountImportShops(path, shops); err != nil {

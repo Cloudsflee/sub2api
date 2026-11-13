@@ -30,6 +30,37 @@ test('adaptive limiter starts at 1.5 requests per second with no burst', async (
   assert.equal(limiter.snapshot().adaptive_rate_per_second, 1.5)
 })
 
+test('automatic requests share a real 70% grant clock and probes share its 10% subset', async () => {
+  const clock = fakeClock()
+  const limiter = new AdaptiveRateLimiter({ now: clock.now, sleep: clock.sleep, initialRate: 2 })
+  const automatic = { automatic: true }
+  const probe = { automatic: true, probe: true }
+  const first = await limiter.take(undefined, Infinity, automatic)
+  const second = await limiter.take(undefined, Infinity, automatic)
+  assert.ok(second - first >= 1000 / 1.4)
+  // Manual requests only wait for the global rate and can use idle reserve.
+  const manual = await limiter.take()
+  assert.ok(manual - second >= 500 && manual - second < 715)
+  const probeA = await limiter.take(undefined, Infinity, probe)
+  const probeB = await limiter.take(undefined, Infinity, probe)
+  assert.ok(probeB - probeA >= 1000 / .14)
+  limiter.recordRatePressure('rate_limit')
+  const slowerA = await limiter.take(undefined, Infinity, automatic)
+  const slowerB = await limiter.take(undefined, Infinity, automatic)
+  assert.ok(slowerB - slowerA >= 1000 / .7)
+})
+
+test('parallel automatic grants cannot bank permits behind a manual burst', async () => {
+  const clock = fakeClock()
+  const limiter = new AdaptiveRateLimiter({ now: clock.now, sleep: clock.sleep, initialRate: 2 })
+  const jobs = Array.from({ length: 12 }, (_, i) => ({ automatic: i % 3 !== 0 }))
+  const granted = await Promise.all(jobs.map(async budget => ({ at: await limiter.take(undefined, Infinity, budget), ...budget })))
+  const all = granted.map(item => item.at).sort((a, b) => a - b)
+  const automatic = granted.filter(item => item.automatic).map(item => item.at).sort((a, b) => a - b)
+  for (let i = 1; i < all.length; i++) assert.ok(all[i] - all[i - 1] >= 500)
+  for (let i = 1; i < automatic.length; i++) assert.ok(automatic[i] - automatic[i - 1] >= 1000 / 1.4)
+})
+
 test('403 and 429 halve the adaptive rate down to the 0.5 floor', () => {
   const clock = fakeClock(10_000)
   const limiter = new AdaptiveRateLimiter({ now: clock.now, sleep: clock.sleep })

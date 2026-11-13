@@ -76,23 +76,26 @@ var publicAccountImportProductEgressIDPattern = regexp.MustCompile(`^[A-Za-z0-9_
 var publicAccountImportProductBodyHashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 type PublicAccountImportProduct struct {
-	ID              string   `json:"id"`
-	ShopID          string   `json:"shop_id"`
-	ShopName        string   `json:"shop_name"`
-	ShopURL         string   `json:"shop_url"`
-	Name            string   `json:"name"`
-	URL             string   `json:"url"`
-	Image           string   `json:"image,omitempty"`
-	Category        string   `json:"category,omitempty"`
-	GoodsType       string   `json:"goods_type"`
-	Price           float64  `json:"price"`
-	MarketPrice     float64  `json:"market_price,omitempty"`
-	PayablePrice    *float64 `json:"payable_price,omitempty"`
-	UnitPrice       *float64 `json:"unit_price,omitempty"`
-	Stock           int      `json:"stock"`
-	MinimumQuantity int      `json:"minimum_quantity"`
-	QuoteVerifiedAt string   `json:"quote_verified_at,omitempty"`
-	UpdatedAt       string   `json:"updated_at"`
+	MetadataVersion  string   `json:"metadata_version,omitempty"`
+	CatalogUpdatedAt string   `json:"catalog_updated_at,omitempty"`
+	QuotePending     bool     `json:"quote_pending,omitempty"`
+	ID               string   `json:"id"`
+	ShopID           string   `json:"shop_id"`
+	ShopName         string   `json:"shop_name"`
+	ShopURL          string   `json:"shop_url"`
+	Name             string   `json:"name"`
+	URL              string   `json:"url"`
+	Image            string   `json:"image,omitempty"`
+	Category         string   `json:"category,omitempty"`
+	GoodsType        string   `json:"goods_type"`
+	Price            float64  `json:"price"`
+	MarketPrice      float64  `json:"market_price,omitempty"`
+	PayablePrice     *float64 `json:"payable_price,omitempty"`
+	UnitPrice        *float64 `json:"unit_price,omitempty"`
+	Stock            int      `json:"stock"`
+	MinimumQuantity  int      `json:"minimum_quantity"`
+	QuoteVerifiedAt  string   `json:"quote_verified_at,omitempty"`
+	UpdatedAt        string   `json:"updated_at"`
 }
 
 type PublicAccountImportProductsResponse struct {
@@ -208,15 +211,20 @@ type PublicAccountImportProductRefreshResponse struct {
 }
 
 type PublicAccountImportProductSyncJob struct {
-	ShopID    string                              `json:"shop_id"`
-	ShopName  string                              `json:"shop_name"`
-	ShopURL   string                              `json:"shop_url"`
-	Token     string                              `json:"token"`
-	AttemptID string                              `json:"attempt_id"`
-	Scope     string                              `json:"scope,omitempty"`
-	ProductID string                              `json:"product_id,omitempty"`
-	GoodsKey  string                              `json:"goods_key,omitempty"`
-	Product   *PublicAccountImportProductSyncItem `json:"product,omitempty"`
+	CatalogGeneration uint64                               `json:"catalog_generation,omitempty"`
+	Products          []PublicAccountImportProductSyncItem `json:"products,omitempty"`
+	Automatic         bool                                 `json:"automatic,omitempty"`
+	Probe             bool                                 `json:"probe,omitempty"`
+	MaxSeconds        int                                  `json:"max_seconds,omitempty"`
+	ShopID            string                               `json:"shop_id"`
+	ShopName          string                               `json:"shop_name"`
+	ShopURL           string                               `json:"shop_url"`
+	Token             string                               `json:"token"`
+	AttemptID         string                               `json:"attempt_id"`
+	Scope             string                               `json:"scope,omitempty"`
+	ProductID         string                               `json:"product_id,omitempty"`
+	GoodsKey          string                               `json:"goods_key,omitempty"`
+	Product           *PublicAccountImportProductSyncItem  `json:"product,omitempty"`
 }
 
 type PublicAccountImportProductSyncJobResponse struct {
@@ -225,6 +233,7 @@ type PublicAccountImportProductSyncJobResponse struct {
 }
 
 type PublicAccountImportProductSyncItem struct {
+	MetadataVersion string   `json:"metadata_version,omitempty"`
 	GoodsKey        string   `json:"goods_key"`
 	Name            string   `json:"name"`
 	URL             string   `json:"url"`
@@ -257,13 +266,14 @@ type PublicAccountImportProductSyncOneRequest struct {
 }
 
 type PublicAccountImportProductSyncFailureRequest struct {
-	ShopID            string `json:"shop_id"`
-	AttemptID         string `json:"attempt_id"`
-	Error             string `json:"error"`
-	Kind              string `json:"kind"`
-	RetryAfterSeconds int    `json:"retry_after_seconds"`
-	Scope             string `json:"scope,omitempty"`
-	ProductID         string `json:"product_id,omitempty"`
+	Cost              *productCost `json:"cost,omitempty"`
+	ShopID            string       `json:"shop_id"`
+	AttemptID         string       `json:"attempt_id"`
+	Error             string       `json:"error"`
+	Kind              string       `json:"kind"`
+	RetryAfterSeconds int          `json:"retry_after_seconds"`
+	Scope             string       `json:"scope,omitempty"`
+	ProductID         string       `json:"product_id,omitempty"`
 }
 
 type PublicAccountImportProductSyncHeartbeatRequest struct {
@@ -274,6 +284,7 @@ type PublicAccountImportProductSyncHeartbeatRequest struct {
 }
 
 type publicAccountImportProductShopCache struct {
+	Adaptive                 *productAdaptiveShop                               `json:"adaptive,omitempty"`
 	FirstStartedAt           string                                             `json:"first_started_at,omitempty"`
 	FirstSyncedAt            string                                             `json:"first_synced_at,omitempty"`
 	SuccessCount             int                                                `json:"success_count,omitempty"`
@@ -300,6 +311,7 @@ type publicAccountImportProductShopCache struct {
 }
 
 type publicAccountImportProductRefreshRecord struct {
+	MetadataVersion  string `json:"metadata_version,omitempty"`
 	ProductID        string `json:"product_id"`
 	GoodsKey         string `json:"goods_key"`
 	State            string `json:"state"`
@@ -331,8 +343,9 @@ type PublicAccountImportProductRefreshOneStatusResponse struct {
 }
 
 type publicAccountImportProductStore struct {
-	Version int                                            `json:"version"`
-	Shops   map[string]publicAccountImportProductShopCache `json:"shops"`
+	Adaptive *productAdaptiveState                          `json:"adaptive,omitempty"`
+	Version  int                                            `json:"version"`
+	Shops    map[string]publicAccountImportProductShopCache `json:"shops"`
 }
 
 type publicAccountImportProductRefreshStatus struct {
@@ -405,6 +418,9 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 		runningProducts := 0
 		for _, shop := range shops {
 			s := publicProductCache.Shops[shop.ID]
+			if s.Adaptive != nil && s.Adaptive.Lease != nil && s.Adaptive.Lease.Kind == "quote_batch" && publicAccountImportProductSyncIsActive(s, now) {
+				runningProducts++
+			}
 			for _, r := range s.ProductRefreshes {
 				if publicAccountImportProductRefreshRecordActive(r, now) {
 					runningProducts++
@@ -416,13 +432,14 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 				break
 			}
 			cached := publicProductCache.Shops[shop.ID]
+			visible := adaptiveVisibleProducts(cached)
 			for productID, rec := range cached.ProductRefreshes {
 				if rec.State != "queued" {
 					continue
 				}
 				productIndex := -1
-				for i := range cached.Products {
-					if cached.Products[i].ID == productID && productGoodsKeyFromURL(cached.Products[i].URL) == rec.GoodsKey {
+				for i := range visible {
+					if visible[i].ID == productID && productGoodsKeyFromURL(visible[i].URL) == rec.GoodsKey {
 						productIndex = i
 						break
 					}
@@ -448,18 +465,37 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 				rec.SyncHeartbeatAt = rec.SyncStartedAt
 				rec.SyncAttemptID = publicAccountImportProductSyncAttemptID(shop.ID+":"+productID, now)
 				rec.Error = ""
+				if cached.Adaptive != nil {
+					for _, e := range cached.Adaptive.Catalog {
+						if e.GoodsKey == rec.GoodsKey {
+							rec.MetadataVersion = e.MetadataVersion
+						}
+					}
+				}
 				cached.ProductRefreshes = maps.Clone(cached.ProductRefreshes)
 				cached.ProductRefreshes[productID] = rec
 				if err := savePublicProductShopCacheLocked(shop.ID, cached); err != nil {
 					response.InternalError(c, "Failed to lease product refresh")
 					return
 				}
-				item := cached.Products[productIndex]
+				item := visible[productIndex]
 				job := PublicAccountImportProductSyncJob{ShopID: shop.ID, ShopName: shop.Name, ShopURL: shop.URL, Token: token, AttemptID: rec.SyncAttemptID, Scope: "product", ProductID: productID, GoodsKey: rec.GoodsKey, Product: &PublicAccountImportProductSyncItem{GoodsKey: rec.GoodsKey, Name: item.Name, URL: item.URL, Image: item.Image, Category: item.Category, GoodsType: item.GoodsType, Price: &item.Price, MarketPrice: &item.MarketPrice, PayablePrice: item.PayablePrice, Stock: &item.Stock, MinimumQuantity: &item.MinimumQuantity, QuoteVerifiedAt: item.QuoteVerifiedAt}}
 				response.Success(c, PublicAccountImportProductSyncJobResponse{Job: &job, Jobs: []PublicAccountImportProductSyncJob{job}})
 				return
 			}
 		}
+	}
+	control, err := loadPublicAccountImportSyncControlLocked()
+	if err != nil {
+		response.InternalError(c, "Failed to load sync control")
+		return
+	}
+	if control.Mode == "adaptive" {
+		adaptiveClaimLocked(c, shops, control, now)
+		return
+	}
+	if control.Mode == "shadow" && adaptiveShadowHold(publicProductCache.Adaptive, now) {
+		control.AutomaticPaused = true
 	}
 	if now.Sub(publicProductLastJobAt) < publicAccountImportProductSyncInterval {
 		response.Success(c, PublicAccountImportProductSyncJobResponse{})
@@ -475,11 +511,6 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 		return
 	}
 	limit = min(limit, availableSlots)
-	control, err := loadPublicAccountImportSyncControlLocked()
-	if err != nil {
-		response.InternalError(c, "Failed to load sync control")
-		return
-	}
 	selected := selectPublicAccountImportProductSyncShopsWithControl(shops, publicProductCache, now, limit, control)
 	if len(selected) == 0 {
 		response.Success(c, PublicAccountImportProductSyncJobResponse{})
@@ -491,6 +522,10 @@ func (h *AccountHandler) GetPublicAccountImportProductSyncJob(c *gin.Context) {
 	for _, shop := range selected {
 		token, tokenErr := publicAccountImportShopToken(shop.URL)
 		cached := publicProductCache.Shops[shop.ID]
+		if cached.Adaptive != nil && cached.Adaptive.Lease != nil {
+			cached = clonePublicAccountImportProductShopCache(cached)
+			cached.Adaptive.Lease = nil
+		}
 		if cached.SyncAttemptID != "" && !publicAccountImportProductSyncIsActive(cached, now) {
 			cached.FailureCount++
 			cached.ConsecutiveFailures++
@@ -650,9 +685,10 @@ func (h *AccountHandler) RequestPublicAccountImportProductRefreshOne(c *gin.Cont
 	}
 	cached := publicProductCache.Shops[req.ShopID]
 	var product *PublicAccountImportProduct
-	for i := range cached.Products {
-		if cached.Products[i].ID == req.ProductID {
-			product = &cached.Products[i]
+	visible := adaptiveVisibleProducts(cached)
+	for i := range visible {
+		if visible[i].ID == req.ProductID {
+			product = &visible[i]
 			break
 		}
 	}
@@ -733,8 +769,9 @@ func (h *AccountHandler) GetPublicAccountImportProductRefreshOneStatus(c *gin.Co
 	}
 	var product *PublicAccountImportProduct
 	if state == "succeeded" || state == "superseded" {
-		for i := range cached.Products {
-			item := &cached.Products[i]
+		visible := adaptiveVisibleProducts(cached)
+		for i := range visible {
+			item := &visible[i]
 			if item.ID == productID && item.ShopID == shopID && productGoodsKeyFromURL(item.URL) == rec.GoodsKey {
 				product = item
 				break
@@ -825,6 +862,11 @@ func (h *AccountHandler) SubmitPublicAccountImportProductSync(c *gin.Context) {
 		return
 	}
 	cached := publicProductCache.Shops[shop.ID]
+	if cached.Adaptive != nil && cached.Adaptive.Lease != nil {
+		publicProductCacheMu.Unlock()
+		response.Error(c, http.StatusConflict, "Use adaptive submission for this lease")
+		return
+	}
 	if cached.SyncAttemptID != req.AttemptID || !publicAccountImportProductSyncIsActive(cached, now) {
 		publicProductCacheMu.Unlock()
 		response.Error(c, http.StatusConflict, "Product sync job lease expired")
@@ -968,6 +1010,10 @@ func (h *AccountHandler) SubmitPublicAccountImportProductSyncOne(c *gin.Context)
 		response.BadRequest(c, "Product identity does not match")
 		return
 	}
+	if cached.Adaptive != nil && cached.Adaptive.Generation > 0 && adaptiveProjectionEnabled() {
+		submitAdaptiveSingleQuote(c, *shop, cached, rec, req, now)
+		return
+	}
 	idx := -1
 	for i := range cached.Products {
 		if cached.Products[i].ID == req.ProductID && cached.Products[i].ShopID == req.ShopID && productGoodsKeyFromURL(cached.Products[i].URL) == rec.GoodsKey {
@@ -1040,7 +1086,7 @@ func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 	req.AttemptID = strings.TrimSpace(req.AttemptID)
 	req.Kind = strings.TrimSpace(req.Kind)
 	req.Scope = strings.TrimSpace(req.Scope)
-	if req.Scope != "" && req.Scope != "shop" && req.Scope != "product" {
+	if req.Scope != "" && req.Scope != "shop" && req.Scope != "product" && !adaptiveScope(req.Scope) {
 		response.BadRequest(c, "Product sync scope is invalid")
 		return
 	}
@@ -1061,6 +1107,10 @@ func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 	}
 	cached, ok := publicProductCache.Shops[req.ShopID]
 	now := time.Now().UTC()
+	if adaptiveScope(req.Scope) {
+		failAdaptiveJob(c, cached, req, now)
+		return
+	}
 	if req.Scope == "product" && req.ProductID != "" {
 		// A deleted shop invalidates any outstanding product lease. This check
 		// keeps late worker callbacks from mutating an orphaned cache entry.
@@ -1086,12 +1136,24 @@ func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 		cached = clonePublicAccountImportProductShopCache(cached)
 		rec.State = "failed"
 		if req.Kind == "unavailable" {
-			for i := range cached.Products {
-				if cached.Products[i].ID == req.ProductID {
-					cached.Products = append(cached.Products[:i], cached.Products[i+1:]...)
-					cached.SellableProductCount--
-					cached.UnavailableProductCount++
-					break
+			if cached.Adaptive != nil && cached.Adaptive.Generation > 0 && adaptiveProjectionEnabled() {
+				for i := range cached.Adaptive.Catalog {
+					e := &cached.Adaptive.Catalog[i]
+					if e.Product.ID == req.ProductID && e.MetadataVersion == rec.MetadataVersion && now.After(e.LastQuoteAttemptAt) {
+						e.QuoteUnavailable = true
+						e.LastQuoteAttemptAt = now
+						e.Priority = false
+					}
+				}
+				adaptiveUpdateCompatibility(&cached, now)
+			} else {
+				for i := range cached.Products {
+					if cached.Products[i].ID == req.ProductID {
+						cached.Products = append(cached.Products[:i], cached.Products[i+1:]...)
+						cached.SellableProductCount--
+						cached.UnavailableProductCount++
+						break
+					}
 				}
 			}
 			rec.State = "unavailable"
@@ -1115,6 +1177,10 @@ func (h *AccountHandler) FailPublicAccountImportProductSync(c *gin.Context) {
 		return
 	}
 	if !ok || cached.SyncAttemptID != req.AttemptID {
+		response.Success(c, gin.H{"accepted": false})
+		return
+	}
+	if cached.Adaptive != nil && cached.Adaptive.Lease != nil {
 		response.Success(c, gin.H{"accepted": false})
 		return
 	}
@@ -1162,7 +1228,7 @@ func (h *AccountHandler) HeartbeatPublicAccountImportProductSync(c *gin.Context)
 	req.ShopID = strings.TrimSpace(req.ShopID)
 	req.AttemptID = strings.TrimSpace(req.AttemptID)
 	req.Scope = strings.TrimSpace(req.Scope)
-	if req.Scope != "" && req.Scope != "shop" && req.Scope != "product" {
+	if req.Scope != "" && req.Scope != "shop" && req.Scope != "product" && !adaptiveScope(req.Scope) {
 		response.BadRequest(c, "Product sync scope is invalid")
 		return
 	}
@@ -1220,6 +1286,10 @@ func (h *AccountHandler) HeartbeatPublicAccountImportProductSync(c *gin.Context)
 	}
 	if !ok || cached.SyncAttemptID != req.AttemptID || !publicAccountImportProductSyncIsActive(cached, now) {
 		response.Error(c, http.StatusConflict, "Product sync job lease expired")
+		return
+	}
+	if cached.Adaptive != nil && cached.Adaptive.Lease != nil && req.Scope != cached.Adaptive.Lease.Kind {
+		response.Error(c, http.StatusConflict, "Task scope mismatch")
 		return
 	}
 	cached.SyncHeartbeatAt = now.Format(time.RFC3339Nano)
@@ -1372,6 +1442,11 @@ func snapshotPublicAccountImportProductStore() (publicAccountImportProductStore,
 
 func clonePublicAccountImportProductStore(store publicAccountImportProductStore) publicAccountImportProductStore {
 	clone := publicAccountImportProductStore{Version: store.Version, Shops: maps.Clone(store.Shops)}
+	if store.Adaptive != nil {
+		s := *store.Adaptive
+		s.History = slices.Clone(s.History)
+		clone.Adaptive = &s
+	}
 	for shopID, cached := range clone.Shops {
 		clone.Shops[shopID] = clonePublicAccountImportProductShopCache(cached)
 	}
@@ -1379,6 +1454,16 @@ func clonePublicAccountImportProductStore(store publicAccountImportProductStore)
 }
 
 func clonePublicAccountImportProductShopCache(cached publicAccountImportProductShopCache) publicAccountImportProductShopCache {
+	if cached.Adaptive != nil {
+		a := *cached.Adaptive
+		a.Catalog = slices.Clone(a.Catalog)
+		if a.Lease != nil {
+			l := *a.Lease
+			l.Versions = maps.Clone(l.Versions)
+			a.Lease = &l
+		}
+		cached.Adaptive = &a
+	}
 	cached.Products = slices.Clone(cached.Products)
 	cached.ProductRefreshes = maps.Clone(cached.ProductRefreshes)
 	return cached
@@ -1407,6 +1492,10 @@ func publicAccountImportProductSnapshot(shops []PublicAccountImportShop, store p
 			pending++
 			continue
 		}
+		if cached.Adaptive != nil && cached.Adaptive.Generation > 0 && adaptiveProjectionEnabled() {
+			products = append(products, adaptiveVisibleProducts(cached)...)
+			continue
+		}
 		snapshotState := publicAccountImportProductSnapshotState(shop, cached, now, strictMode)
 		if snapshotState != "fresh" {
 			pending++
@@ -1425,6 +1514,9 @@ func publicAccountImportProductSnapshot(shops []PublicAccountImportShop, store p
 		}
 	}
 	sort.SliceStable(products, func(i, j int) bool {
+		if (products[i].PayablePrice == nil) != (products[j].PayablePrice == nil) {
+			return products[i].PayablePrice != nil
+		}
 		leftPrice := publicAccountImportProductEffectiveUnitPrice(products[i])
 		rightPrice := publicAccountImportProductEffectiveUnitPrice(products[j])
 		if leftPrice != rightPrice {
@@ -2174,6 +2266,18 @@ func publicAccountImportProductSyncStatusForShop(shop PublicAccountImportShop, c
 	} else if failed || strings.TrimSpace(cached.Error) != "" {
 		state = "failed"
 	}
+	if a := cached.Adaptive; a != nil && a.Generation > 0 && adaptiveProjectionEnabled() {
+		period, _ := adaptivePeriods(a)
+		expires := a.CatalogStream.Next
+		if !expires.After(a.CatalogAt) {
+			expires = a.CatalogAt.Add(period)
+		}
+		snapshotState := "fresh"
+		if now.After(expires) {
+			snapshotState = "expired"
+		}
+		return PublicAccountImportProductSyncStatus{ShopID: shop.ID, State: state, UpdatedAt: a.CatalogAt.Format(time.RFC3339Nano), SnapshotState: snapshotState, SnapshotUpdatedAt: a.CatalogAt.Format(time.RFC3339Nano), SnapshotExpiresAt: expires.Format(time.RFC3339Nano), RetryAfterSeconds: publicAccountImportProductRefreshRetryAfter(shop, cached, now)}
+	}
 	strictMode := publicAccountImportProductStrictMode()
 	snapshotState := publicAccountImportProductSnapshotState(shop, cached, now, strictMode)
 	expiresAt := ""
@@ -2297,6 +2401,10 @@ func savePublicProductCacheLocked() error {
 		return err
 	}
 	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
 		_ = temp.Close()
 		return err
 	}

@@ -253,11 +253,21 @@ describe('authoritative catalog prices', () => {
 		expect(publicProductUnitPrice(product)).toBe(1.2)
 	})
 
-	it('derives unit price from payable price and falls back to the legacy list price', () => {
+	it('derives unit price from payable price and keeps unverified prices pending', () => {
 		expect(publicProductUnitPrice({ ...product, unit_price: undefined, payable_price: 6, minimum_quantity: 3 })).toBe(2)
-		expect(publicProductUnitPrice({ ...product, unit_price: undefined, payable_price: undefined, price: 7 })).toBe(7)
-		expect(publicProductPayablePrice({ ...product, payable_price: null as any, price: 7 })).toBe(7)
+		expect(publicProductUnitPrice({ ...product, unit_price: undefined, payable_price: undefined, price: 7 })).toBeNull()
+		expect(publicProductPayablePrice({ ...product, payable_price: null as any, price: 7 })).toBeNull()
 	})
+
+  it.each(['asc', 'desc'] as const)('sorts pending prices last in %s order', order => {
+    const pending = { ...product, id: 'pending', price: 0, unit_price: undefined, payable_price: undefined, quote_pending: true }
+    const free = { ...product, id: 'free', unit_price: 0, payable_price: 0 }
+    const result = filterAndSortPublicProducts([pending, product, free], '', order)
+    expect(result.at(-1)?.id).toBe('pending')
+    expect(publicProductPayablePrice(free)).toBe(0)
+    expect(publicProductPayablePrice({ ...product, quote_pending: true })).toBeNull()
+    expect(publicProductUnitPrice({ ...product, quote_pending: true })).toBeNull()
+  })
 
 })
 

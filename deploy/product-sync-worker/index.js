@@ -2,7 +2,7 @@ const { chromium, firefox } = require('playwright-core')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
-const { collectAuthoritativeSnapshot, collectProductQuote } = require('./catalog-sync')
+const { collectAuthoritativeSnapshot, collectProductQuote, collectCatalog, collectQuoteBatch } = require('./catalog-sync')
 const {
   AdaptiveRateLimiter,
   buildWAFResponseFingerprint,
@@ -469,8 +469,12 @@ async function postShopAPI(lane, shopToken, path, body, deadlineAt, signal) {
     error.circuitOpenUntil = globalRequestLimiter.circuitUntil(egressID)
     throw error
   }
-  await takeRequestTokens(lane.requestLimiter, globalRequestLimiter, signal, deadlineAt)
+  if (lane.syncCost?.automatic) {
+    await lane.requestLimiter.take(signal)
+    await globalRequestLimiter.take(signal, deadlineAt, { automatic: true, probe: lane.syncCost.probe })
+  } else await takeRequestTokens(lane.requestLimiter, globalRequestLimiter, signal, deadlineAt)
   ensureJobDeadline(deadlineAt, signal)
+  if (lane.syncCost) lane.syncCost.requests++
   const requestURL = new URL(path, shopHomeURL)
   if (requestURL.origin !== shopOrigin) throw new Error(`shop API path escapes ${shopOrigin}`)
   const requestFormBody = encodeShopRequestBody(body)
@@ -744,6 +748,8 @@ function resetChallengeAttemptState(state = {}) {
 }
 
 async function solveChallengeForContext(lane, context, page, proxy, signal, challengeResponse, challengeRequest, attemptState) {
+  const verificationStarted = performance.now()
+  try {
   const result = await challengeManager.solve({
     context,
     page,
@@ -758,6 +764,9 @@ async function solveChallengeForContext(lane, context, page, proxy, signal, chal
   })
   lane.challengeState.failureCount = 0
   return result
+  } finally {
+    if (lane.syncCost) lane.syncCost.verification_seconds += (performance.now() - verificationStarted) / 1000
+  }
 }
 
 async function recoverLaneChallenge(lane, signal, challengeResponse, challengeRequest, attemptState) {
@@ -1005,6 +1014,7 @@ async function reportJobFailure(job, error, backendClient = backend) {
         error: errorMessage(error),
         kind: String(error?.kind || '').slice(0, 32),
         retry_after_seconds: Math.max(0, Math.ceil((Number(error?.retryAfterMilliseconds) || 0) / 1000)),
+        ...(error?.cost?.requests >= 1 ? { cost: error.cost } : {}),
       }),
     })
   } catch (reportError) {
@@ -1013,14 +1023,43 @@ async function reportJobFailure(job, error, backendClient = backend) {
 }
 
 async function syncJob(lane, job, dependencies = {}) {
-  const deadlineAt = Date.now() + maxJobMilliseconds
+  const isAdaptive = ['catalog', 'quote_batch'].includes(job.scope)
+  const deadlineAt = Date.now() + (job.scope === 'quote_batch' ? 30_000 + shopRequestTimeoutMilliseconds + 5_000 : maxJobMilliseconds)
   const controller = new AbortController()
   const backendClient = dependencies.backend || backend
   const collectProduct = dependencies.collectProductQuote || collectProductQuote
   const collectShop = dependencies.collectAuthoritativeSnapshot || collectAuthoritativeSnapshot
   const heartbeat = startJobHeartbeat(lane, job, controller, backendClient)
+  const costStarted = performance.now()
+  lane.syncCost = { requests: 0, logical: 0, verification_seconds: 0, automatic: job.automatic === true, probe: job.probe === true }
+  let publishedFailure = false
+  const measuredCost = () => ({ requests: lane.syncCost.requests, retries: Math.max(0, lane.syncCost.requests - lane.syncCost.logical),
+    lane_seconds: (performance.now() - costStarted) / 1000, verification_seconds: lane.syncCost.verification_seconds })
   try {
     ensureLaneContextReady(lane)
+    if (isAdaptive) {
+      const collect = job.scope === 'catalog' ? (dependencies.collectCatalog || collectCatalog) : (dependencies.collectQuoteBatch || collectQuoteBatch)
+      const snapshot = await collect({ shopToken: job.token, products: job.products, maxSeconds: job.max_seconds,
+        quoteSemaphore: globalQuoteSemaphore, signal: controller.signal,
+        post: (path, body) => {
+          lane.syncCost.logical++
+          return postShopAPIWithPressureRecovery(lane, job.token, path, body, deadlineAt, controller.signal)
+        } })
+      throwIfAborted(controller.signal)
+      const { failure, ...payload } = snapshot
+      await backendClient(`/api/v1/public/account-import/products/${job.scope === 'catalog' ? 'sync-catalog' : 'sync-quotes'}`, {
+        method: 'POST', signal: controller.signal,
+        body: JSON.stringify({ shop_id: job.shop_id, attempt_id: job.attempt_id,
+          ...(job.scope === 'quote_batch' ? { catalog_generation: job.catalog_generation } : {}),
+          ...payload, cost: measuredCost() }),
+      })
+      publishedFailure = !!failure
+      if (failure) throw failure
+      await heartbeat.stop()
+      console.log(`${new Date().toISOString()} synced ${job.shop_name}: ${job.scope} ${snapshot.products.length} products`)
+      publishStatus({ last_success_at: new Date().toISOString(), last_shop_id: job.shop_id, last_error: '' })
+      return
+    }
     const snapshot = job.scope === 'product'
       ? await collectProduct({
         shopToken: job.token, goodsKey: job.goods_key || job.product?.goods_key, product: job.product || {}, quoteSemaphore: globalQuoteSemaphore, signal: controller.signal,
@@ -1056,8 +1095,11 @@ async function syncJob(lane, job, dependencies = {}) {
   } catch (error) {
     await heartbeat.stop()
     const finalError = syncJobFinalError(error, controller.signal)
-    if (finalError?.kind !== 'lease_lost') await reportJobFailure(job, finalError, backendClient)
+    if (isAdaptive) finalError.cost = measuredCost()
+    if (finalError?.kind !== 'lease_lost' && !publishedFailure) await reportJobFailure(job, finalError, backendClient)
     throw finalError
+  } finally {
+    lane.syncCost = null
   }
 }
 
@@ -1590,7 +1632,7 @@ async function runLane(lane) {
   while (activeBrowser?.isConnected() && !stopping) {
     try {
       ensureLaneContextReady(lane)
-      const data = await backend('/api/v1/public/account-import/products/sync-job?limit=1')
+      const data = await backend('/api/v1/public/account-import/products/sync-job?limit=1&capabilities=catalog,quote_batch')
       const job = Array.isArray(data.jobs) && data.jobs.length > 0 ? data.jobs[0] : data.job
       publishLaneStatus(lane, {
         state: job ? 'syncing' : 'idle',
@@ -1692,7 +1734,7 @@ async function runLane(lane) {
           })
         }
       }
-      await sleep(activePollMilliseconds)
+      if (!['catalog', 'quote_batch'].includes(job.scope)) await sleep(activePollMilliseconds)
     } catch (error) {
       if (error?.restartLane || error?.restartBrowser) throw error
       console.error(`${new Date().toISOString()} lane ${lane.index + 1} sync polling failed: ${errorMessage(error)}`)

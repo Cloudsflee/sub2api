@@ -1277,6 +1277,14 @@ func newPublicProductTestRouter(t *testing.T, shops []PublicAccountImportShop, s
 	publicProductCacheLoaded = true
 	publicProductLastJobAt = time.Now().UTC()
 	publicProductCacheMu.Unlock()
+	for _, cached := range store.Shops {
+		if cached.Adaptive != nil {
+			control := defaultPublicAccountImportSyncControl()
+			control.Mode = "adaptive"
+			require.NoError(t, savePublicAccountImportSyncControlLocked(control))
+			break
+		}
+	}
 	t.Cleanup(func() {
 		publicProductCacheMu.Lock()
 		publicProductCache = previousCache
@@ -1292,6 +1300,9 @@ func newPublicProductTestRouter(t *testing.T, shops []PublicAccountImportShop, s
 	router.GET("/products/sync-job", h.GetPublicAccountImportProductSyncJob)
 	router.GET("/products/sync-control", h.GetPublicAccountImportSyncControl)
 	router.PUT("/products/sync-control", h.PutPublicAccountImportSyncControl)
+	router.POST("/products/sync-catalog", h.SubmitPublicAccountImportCatalog)
+	router.POST("/products/sync-quotes", h.SubmitPublicAccountImportQuotes)
+	router.POST("/products/sync-resources", h.SubmitPublicAccountImportResources)
 	router.POST("/products/refresh", h.RequestPublicAccountImportProductRefresh)
 	router.POST("/products/refresh-one", h.RequestPublicAccountImportProductRefreshOne)
 	router.GET("/products/refresh-one/status", h.GetPublicAccountImportProductRefreshOneStatus)

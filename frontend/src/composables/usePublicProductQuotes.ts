@@ -40,7 +40,7 @@ interface Task {
 }
 
 function identity(product: PublicAccountImportProduct): string {
-  return JSON.stringify([product.id, product.shop_id, publicProductGoodsKey(product.url) || product.url])
+  return JSON.stringify([product.id, product.shop_id, publicProductGoodsKey(product.url) || product.url, product.metadata_version || ''])
 }
 
 function productQuote(product: PublicAccountImportProduct): StoredQuote {
@@ -84,7 +84,7 @@ export function usePublicProductQuotes(catalog: Ref<PublicAccountImportProduct[]
   function withQuoteOverlay(product: PublicAccountImportProduct): PublicAccountImportProduct {
     const quote = overrides.value[identity(product)]
     return quote && Date.parse(quote.quote_verified_at) >= publicProductQuoteTime(product)
-      ? { ...product, ...quote }
+      ? { ...product, ...quote, ...(product.quote_pending ? { quote_pending: false } : {}) }
       : product
   }
 

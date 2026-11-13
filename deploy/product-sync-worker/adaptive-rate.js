@@ -181,6 +181,8 @@ class AdaptiveRateLimiter {
     this.sleep = options.sleep || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
     this.startedAt = this.now()
     this.nextRequestAt = this.startedAt
+    this.nextAutomaticAt = this.startedAt
+    this.nextProbeAt = this.startedAt
     this.lastPressureAt = 0
     this.pressureUntil = 0
     this.globalSilenceUntil = 0
@@ -193,23 +195,31 @@ class AdaptiveRateLimiter {
     this.pending = Promise.resolve()
   }
 
-  take(signal, deadlineAt = Number.POSITIVE_INFINITY) {
+  take(signal, deadlineAt = Number.POSITIVE_INFINITY, budget = {}) {
+    // Budget waits stay outside the legacy FIFO so a first-quote probe cannot
+    // hold the manual reserve. All grants update the same global clock without
+    // an await between checking and consuming it.
+    if (budget.automatic) return this.takeNext(signal, deadlineAt, budget)
     const request = this.pending.then(() => this.takeNext(signal, deadlineAt))
     this.pending = request.catch(() => {})
     return request
   }
 
-  async takeNext(signal, deadlineAt) {
+  async takeNext(signal, deadlineAt, budget = {}) {
     while (true) {
       throwIfAborted(signal)
       const now = this.now()
-      const readyAt = Math.max(this.nextRequestAt, this.globalSilenceUntil)
+      const readyAt = Math.max(this.nextRequestAt, this.globalSilenceUntil,
+        budget.automatic ? this.nextAutomaticAt : 0,
+        budget.automatic && budget.probe ? this.nextProbeAt : 0)
       if (readyAt >= deadlineAt) throw new AdaptiveRateDeadlineError()
       if (readyAt > now) {
         await waitForPromiseOrAbort(this.sleep(Math.max(1, Math.ceil(readyAt - now))), signal)
         continue
       }
       this.nextRequestAt = now + (1000 / this.currentRate)
+      if (budget.automatic) this.nextAutomaticAt = now + 1000 / (this.currentRate * .7)
+      if (budget.automatic && budget.probe) this.nextProbeAt = now + 1000 / (this.currentRate * .07)
       return now
     }
   }
@@ -218,7 +228,11 @@ class AdaptiveRateLimiter {
     const next = clampRate(rate, this.minimumRate, this.maximumRate, 'adaptive request rate')
     const changed = Math.abs(next - this.currentRate) > 1e-9
     this.currentRate = next
-    if (changed) this.nextRequestAt = Math.max(this.nextRequestAt, now + (1000 / next))
+    if (changed) {
+      this.nextRequestAt = Math.max(this.nextRequestAt, now + (1000 / next))
+      this.nextAutomaticAt = Math.max(this.nextAutomaticAt, now + 1000 / (next * .7))
+      this.nextProbeAt = Math.max(this.nextProbeAt, now + 1000 / (next * .07))
+    }
     return changed
   }
 

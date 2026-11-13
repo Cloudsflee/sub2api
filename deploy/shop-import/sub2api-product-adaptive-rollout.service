@@ -1,0 +1,15 @@
+[Unit]
+Description=Sub2api adaptive scheduler shadow handoff and cycle acceptance
+After=sub2api-product-resource.service
+Requires=sub2api-product-resource.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/sub2api-product-scheduler
+ExecStart=/usr/bin/python3 -u adaptive_rollout.py --target http://127.0.0.1:8080 --directory /opt/sub2api-product-scheduler/run --import-directory /opt/sub2api-shop-import-20261112 --import-service sub2api-shop-import@20261112.service
+Restart=on-failure
+RestartSec=190
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

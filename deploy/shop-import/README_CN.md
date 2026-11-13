@@ -1,5 +1,9 @@
 # 候选店铺分批导入
 
+2026-11-13 新增后端 adaptive 模式。该模式下导入器只登记与记录进度，压力、批次接入和恢复统一由后端负责；
+独立 `resource_agent.py` 常驻宿主机上报资源。协议、有效商品档位、4.4 倍预测接入试探余量与切换流程见
+[按有效商品量调度](../product-sync-worker/ADAPTIVE_CN.md)。下面旧控制器的调频流程仅适用于 legacy / shadow。
+
 在已核实的运维宿主机运行 Python 3 控制器。它仅通过现有 `POST /shops` 登记，使用
 `GET /products/sync-control` 观察调度；**不请求 `/products/sync-job`**，不额外催采。
 原有普通、可信、不可信基础周期为 60、15、240 分钟，统一倍率作用于全部店铺。

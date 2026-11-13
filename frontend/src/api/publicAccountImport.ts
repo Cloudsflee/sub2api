@@ -83,6 +83,9 @@ export interface PublicAccountImportProduct {
   stock: number
   minimum_quantity: number
   quote_verified_at?: string
+  quote_pending?: boolean
+  catalog_updated_at?: string
+  metadata_version?: string
   updated_at: string
 }
 

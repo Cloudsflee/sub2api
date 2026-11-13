@@ -1,0 +1,15 @@
+[Unit]
+Description=Sub2api product scheduler resource observations
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/sub2api-product-scheduler
+ExecStart=/usr/bin/python3 -u resource_agent.py --target http://127.0.0.1:8080
+Restart=on-failure
+RestartSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
