@@ -1,0 +1,2060 @@
+{
+  "version": "2026-11-17",
+  "observed_at": "2026-11-16T14:46:08.631804+00:00",
+  "shops": 243,
+  "offers": 5171,
+  "pending": 1180,
+  "unresolved": 85,
+  "sample_count": 77,
+  "profiles": [
+    {
+      "id": "ai_personal",
+      "name": "ChatGPT/Codex个人订阅",
+      "stage": "priority",
+      "offers": 1233,
+      "position": "完整周期的个人订阅可作为主线候选；优先能留在客户自有账号的明确权益，成品号另列交付风险。",
+      "subtypes": "Plus、Go、Pro；原号代充/CDK、独享成品、仅反代或token、短保与残余周期必须分开。Codex限额不等于可兑现的美元API余额。",
+      "customer": "假设客户是已用免费版并遇到明确限制的办公者、程序员与创作者；只想偶尔问答者通常不需要完整Plus。",
+      "competition": "Plus官方20美元/月≈133.62元。样本81.37元是成品号，不等同客户原号官方订阅；原号方案通常更贵。Go、官方Free、DeepSeek可满足部分基础需求，不能替代所有Plus功能。公开目录多店报价可被客户找到，尚无专属拿货优势。",
+      "information": "主要是套餐选择、付款与开通便利、问题处理。客户知道官方价格后仍可能付服务费；若只靠隐瞒免费版或把短保卖成月卡，解释和退款成本会吞掉价差。",
+      "operations": "确认剩余天数、账号与恢复控制权、是否含邮箱、重置周期、使用端和替换规则。封号保障与掉订阅保障不同，标题的30天承诺未经实测。",
+      "economics": "81.37元成本和133.62元官方参考之间有52.25元名义空间；这不是毛利。原号成本上升、补发与一次长客服都可能明显压缩贡献。按实际成交价测算，不设统一折扣门槛。",
+      "repeat": "月度复购有可能；客户形成使用习惯、保留历史并获得及时支持，比持续换号更可能留存。尚无实际续费数据。",
+      "test": "先选1个完整30天成品和1个原号方案做规格对照；获取目标客户对权益和售后承诺的反馈。采购验证需另定预算，先不批量囤号。",
+      "channels": [
+        "优先验证：明确任务与用量后介绍套餐，先积累客户。",
+        "暂缓规模投放：核对实际类目、交付形式及凭证能力。",
+        "有条件小额试售：规格清楚、可举证交付后再测搜索成交。",
+        "优先验证内容：展示具体任务和套餐选择；获准工具承接咨询。"
+      ],
+      "examples": [
+        {
+          "id": "0bb9bde48c0b32f27d53b136",
+          "title": "【质保30天封号和订阅】OpenAI Plus半价代充独享成品【支持续费，升级，换绑】",
+          "shop_id": "a30befb5c931eb5efbb237ac",
+          "shop_name": "牟利ai",
+          "source_url": "https://wzyp.cn/item/n0li9v",
+          "purchase_price": 81.37,
+          "quote_verified_at": "2026-11-15T23:06:12.367Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "b669f8f4c31314182eca6d0a",
+          "title": "【质保稳定30天（保封号），日区成品号】官方成品新渠道plus成品号 质保30天",
+          "shop_id": "f2b87100d6305c6fdf3e8190",
+          "shop_name": "竹子猫",
+          "source_url": "https://wzyp.cn/item/mh5t4v",
+          "purchase_price": 85.49,
+          "quote_verified_at": "2026-11-15T16:53:16.92Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "046468ea1b1d7e6b2acae2de",
+          "title": "🇪🇬Go 月卡 埃及卡充 质保30天",
+          "shop_id": "9f103560e2589d3a1f0ed854",
+          "shop_name": "chiyu",
+          "source_url": "https://wzyp.cn/item/b33e9l",
+          "purchase_price": 34.61,
+          "quote_verified_at": "2026-11-15T18:45:42.508Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "ChatGPT Plus 官方说明",
+          "url": "https://help.openai.com/en/articles/6950777-what-is-chatgpt-plus",
+          "fact": "Plus 20美元/月；订阅和API计费分开；使用额度会变化。",
+          "status": "正文已读取"
+        },
+        {
+          "title": "ChatGPT Go 官方发布",
+          "url": "https://openai.com/index/introducing-chatgpt-go/",
+          "fact": "美国Go 8美元/月；其他市场存在本地价格，不能代替埃及或菲律宾结算价。",
+          "status": "前序研究正文已读取"
+        },
+        {
+          "title": "DeepSeek 官方应用",
+          "url": "https://www.deepseek.com/zh/download/",
+          "fact": "官方免费聊天应用可覆盖部分基础任务，不代表与所有付费工具、模型或API等价。",
+          "status": "前序研究官方页面"
+        },
+        {
+          "title": "中国银行外汇牌价",
+          "url": "https://www.boc.cn/sourcedb/whpj/",
+          "fact": "沿用2026-11-16 22:35:34美元现汇卖出668.12元/100美元，即6.6812；仅作本轮可重复换算，不是刷卡含税结算价。",
+          "status": "前序研究已记录时点"
+        }
+      ]
+    },
+    {
+      "id": "ai_team",
+      "name": "ChatGPT团队席位与轮转共享",
+      "stage": "hold",
+      "offers": 227,
+      "position": "轮转共享、母号与短时席位不适合作为面向普通新客户的稳定月卡。",
+      "subtypes": "正式团队席位、母号、K12、短时轮车、到点踢人、优惠码混在同类；不能统一按月会员计价。",
+      "customer": "主要对应知道工作区和短时限额的技术用户；大众客户往往需要稳定历史、连续使用和明确归属。",
+      "competition": "应对比实际工作区套餐及使用时长，不能按个人Plus或标题中的500—1000刀额度直接估值。自有个人订阅、按需API和真实团队方案都是替代。",
+      "information": "信息差集中在复杂额度和交付方式，解释门槛高。客户学会机制后比价容易；这里的低价常是使用时长和控制权缩水。",
+      "operations": "管理员移除、整组失效、工作区数据迁移、额度争抢和同批关联故障。上游多个店名不代表故障独立。",
+      "economics": "低采购价无法抵消整组补发尾部风险；必须按可用小时或完整周期成本核算，不能按一次成功登录计收入。",
+      "repeat": "短时用户可能重复购买，但维护和迁移也重复发生；当前无稳定客户，不宜用高频售后换流水。",
+      "test": "先把正常席位与轮转商品彻底拆开；仅完整周期、权限和容量可验收的席位进入后续验证。",
+      "channels": [
+        "暂缓：普通客户不易接受轮转与数据迁移。",
+        "暂缓：标题和实际时长错配极易争议。",
+        "暂缓：短时额度很难形成清晰交付凭证。",
+        "暂缓销售：可解释套餐区别，不能把轮转包装成稳定独享。"
+      ],
+      "examples": [
+        {
+          "id": "a4a7eb247c4e66e64eca2fc0",
+          "title": "长效Team标准账号平替plus | 已接马 | 发账密2FA | 质保21天",
+          "shop_id": "a9ba8056159b60c6460c6742",
+          "shop_name": "AI-shop",
+          "source_url": "https://wzyp.cn/item/x9uih2",
+          "purchase_price": 42,
+          "quote_verified_at": "2026-11-15T15:42:37.43Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "eb008f801fd77424ce4fc4b9",
+          "title": "G codex12到24小时team相当于plus额度比plus多",
+          "shop_id": "a30befb5c931eb5efbb237ac",
+          "shop_name": "牟利ai",
+          "source_url": "https://wzyp.cn/item/3dr47f",
+          "purchase_price": 25.75,
+          "quote_verified_at": "2026-11-15T18:27:32.9Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "ChatGPT Plus 官方说明",
+          "url": "https://help.openai.com/en/articles/6950777-what-is-chatgpt-plus",
+          "fact": "Plus 20美元/月；订阅和API计费分开；使用额度会变化。",
+          "status": "正文已读取"
+        }
+      ]
+    },
+    {
+      "id": "claude",
+      "name": "Claude订阅与成品账号",
+      "stage": "trial",
+      "offers": 105,
+      "position": "仅对已有明确Claude需求的人验证便利服务；不把高价代充当普遍低价机会。",
+      "subtypes": "Pro、Max 5x、20x；原号代充、成品、不同地区和保障范围分别计价。",
+      "customer": "重度编程、长文与办公任务使用者；需先证明Free或其他工具达不到其任务要求。",
+      "competition": "官方Pro月付20美元≈133.62元，年付200美元需一次支付。目录Pro代充123.60元仅差约10.02元，其他152元以上已高于该美元参考。Max 20x成品800元与官方200美元存在名义差额，但归属与保障不可等同。",
+      "information": "选用Pro还是Max、付款和迁移服务有价值；专业客户通常更会比价。不能假定客户会为所有代充溢价买单。",
+      "operations": "有些标题写需先过KYC、不到帐不售后、只保订阅不保账号。必须把这些条件呈现给客户，避免代充后无法用。",
+      "economics": "Pro商品纯转售空间偏窄；Max资金占用及单次退款更大。按完整可用周期计成本，高价套餐须有需求再采购。",
+      "repeat": "重度客户续费潜力较高，但会持续比较性能、限制与服务；目前是人群假设。",
+      "test": "仅挑1个明确支持客户现有账户、失败可处理的SKU；先测任务适配与交付成本，再考虑Max。",
+      "channels": [
+        "有条件小额试售：面向明确指名需求的客户。",
+        "暂缓：高客单和账号条件增加保障成本。",
+        "有条件小额试售：先确认类目及账户适用条件。",
+        "有条件验证内容：用真实任务对比；流量不等于高价套餐需求。"
+      ],
+      "examples": [
+        {
+          "id": "b227e6f65b285b92e02c016a",
+          "title": "Claude PRO代充一月",
+          "shop_id": "b6a3a1a9bc2e258ab0d0a1ed",
+          "shop_name": "西瓜皮",
+          "source_url": "https://wzyp.cn/item/p4rku9",
+          "purchase_price": 123.6,
+          "quote_verified_at": "2026-11-15T21:40:26.434Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "b03a337644bfab2d8ada17b5",
+          "title": "Claude 20✖️Max成品号 订阅质保",
+          "shop_id": "4b8bf0374fd08d34b3770dc1",
+          "shop_name": "AI工具大全",
+          "source_url": "https://wzyp.cn/item/oiasog",
+          "purchase_price": 800,
+          "quote_verified_at": "2026-11-15T23:36:39.697Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "Claude 官方价格",
+          "url": "https://claude.com/pricing",
+          "fact": "Pro月付20美元、年付200美元；Max 5x 100美元/月、20x 200美元/月。支持中心旧页面直接打开404，本条采用官方价格页搜索结果，未进入结算。",
+          "status": "官方价格页搜索结果"
+        },
+        {
+          "title": "中国银行外汇牌价",
+          "url": "https://www.boc.cn/sourcedb/whpj/",
+          "fact": "沿用2026-11-16 22:35:34美元现汇卖出668.12元/100美元，即6.6812；仅作本轮可重复换算，不是刷卡含税结算价。",
+          "status": "前序研究已记录时点"
+        }
+      ]
+    },
+    {
+      "id": "google_ai",
+      "name": "Gemini/Google AI订阅",
+      "stage": "priority",
+      "offers": 104,
+      "position": "名义价差和内容解释空间较大，优先厘清优惠资格、Plus/Pro等级及原号权益。",
+      "subtypes": "AI Plus兑换链接、AI Pro原号代开、成品账号、家庭组、Ultra；6个月、1年和残余期限不得混比。",
+      "customer": "需要Google生态、文档处理、研究或创作工具的人；学生与非学生应分别判断。",
+      "competition": "美国AI Plus 4.99美元/月、Pro 19.99美元/月；目录10.71元的6个月链接明确是AI Plus，不能拿Pro六个月原价宣传节省。官方存在学生优惠，但地区和资格不同；不满足资格者不能被假定可免费获取。",
+      "information": "优惠发现、资格判断、套餐差别和激活帮助都有价值；链接本身容易被传播复制，服务和持续有效性比隐藏入口更可持续。",
+      "operations": "确认原号适用、新老用户、地区、是否绑卡、到期续费、家庭限制、可用功能及失效退款。商家写无需绑卡不等于已核实。",
+      "economics": "低成本是验证优势，不是巨大利润的证明；同类链接报价接近，成交价需实测。若只有一次性优惠，续费成本可能跳升。",
+      "repeat": "首期6—12个月意味着短期复购低；可通过真正有用的使用服务延长关系，不能把免费资格代办收益年年复用。",
+      "test": "把Plus链接与Pro原号分别列卡片；先核实商品和资格，再各找对应人群验证其愿付价格，避免混售。",
+      "channels": [
+        "优先验证：把资格、权益、到期条件讲清。",
+        "有条件小额试售：仅标准化权益与允许类目，先留足交付凭证。",
+        "有条件小额试售：不能把Plus链接挂成Pro。",
+        "优先验证内容：适合做套餐与使用场景对比，资格说明本身能筛客。"
+      ],
+      "examples": [
+        {
+          "id": "c3943eba214ea0eac0fe4700",
+          "title": "Gemini AI Plus 6个月会员兑换链接（无需绑卡，直接领取）",
+          "shop_id": "5abf641a47a99cc033890930",
+          "shop_name": "NiuGe AI 加钟站",
+          "source_url": "https://wzyp.cn/item/9l9z6f",
+          "purchase_price": 10.71,
+          "quote_verified_at": "2026-11-16T00:20:14.175Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "00914b13065068f4a62e2f3b",
+          "title": "Gemini Pro 6个月 会员代开（充自己账户上）",
+          "shop_id": "9f103560e2589d3a1f0ed854",
+          "shop_name": "chiyu",
+          "source_url": "https://wzyp.cn/item/yvw8bm",
+          "purchase_price": 12.05,
+          "quote_verified_at": "2026-11-16T00:11:33.911Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "04814d65e09c41b700fd9f0c",
+          "title": "Gemini  pro 成品号（美区 账号，）12个月",
+          "shop_id": "4c416267b331039f7fe52fd1",
+          "shop_name": "云端小卖铺",
+          "source_url": "https://wzyp.cn/item/nwnkvw",
+          "purchase_price": 41.19,
+          "quote_verified_at": "2026-11-16T00:16:06.005Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "Google AI 美国套餐",
+          "url": "https://gemini.google/us/subscriptions/?hl=en",
+          "fact": "Free 0美元、AI Plus 4.99美元/月、AI Pro 19.99美元/月；权益不同。",
+          "status": "正文已读取"
+        },
+        {
+          "title": "Google 学生优惠",
+          "url": "https://blog.google/innovation-and-ai/products/gemini-app/student-offer-google-ai/",
+          "fact": "2026年8月活动：符合条件的美国大学生可获12个月AI Pro；其他受支持市场的符合条件大学生为AI Plus；活动资格、支付与后续续费须逐项核对，不能假定所有学生均可用。",
+          "status": "前序研究正文已读取"
+        },
+        {
+          "title": "DeepSeek 官方应用",
+          "url": "https://www.deepseek.com/zh/download/",
+          "fact": "官方免费聊天应用可覆盖部分基础任务，不代表与所有付费工具、模型或API等价。",
+          "status": "前序研究官方页面"
+        }
+      ]
+    },
+    {
+      "id": "grok_muse",
+      "name": "Grok订阅与成品",
+      "stage": "trial",
+      "offers": 208,
+      "position": "当前套餐整合改变比价基准；Premium明确权益的原号方案可看，Plus已出现倒挂样本。",
+      "subtypes": "Plus、Premium、Super、Ultra及旧SuperGrok标签；原号、成品、短保和bot功能分开。Muse另立一类。",
+      "customer": "同时需要Grok、Cursor或X相关权益的用户；只要一种基础功能的人可能选择免费或低档。",
+      "competition": "本次Grok与Cursor官方正文均为8/30/100/200美元月档。目录Plus直充63.86元高于8美元≈53.45元；Premium直充117.42元低于30美元≈200.44元，但同套餐、地区与完整周期尚未实测。旧20美元Cursor Pro索引不能覆盖当前新套餐。",
+      "information": "整合权益和不同模型收费方式具有选型信息差；第三方模型另外收费是关键。客户知道8美元入门档后，不能再靠旧标价维持溢价。",
+      "operations": "核对当前计划名称、共享使用池、bot权限、第三方模型另计规则和完整周期。短保57元商品不是117元完整服务的当然替代。",
+      "economics": "Premium样本名义空间约83元，需扣补发、支持和获客；Plus样本不具备普遍价格优势，但付款便利仍可能单独收费。",
+      "repeat": "有持续使用才有月复购；套餐变更后需要维护说明和客户预期。",
+      "test": "只核对一个完整周期Premium方案；不要同时推广多个旧新名称近似的商品。",
+      "channels": [
+        "有条件小额试售：对同时用多项权益的用户。",
+        "暂缓大规模：套餐命名和权限仍需对齐。",
+        "有条件小额试售：按新套餐明确描述。",
+        "优先验证内容：整合权益如何省钱；不给未实测的功能保证。"
+      ],
+      "examples": [
+        {
+          "id": "df80b7407433d2b7d6773d2a",
+          "title": "G rok Plus 稳定正规渠道月卡直充服务1（不支持G rok bot，支持Cursor、X，质保订阅）",
+          "shop_id": "c8ce9ebf4a469af3feefa971",
+          "shop_name": "gpt成品",
+          "source_url": "https://wzyp.cn/item/814xxw",
+          "purchase_price": 63.86,
+          "quote_verified_at": "2026-11-15T17:39:26.198Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "e52d824ba320af04a5ec97d7",
+          "title": "G rok Premium 4X稳定正规渠道月卡直充服务1（支持G rok Bot、Cursor、X，，质保订阅）",
+          "shop_id": "c8ce9ebf4a469af3feefa971",
+          "shop_name": "gpt成品",
+          "source_url": "https://wzyp.cn/item/3f1zo5",
+          "purchase_price": 117.42,
+          "quote_verified_at": "2026-11-15T22:54:59.511Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "Grok 当前官方价格",
+          "url": "https://x.ai/pricing",
+          "fact": "本次正文为Plus 8、Premium 30、Super 100、Ultra 200美元/月；包含Cursor及X的相应权益，第三方模型使用另计。",
+          "status": "正文已读取"
+        },
+        {
+          "title": "Cursor 当前官方价格",
+          "url": "https://cursor.com/pricing",
+          "fact": "本次正文为Free、Plus 8美元/月、Premium 30美元/月、Super 100美元/月、Ultra 200美元/月；Plus仅Grok模型，第三方模型另计。与搜索缓存中的旧Pro 20美元套餐有差异。",
+          "status": "正文已读取；采用实时正文优先于旧索引"
+        },
+        {
+          "title": "中国银行外汇牌价",
+          "url": "https://www.boc.cn/sourcedb/whpj/",
+          "fact": "沿用2026-11-16 22:35:34美元现汇卖出668.12元/100美元，即6.6812；仅作本轮可重复换算，不是刷卡含税结算价。",
+          "status": "前序研究已记录时点"
+        }
+      ]
+    },
+    {
+      "id": "muse",
+      "name": "Muse订阅、邀请权益与成品",
+      "stage": "hold",
+      "offers": 66,
+      "position": "大量token和邀请奖励的低标价尚未转化为可比较的实际服务价值。",
+      "subtypes": "10亿/310亿token成品、邀请代充、仅首登保障；目录内的Muse名称未完成唯一官方产品映射。",
+      "customer": "假设为尝鲜与开发用户；真实模型、用途与稳定需求未得到证据。",
+      "competition": "未取得可靠官方价目与同规格成交证据。不能用其他品牌的token价格乘以310亿来估算价值；免费AI和已订阅套餐可能已够用。",
+      "information": "发现新工具有短期吸引力，但大数字易掩盖能力、速率和有效期；核心是任务是否真的完成。",
+      "operations": "核实产品域名、模型、额度扣法、过期规则、邀请权益来源的实际条件及恢复机制；不按标题承诺长期稳定。",
+      "economics": "2—20元等样本采购低，但无法据此推导合理售价；客服可能高于货款。先测每个成功任务的真实成本。",
+      "repeat": "依赖一次性邀请额度的商品复购机制不明；低价尝鲜不等于长期客户。",
+      "test": "在官方产品和权益映射完成前不列为首批采购；已有意向时再做限定任务的可用性验证。",
+      "channels": [
+        "暂缓：权益与长期用途不清。",
+        "暂缓：缺少标准SKU。",
+        "暂缓：低价难覆盖解释成本。",
+        "暂缓销售：可观察工具，不以token总量作收益宣传。"
+      ],
+      "examples": [
+        {
+          "id": "330491216bfb720c3488e7b3",
+          "title": "Muse AI 10亿token成品号 11-14批次",
+          "shop_id": "7bccaacc1d26341a3d99704b",
+          "shop_name": "FranklyBuilds的AI小店",
+          "source_url": "https://wzyp.cn/item/470kab",
+          "purchase_price": 2.06,
+          "quote_verified_at": "2026-11-15T22:53:31.325Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "147a7947dcc3b8a67ba8a451",
+          "title": "MUSE AI 310 亿 TOKENS 成品号",
+          "shop_id": "19d7940e639cdd0d532b1793",
+          "shop_name": "GPT-源头供货-招代理",
+          "source_url": "https://wzyp.cn/item/9ojwd1",
+          "purchase_price": 10,
+          "quote_verified_at": "2026-11-15T17:43:55.437Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": []
+    },
+    {
+      "id": "coding",
+      "name": "Cursor/Kiro等编程工具",
+      "stage": "trial",
+      "offers": 44,
+      "position": "编程环境配置和选型比单卖杂牌额度更有机会；新手不宜先做短时号批量生意。",
+      "subtypes": "Cursor新旧订阅、插件次数卡、短时成品、Kiro积分、WorkBuddy；不把对话次数等同模型token。",
+      "customer": "遇到IDE配置、预算控制或模型选择问题的开发者；已有技术积累才容易提供可信支持。",
+      "competition": "当前Cursor价格与旧Pro计划不同；Kiro Pro 20美元/月1000积分，Free每月50积分，首升有当月优惠。105.06元Kiro首登保障并非完整月保，247.72元同标积分甚至超过官方月付参考。",
+      "information": "真实价值在环境诊断、用量控制、模型适配；专业客户知道渠道后仍愿意付费的前提是节省排错时间。",
+      "operations": "插件安全、仓库隐私、模型映射、速率与失效重登；仅首登保障不覆盖客户整月工作。",
+      "economics": "按节省的有效工作时间验证愿付价；客服高强度时低价卡不划算。配置服务收入和卡费分列，不能把自己人工记为零。",
+      "repeat": "稳定工作流可能形成维护需求；客户学会后单纯代开复购会下降。",
+      "test": "用一个非敏感演示项目验证配置和计量；比较官方低档与目录SKU完成同一任务的成本。",
+      "channels": [
+        "有条件小额试售：已有技术问题的客户优先。",
+        "暂缓通用卡密：先把配置范围和交付验收标准化。",
+        "有条件小额试售：软件服务须真实，不能借服务名掩盖账号。",
+        "优先验证技术内容：排错与费用对比能筛出需求。"
+      ],
+      "examples": [
+        {
+          "id": "e769ea612533340f06977b8c",
+          "title": "Kiro Pro 1000额度 【1个月，质保首登】",
+          "shop_id": "9f103560e2589d3a1f0ed854",
+          "shop_name": "chiyu",
+          "source_url": "https://wzyp.cn/item/g7sx91",
+          "purchase_price": 105.06,
+          "quote_verified_at": "2026-11-15T18:09:47.46Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "a37973146bdc49d234e42cde",
+          "title": "2600额度——30天使用时间——10额度1刀",
+          "shop_id": "57c8fb4a46e4167d8948d232",
+          "shop_name": "ai不源头（看公告）",
+          "source_url": "https://wzyp.cn/item/azx6t6",
+          "purchase_price": 83.3,
+          "quote_verified_at": "2026-11-15T18:45:27.358Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "fbcb17e4005b74fb3e9d9425",
+          "title": "WorkBuddy-2500积分",
+          "shop_id": "3ce4ddf07c49a0d5e34e3eda",
+          "shop_name": "哈哈的ai杂货铺",
+          "source_url": "https://wzyp.cn/item/evfsl2",
+          "purchase_price": 15.45,
+          "quote_verified_at": "2026-11-15T22:50:29.588Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "Cursor 当前官方价格",
+          "url": "https://cursor.com/pricing",
+          "fact": "本次正文为Free、Plus 8美元/月、Premium 30美元/月、Super 100美元/月、Ultra 200美元/月；Plus仅Grok模型，第三方模型另计。与搜索缓存中的旧Pro 20美元套餐有差异。",
+          "status": "正文已读取；采用实时正文优先于旧索引"
+        },
+        {
+          "title": "Kiro 官方价格",
+          "url": "https://kiro.dev/pricing/",
+          "fact": "Free每月50积分；Pro 20美元/月1000积分、Pro+ 40美元/月2000积分；首升Pro当月余下时间有优惠，需符合账户与付款条件，不等于任意完整30天。",
+          "status": "正文已读取"
+        }
+      ]
+    },
+    {
+      "id": "creative_ai",
+      "name": "AI图像、视频与音频创作",
+      "stage": "priority",
+      "offers": 57,
+      "position": "图像、视频和音频有可展示的结果，适合内容获客；完整订阅与按成果服务分别试。",
+      "subtypes": "Suno、Runway、即梦/Dreamina、Kling、ElevenLabs、Image2积分和API；按品牌、分辨率、秒数、下载权与商用用途拆分。",
+      "customer": "需要产品图、短视频、配音或音乐的小商家与创作者；只有好奇尝鲜的人未必愿意持续付费。",
+      "competition": "Suno Premier月付30美元≈200.44元，年付288美元相当月均160.35元但需预付一年；目录月卡142.14元有空间。Runway Max95美元9500积分，9k6短保商品不可直接等同。ElevenLabs只有品牌名的30.90元SKU无法判断等级。免费工具、低档套餐和人工外包都应对照实际结果。",
+      "information": "选工具、写需求、筛结果和少返工比入口秘密更耐用；客户了解免费工具后仍可能为完成品和修改服务付费。",
+      "operations": "失败生成也可能耗额度，返工、素材输入、成品下载、水印、分辨率、声音/形象使用边界和客户验收都要写清。首登/3天保障不覆盖一月。",
+      "economics": "算每个验收成品的成本：模型消耗×尝试次数+编辑+沟通+获客。不能用总积分除以理论生成次数假定零废片。",
+      "repeat": "稳定风格和连续内容需求有复购可能；一次性节日视频更偏单次。",
+      "test": "先选一个用途与一个工具，例如商品图或短视频片段；展示真实前后效果，记录每个可交付结果耗时与消耗。",
+      "channels": [
+        "优先验证：以具体创作任务和持续需求筛客。",
+        "有条件小额试售：标准化规格或成果交付，核对类目。",
+        "有条件小额试售：小单结果易展示，返工范围须限定。",
+        "优先验证：视觉结果适合内容；不要用样片承诺每次相同效果。"
+      ],
+      "examples": [
+        {
+          "id": "7bcb7d59ef772249816d4403",
+          "title": "Suno Premier 30天会员订阅卡密｜自助兑换",
+          "shop_id": "daf2acbfab7d15f74d647582",
+          "shop_name": "abcd",
+          "source_url": "https://wzyp.cn/item/wgmx17",
+          "purchase_price": 142.14,
+          "quote_verified_at": "2026-11-15T21:26:46.858Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "76b35814a700ff9739c4dd02",
+          "title": "Runway 9k6积分（质保3天，拿到手尽快使用！）",
+          "shop_id": "53180903db2df59313a51ab9",
+          "shop_name": "Ai 源头厂家",
+          "source_url": "https://wzyp.cn/item/7xt8xf",
+          "purchase_price": 236.9,
+          "quote_verified_at": "2026-11-15T22:26:22.911Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "795df18778cf7e3c6e23a9dc",
+          "title": "即梦Ai国际版 月卡 2440积分 满血Seedance2.5/2.0 可用 视频生成 【Ao】",
+          "shop_id": "3a5275fec03f3ca2aec81c38",
+          "shop_name": "派大星（4000人群）",
+          "source_url": "https://wzyp.cn/item/hkjo7r",
+          "purchase_price": 87.04,
+          "quote_verified_at": "2026-11-15T21:23:34.924Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "39f3a75f9805687ab8a0cfd4",
+          "title": "elevenlabs",
+          "shop_id": "c5dad61978e33582f0e49713",
+          "shop_name": "济南克劳德算力科技有限公司",
+          "source_url": "https://wzyp.cn/item/9y0tzq",
+          "purchase_price": 30.9,
+          "quote_verified_at": "2026-11-15T19:30:03.744Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "Suno 官方价格",
+          "url": "https://suno.com/pricing",
+          "fact": "Pro月付10美元，年付96美元；Premier月付30美元，年付288美元。月度积分分别2500、10000，下载额度、功能和商用权益也有区别。",
+          "status": "正文已读取"
+        },
+        {
+          "title": "Runway 官方价格",
+          "url": "https://runway.com/pricing",
+          "fact": "Standard月付15美元/625积分，Pro 35美元/2250积分，Max 95美元/9500积分；年付月均分别12、28、76美元。Free为一次性125积分。",
+          "status": "正文已读取"
+        },
+        {
+          "title": "ElevenLabs 官方价格",
+          "url": "https://elevenlabs.io/pricing",
+          "fact": "公开价格检索：Starter 6美元/月30000积分，Creator 22美元/月121000积分，首月11美元；目录只有品牌名的SKU不能据此认定套餐。",
+          "status": "官方页面检索结果；未进入结算"
+        },
+        {
+          "title": "DaVinci Resolve 官方页",
+          "url": "https://www.blackmagicdesign.com/cn/products/davinciresolve/",
+          "fact": "存在免费版；它替代部分剪辑需求，不等价于剪映付费模板和AI权益。",
+          "status": "前序研究官方页面"
+        }
+      ]
+    },
+    {
+      "id": "ai_aggregate",
+      "name": "AI聚合、镜像与网页工具",
+      "stage": "trial",
+      "offers": 31,
+      "position": "只为有明确多工具整合或使用便利需求的客户验证；单纯把免费聊天包一层收费竞争力较弱。",
+      "subtypes": "镜像天/周/月卡、聚合网页、MCP密钥、积分创作站；各站模型和计费不可互换。",
+      "customer": "希望一个入口完成几种任务、不愿配置的用户；对隐私或可追溯模型要求高的客户可能不适合。",
+      "competition": "官方免费AI与已有订阅构成替代；若没有独特功能，客户一旦知道官方入口就容易离开。目录月卡56.65元只代表一家镜像报价，不证明便宜或稳定。",
+      "information": "便利价值来自界面、统一工作流和支持，不能以未验证的模型名称来制造价值。",
+      "operations": "站点停服、密钥泄露、聊天数据处理、模型降配与限额；应支持客户保留自身资料。",
+      "economics": "需要将站点成本和客服摊到实际活跃用户；年卡预收不代表全年利润，可能形成长期交付负债。",
+      "repeat": "依赖便利功能持续存在，不能只看首次激活。",
+      "test": "选2个固定任务与官方免费版做盲测；计失败率与耗时，再判断整合是否值得收费。",
+      "channels": [
+        "有条件小额试售：有整合需求才适合。",
+        "暂缓：模型与长期权益需证据。",
+        "有条件小额试售：先按真实功能描述。",
+        "有条件内容验证：展示工作流而非笼统宣称满血。"
+      ],
+      "examples": [
+        {
+          "id": "776fa8d94cf262d41229af9a",
+          "title": "G PLUS镜像站【月卡】",
+          "shop_id": "b1ae056cb77c31bf71d2cc12",
+          "shop_name": "AI gogo渠道 （招代理对接码：gogo）",
+          "source_url": "https://wzyp.cn/item/5oavsz",
+          "purchase_price": 56.65,
+          "quote_verified_at": "2026-11-15T20:28:29.461Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "4e086fb484d3892cb4a32ddb",
+          "title": "oai9.com  MCP 插件密钥30天",
+          "shop_id": "1ea482d80f16319211d64eeb",
+          "shop_name": "AI 小铺（全网最低价）",
+          "source_url": "https://wzyp.cn/item/1p752n",
+          "purchase_price": 72.1,
+          "quote_verified_at": "2026-11-15T19:55:23.557Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "DeepSeek 官方应用",
+          "url": "https://www.deepseek.com/zh/download/",
+          "fact": "官方免费聊天应用可覆盖部分基础任务，不代表与所有付费工具、模型或API等价。",
+          "status": "前序研究官方页面"
+        },
+        {
+          "title": "ChatGPT Plus 官方说明",
+          "url": "https://help.openai.com/en/articles/6950777-what-is-chatgpt-plus",
+          "fact": "Plus 20美元/月；订阅和API计费分开；使用额度会变化。",
+          "status": "正文已读取"
+        }
+      ]
+    },
+    {
+      "id": "api_credits",
+      "name": "API中转与开发用量额度",
+      "stage": "trial",
+      "offers": 400,
+      "position": "更适合技术客户的接入与计量服务；仅按充值面额倒卖容易误判性价比。",
+      "subtypes": "站内余额、模型专用额度、API卡密、次数包；公开美元字样往往只是商户计费单位，不是官方美元。",
+      "customer": "已有程序、自动化任务或稳定调用量的开发者；普通私域新客教育成本高。",
+      "competition": "官方API按模型、输入/输出、缓存及工具用量计费，且有便宜模型选择。目录100刀额度103元不能直接对比100美元官方充值。需先乘实际模型费率和站点倍率，再比较同一成功任务。",
+      "information": "模型选型、成本核算、接入排错、配额告警是真实服务价值；单卖面额容易被技术客户比价。",
+      "operations": "确认模型真实性、可用上下文、缓存计费、并发、失败请求扣费、余额有效期和故障处理；不得仅凭返回的模型字符串认定模型。",
+      "economics": "成本=实际请求扣费×购买余额折算率+重试/备用通道+运维与客服；输出比、缓存命中与失败率足以改变排序。未实测时不承诺每百万token统一超低价。",
+      "repeat": "真实业务会续充，但用量大也放大故障责任和备用资金占用。",
+      "test": "用固定输入输出任务集做可重复小额对比，记录有效结果成本、延迟和失败扣费；不要先充大额。",
+      "channels": [
+        "有条件小额试售：有明确开发任务的人群。",
+        "暂缓大额卡密：计量和售后标准化不足。",
+        "有条件小额试售：接入服务与额度分别说明。",
+        "有条件内容验证：适合技术教程，泛流量转化未验证。"
+      ],
+      "examples": [
+        {
+          "id": "26f4175a42437667733b5bfe",
+          "title": "0310.cloud中转站10刀额度",
+          "shop_id": "151ff1f6946d4fc01352566c",
+          "shop_name": "chatG中转站额度,plus,team账号",
+          "source_url": "https://wzyp.cn/item/qub8o9",
+          "purchase_price": 10.3,
+          "quote_verified_at": "2026-11-15T19:54:29.218Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "26587bde72ab6cd20b759c68",
+          "title": "0310.cloud中转站100刀额度",
+          "shop_id": "151ff1f6946d4fc01352566c",
+          "shop_name": "chatG中转站额度,plus,team账号",
+          "source_url": "https://wzyp.cn/item/9gmirx",
+          "purchase_price": 103,
+          "quote_verified_at": "2026-11-15T19:54:44.639Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "DeepSeek API 官方计费",
+          "url": "https://api-docs.deepseek.com/quick_start/pricing/",
+          "fact": "Flash每百万token：未命中输入0.15/0.30美元、输出0.60/1.20美元，分别为谷/峰；缓存命中另有价格。按模型和真实消耗比较，不按商户内记的美元面额比较。",
+          "status": "正文已读取"
+        },
+        {
+          "title": "ChatGPT Plus 官方说明",
+          "url": "https://help.openai.com/en/articles/6950777-what-is-chatgpt-plus",
+          "fact": "Plus 20美元/月；订阅和API计费分开；使用额度会变化。",
+          "status": "正文已读取"
+        }
+      ]
+    },
+    {
+      "id": "ai_base_accounts",
+      "name": "AI白号、短时号与半成品",
+      "stage": "hold",
+      "offers": 246,
+      "position": "白号、资格号与半成品属于生产投入，不能当完整订阅卖给普通客户。",
+      "subtypes": "Free、未订阅、半价资格、未接码、短时号、仅首登；可能还需付款、资格验证或绑定。",
+      "customer": "懂后续步骤的技术批发买家；当前没有这类稳定客户基础。",
+      "competition": "官方Free开户、已有自有账户和完整成品是替代；0.5元白号与80元月卡不是同一件商品。",
+      "information": "低价吸引力主要来自缺失步骤被忽略；真正可收费的是明确的准备工作和便利。",
+      "operations": "失败注册、恢复控制、验证码、有效期、批次关联失效；批量便宜但占用处理时间。",
+      "economics": "完工成本须加后续订阅、号码、支付和失败损失；不能只拿白号价算毛利。",
+      "repeat": "专业买家可能批量复购，但对价格和稳定性要求高；小额试水未建立优势。",
+      "test": "仅归档，不进入首批面向普通用户的货盘；后续有真实技术买家再按完成率评估。",
+      "channels": [
+        "暂缓：普通客户容易误解权益。",
+        "暂缓：商品标准及交付争议高。",
+        "暂缓：低单价难覆盖售后。",
+        "暂缓销售：不以完整会员名义吸引客户。"
+      ],
+      "examples": [
+        {
+          "id": "3f82ba50396cd52f0310c88f",
+          "title": "(源头)Plus半价资格号，试用1个月(不是 成品Plus!!!)，可以自己换绑，无代充，无售后",
+          "shop_id": "6c84df097b9ac34f9640e0be",
+          "shop_name": "八路奶粉",
+          "source_url": "https://wzyp.cn/item/9ljuo4",
+          "purchase_price": 1.55,
+          "quote_verified_at": "2026-11-15T21:55:09.796Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "4a5a18361bbf2686847ae47b",
+          "title": "全新OpenAI家G账号，已注册好OpenAI开箱即用（不含plus）",
+          "shop_id": "33bc7a108d8998bca1931da9",
+          "shop_name": "【AI全品类源头仓】",
+          "source_url": "https://wzyp.cn/item/ylhiwg",
+          "purchase_price": 0.53,
+          "quote_verified_at": "2026-11-15T18:33:03.251Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "ChatGPT Plus 官方说明",
+          "url": "https://help.openai.com/en/articles/6950777-what-is-chatgpt-plus",
+          "fact": "Plus 20美元/月；订阅和API计费分开；使用额度会变化。",
+          "status": "正文已读取"
+        },
+        {
+          "title": "Gmail 官方开户路径",
+          "url": "https://support.google.com/mail/answer/56256",
+          "fact": "官方提供个人账户创建入口；地区、验证及恢复步骤仍影响客户能否自行完成。",
+          "status": "官方帮助页检索"
+        }
+      ]
+    },
+    {
+      "id": "mail",
+      "name": "邮箱账号与收件服务",
+      "stage": "hold",
+      "offers": 370,
+      "position": "邮箱账号有小众便利需求，但不适合在没有客户基础时作为主力货盘。",
+      "subtypes": "Gmail、Outlook/Hotmail、企业邮箱、临时收件与老号；长期账户和一次性收件完全不同。",
+      "customer": "需要稳定邮件与恢复能力的个人或小团队；批量注册用途另算，不能用其销量假设普通需求。",
+      "competition": "官方创建个人邮箱是基本替代；企业自有域名邮箱可能更适合正式业务。目录低至几角不代表稀缺供给。",
+      "information": "帮助设置、迁移、备份和恢复有便利价值；仅售账号秘密容易被客户掌握，且信任门槛高。",
+      "operations": "账号原始恢复方、二次验证、历史使用、垃圾邮件、登录异常和交付后找回是关键。只改密码不等于拥有恢复控制。",
+      "economics": "单价低，数分钟售后即可吞掉价差；MOQ与失败账号数量必须一起算。",
+      "repeat": "普通用户邮箱开一次用很久；大量复购往往来自另一种专业人群，不能混用经营假设。",
+      "test": "若有客户，优先验证其自有邮箱设置/迁移服务；不先囤批量老号。",
+      "channels": [
+        "附带销售：仅真实邮箱需求，可考虑配置帮助。",
+        "暂缓：账号交付和找回责任难标准化。",
+        "暂缓主卖：低价竞争与恢复纠纷较多。",
+        "有条件内容验证：邮箱整理/设置更有用户价值，售号准入待核。"
+      ],
+      "examples": [
+        {
+          "id": "61d20b2528bd4a216261fd22",
+          "title": "20-24GMAIL邮箱/2FA/随机地区(看教程还不会使用的别拍)",
+          "shop_id": "f66f323c33b3635d7e7aa5af",
+          "shop_name": "幻境MirageAI",
+          "source_url": "https://wzyp.cn/item/h48bg0",
+          "purchase_price": 8.72,
+          "quote_verified_at": "2026-11-16T00:12:55.381Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "Gmail 官方开户路径",
+          "url": "https://support.google.com/mail/answer/56256",
+          "fact": "官方提供个人账户创建入口；地区、验证及恢复步骤仍影响客户能否自行完成。",
+          "status": "官方帮助页检索"
+        }
+      ]
+    },
+    {
+      "id": "social_accounts",
+      "name": "社交、Apple账号及增值权益",
+      "stage": "hold",
+      "offers": 50,
+      "position": "社交账号、Apple ID与增值权益应拆开；普通会员权益可附带，历史账号不作为首批主线。",
+      "subtypes": "TikTok、Instagram、Telegram、Apple ID等账号；QQ黄钻、X Premium、Discord装扮等付费权益。",
+      "customer": "前者可能需要特定地区和历史属性，后者是既有平台用户；两个群体的需求和风险不同。",
+      "competition": "自建自有账号与官方付费权益是替代。X相关权益已出现与Grok/Cursor整合，不能按旧名称直接比价；其他品牌当前结算价未核实。",
+      "information": "设置和付款便利可能有价值；号龄、地区等标题属性不能自动变现为销量或稳定收益。",
+      "operations": "恢复控制、隐私、历史处罚与账号功能限制；付费权益需明确原号还是新号、能否延续现有内容。",
+      "economics": "普通会员差价通常需要低售后成本；历史账号损失可能远大于一次采购费，不能把售后上限忽略。",
+      "repeat": "原号增值权益可能续费；成品账号频繁重买不等于健康复购。",
+      "test": "仅将确定的原号会员权益放入后续附带清单；账户来源属性不清者暂停。",
+      "channels": [
+        "附带销售：明确的原号权益；成品账号暂缓。",
+        "暂缓：先核实具体账号类目及权益分类。",
+        "有条件小额试售：限可清楚举证的权益，售号不预设准入。",
+        "暂缓售号获客：内容需求和平台账号交易权限需分别判断。"
+      ],
+      "examples": [
+        {
+          "id": "6a1c913d49567e404125d963",
+          "title": "X Premium",
+          "shop_id": "b6a3a1a9bc2e258ab0d0a1ed",
+          "shop_name": "西瓜皮",
+          "source_url": "https://wzyp.cn/item/ehszpu",
+          "purchase_price": 59.74,
+          "quote_verified_at": "2026-11-15T21:40:23.715Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "8c5b6b13d27453f9188dcd56",
+          "title": "QQ黄钻月卡",
+          "shop_id": "b838b8d556ff1676c2434c3d",
+          "shop_name": "Alice的小卖铺",
+          "source_url": "https://wzyp.cn/item/jpiduj",
+          "purchase_price": 10.56,
+          "quote_verified_at": "2026-11-15T17:19:09.249Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "9ee74f58e9dc063e2b195faf",
+          "title": "TikTok 账号 1个",
+          "shop_id": "151d793801251f9a5bac8a29",
+          "shop_name": "牛店",
+          "source_url": "https://wzyp.cn/item/jy10lg",
+          "purchase_price": 18.54,
+          "quote_verified_at": "2026-11-15T20:37:14.611Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "Grok 当前官方价格",
+          "url": "https://x.ai/pricing",
+          "fact": "本次正文为Plus 8、Premium 30、Super 100、Ultra 200美元/月；包含Cursor及X的相应权益，第三方模型使用另计。",
+          "status": "正文已读取"
+        },
+        {
+          "title": "Gmail 官方开户路径",
+          "url": "https://support.google.com/mail/answer/56256",
+          "fact": "官方提供个人账户创建入口；地区、验证及恢复步骤仍影响客户能否自行完成。",
+          "status": "官方帮助页检索"
+        }
+      ]
+    },
+    {
+      "id": "sms",
+      "name": "短信接码与号码短租",
+      "stage": "hold",
+      "offers": 435,
+      "position": "接码低单价但失败和时间协调多，不适合当前从零起步的面向个人业务。",
+      "subtypes": "单次短信、特定平台号码、地区号码、短租与长期保号；不能把一次验证码称为长期手机号。",
+      "customer": "已有明确账户验证需求的人；服务是否真的满足其后续登录和恢复需求要先确认。",
+      "competition": "自有长期号码、官方可用验证方法或真实SIM可能总成本更低；不同平台/地区的成功率不可类比。",
+      "information": "主要是找到可用渠道和即时帮助，信息差衰减快；客户通常对失败退款敏感。",
+      "operations": "收不到码、号码已用、平台拒绝、过期、再次验证无法完成，都会产生往返沟通；不处理非本人账户验证。",
+      "economics": "用成功一次的总成本计价，包括失败尝试和客服等待；0.1元渠道不能据此推导高利润。",
+      "repeat": "高频专业买家需要容量和成功率，普通用户低频；当前没有这两类验证数据。",
+      "test": "暂不作为主力；已有明确需求时限定一次本人可用验证服务，不承诺长期账号稳定。",
+      "channels": [
+        "暂缓：失败处理和时效占用较大。",
+        "暂缓：具体准入、履约与用途难标准化。",
+        "暂缓：低价难覆盖即时服务。",
+        "暂缓：与大众内容获客方向不匹配。"
+      ],
+      "examples": [],
+      "references": []
+    },
+    {
+      "id": "sim",
+      "name": "实体SIM与eSIM",
+      "stage": "trial",
+      "offers": 10,
+      "position": "实体卡的本地现货、物流和设置帮助可能有价值，免费官方卡并不消除这种机会。",
+      "subtypes": "giffgaff未激活实体卡、已激活卡、真正eSIM、网页收码服务；最后一种不能冒充可装入手机的eSIM。",
+      "customer": "明确需要长期号码、境外旅行或本人账户管理的人；不假定所有客户需要保号。",
+      "competition": "giffgaff官方卡可免费申领，但当前实体卡只寄英国地址。目录白卡76.99元与海外代购203.94元不是免费卡片本身的成本比较，应加运费、时效、初充和使用条件。",
+      "information": "发现官方路径、国内交付时效、机型适配、激活与保号解释存在便利价值；客户知道免费路径后仍可能选择现货。",
+      "operations": "确认卡未使用、ICCID与封装、初充/保号规则、漫游、短信能力、退换货和物流；不承诺永久可收所有验证码。",
+      "economics": "要计进货、邮费、包装、坏卡、初充是否包含和售后；大幅批量囤卡有规则变更与库存风险。",
+      "repeat": "实体卡多为一次销售；后续服务能否续费取决于真实维护需求，不能假定每月复购。",
+      "test": "先锁定一种卡和一种用途，比较到手总成本与交付时间；现有样本很少，不直接扩品。",
+      "channels": [
+        "有条件小额试售：有明确用途和设备的客户。",
+        "有条件小额试售：实体通信类商品按实际类目与资质。",
+        "有条件小额试售：现货与状态证明有助交易。",
+        "有条件内容验证：旅行/设备适配有信息价值；不可夸大保号和验证能力。"
+      ],
+      "examples": [
+        {
+          "id": "04c38c7cfb82c5d96003ddc3",
+          "title": "英国 giffgaff 白卡 gg卡 英国信封",
+          "shop_id": "85d38605ac676d950f515b35",
+          "shop_name": "KingMax",
+          "source_url": "https://wzyp.cn/item/h6wq9p",
+          "purchase_price": 76.99,
+          "quote_verified_at": "2026-11-15T20:50:08.845Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "5e79088bf76dab640e3ca912",
+          "title": "UK SIM giffgaff 卡 海外代购（非偏远地区包邮）",
+          "shop_id": "95dd726537d9e7b383194c9f",
+          "shop_name": "各种ai，会员，账号",
+          "source_url": "https://wzyp.cn/item/bip8qb",
+          "purchase_price": 203.94,
+          "quote_verified_at": "2026-11-15T19:51:28.203Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "giffgaff 订卡说明",
+          "url": "https://help.giffgaff.com/en/articles/240676-ordering-a-sim",
+          "fact": "2026-10-14说明：卡片可免费申领，实体卡仅寄英国地址；境外使用需提前处理或考虑eSIM。免费卡不等于中国境内免费现货和服务。",
+          "status": "正文已读取"
+        }
+      ]
+    },
+    {
+      "id": "verification",
+      "name": "资格、身份核验与开通代办",
+      "stage": "hold",
+      "offers": 34,
+      "position": "仅能考虑客户真实资格下的操作帮助；资格不明、身份代过和包过承诺不进入首批。",
+      "subtypes": "学生教育核验、KYC、绑卡、验证服务；资格本身与代操作服务必须分开。",
+      "customer": "真实符合资格但不会操作的人，与需要获得不存在资格的人是不同需求。",
+      "competition": "官方资格申请流程通常是直接替代；Google与Figma优惠说明已有可参考入口，不能把免费资格包装成人人可买的付费权益。",
+      "information": "帮助理解材料和步骤可以收费；不是通过制造或隐瞒资格来证明价格优势。",
+      "operations": "身份材料敏感、通过率不确定、后续复核和退款责任；不代用他人身份、不保证审核结果。",
+      "economics": "按服务时间与可验证完成事项计成本；不把一次通过报价当作长期权益成本。",
+      "repeat": "多为一次性需求，资格更新周期长；获客成本不易靠近期复购摊薄。",
+      "test": "不采购包过商品。若已有真实资格客户，可单独定义操作咨询范围与成果。",
+      "channels": [
+        "暂缓：真实资格咨询可另定义。",
+        "暂缓：身份代办与审核承诺争议大。",
+        "暂缓：不以模糊包过宣传。",
+        "有条件内容：官方资格说明可以做；代过商品暂不推广。"
+      ],
+      "examples": [
+        {
+          "id": "d822e6da513370b57e996f00",
+          "title": "Claude KYC认证服务 24h接批量过KYC 非#洲",
+          "shop_id": "b05b272b79a348cd6f09b1c0",
+          "shop_name": "kennedy",
+          "source_url": "https://wzyp.cn/item/1lnmoi",
+          "purchase_price": 103,
+          "quote_verified_at": "2026-11-15T19:51:42.498Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "Google 学生优惠",
+          "url": "https://blog.google/innovation-and-ai/products/gemini-app/student-offer-google-ai/",
+          "fact": "2026年8月活动：符合条件的美国大学生可获12个月AI Pro；其他受支持市场的符合条件大学生为AI Plus；活动资格、支付与后续续费须逐项核对，不能假定所有学生均可用。",
+          "status": "前序研究正文已读取"
+        },
+        {
+          "title": "Figma 教育版资格",
+          "url": "https://help.figma.com/hc/en-us/articles/360041061214-Figma-for-Education",
+          "fact": "教育版向符合条件并通过核验的学生和教育工作者免费提供相应权益；不能把教育成品号当成普通商业付费席位。",
+          "status": "官方帮助页检索"
+        }
+      ]
+    },
+    {
+      "id": "payment_cards",
+      "name": "支付卡、礼品卡与支付余额",
+      "stage": "hold",
+      "offers": 40,
+      "position": "虚拟卡、0余额验证卡和礼品卡不适合仅凭面额做低价套利。",
+      "subtypes": "0刀卡、带余额虚拟卡、礼品卡、代付；卡面余额、可消费余额、手续费与可用商户不同。",
+      "customer": "本人合法支付需要；不是所有订阅都接受所有卡种或地区。",
+      "competition": "客户现有支付工具、官方支持的支付方式和购买对应服务可能更省事。目录23美元卡305.60元显著高于面额换算约153.67元，但余额、费用与服务仍需核实。",
+      "information": "支付可达性有便利价值，必须验证真正能支付目标商品；卡头、地区等术语不是结果保证。",
+      "operations": "被拒、二次验证、冻结、余额回收、退款原路退回和卡到期；0余额卡没有消费余额。",
+      "economics": "总成本需含开卡费、充值费、汇率、拒付损失、退款回收；卡片一次售出不等于完成整个支付服务。",
+      "repeat": "有支付需求可能复购，但资金和纠纷敞口更大；当前阶段没有专门处理能力证据。",
+      "test": "暂不进入首批；实际客户先比较直接购买目标服务的总成本，避免多加一层卡费。",
+      "channels": [
+        "暂缓：资金与失败支付责任复杂。",
+        "暂缓：需具体金融/卡券类目与经营资格证据。",
+        "暂缓：面额与可用性争议高。",
+        "暂缓获客：不以低门槛支付或无条件成功承诺吸引客户。"
+      ],
+      "examples": [
+        {
+          "id": "09b382b025dba3ac8c2c5b9b",
+          "title": "visa 23刀卡，支持3ds！正价开AI等产品",
+          "shop_id": "85d38605ac676d950f515b35",
+          "shop_name": "KingMax",
+          "source_url": "https://wzyp.cn/item/iw8l33",
+          "purchase_price": 305.6,
+          "quote_verified_at": "2026-11-15T19:42:53.932Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "b7e070c5c22ee2c9e50f6f6b",
+          "title": "0刀虚拟卡( 531709，不包任何业务，请测试后批量购买，开卡有成本，激活后无售后)",
+          "shop_id": "000b9d5875c1912316d95108",
+          "shop_name": "我的Gplus小卖铺",
+          "source_url": "https://wzyp.cn/item/ndftgl",
+          "purchase_price": 3,
+          "quote_verified_at": "2026-11-15T23:48:58.032Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "中国银行外汇牌价",
+          "url": "https://www.boc.cn/sourcedb/whpj/",
+          "fact": "沿用2026-11-16 22:35:34美元现汇卖出668.12元/100美元，即6.6812；仅作本轮可重复换算，不是刷卡含税结算价。",
+          "status": "前序研究已记录时点"
+        }
+      ]
+    },
+    {
+      "id": "domestic_video",
+      "name": "国内视频与电视会员",
+      "stage": "addon",
+      "offers": 325,
+      "position": "需求直观、交付可标准化，但现有月卡价差更适合现有客户顺手购买。",
+      "subtypes": "腾讯、爱奇艺、优酷、芒果、华为、咪咕等；视频VIP、全屏/超级影视、手机/QQ账号及天周月年卡分开。",
+      "customer": "有具体剧集或电视观看需求的人；先查内容是否在该平台及需哪一档。",
+      "competition": "腾讯VIP连续月25元，样本月卡22.81元仅差2.19元；超级影视35元对32.97元仅差2.03元。官方新客、运营商联合权益、年付与其他平台片源可改变选择；没有核实的优惠不当作人人可用。",
+      "information": "客户可能不知道最便宜组合或不愿自动续费；帮选正确端口和避免错买有小额便利价值，不能预设其愿承担很高溢价。",
+      "operations": "充值账号、是否支持电视、到账时点、叠加、封顶和有效期；影视内容变化可能造成误解。",
+      "economics": "几元名义空间经客服和支付费后很薄，独立内容获客通常难回收。年卡名义空间稍大但应对比当前联合优惠，不能只比单月×12。",
+      "repeat": "有自然续费，但平台切换频繁；作为补充品比从零主推更合理。",
+      "test": "留2—3个最常用且差价真实的SKU做附带；记录是否能几乎无额外沟通完成。",
+      "channels": [
+        "附带销售：客户已有信任且需求明确。",
+        "暂缓主推：费率、比价与内容获客难由薄差价覆盖。",
+        "附带销售：准确描述使用端和账户类型。",
+        "附带内容：选片/权益比较有阅读价值，单卡获客经济性弱。"
+      ],
+      "examples": [
+        {
+          "id": "6bf70ffbe8ec28a4e4929eb1",
+          "title": "腾讯视频  VIP 月卡",
+          "shop_id": "8a4297ed16015ab2f3892893",
+          "shop_name": "小明同学",
+          "source_url": "https://wzyp.cn/item/z5cd1c",
+          "purchase_price": 22.81,
+          "quote_verified_at": "2026-11-15T21:00:12.642Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "5490fa9fb925f8d9282c0288",
+          "title": "腾讯视频  超级影视 月卡",
+          "shop_id": "33bc7a108d8998bca1931da9",
+          "shop_name": "【AI全品类源头仓】",
+          "source_url": "https://wzyp.cn/item/1kcmuo",
+          "purchase_price": 32.97,
+          "quote_verified_at": "2026-11-15T15:12:12.259Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "af4a275b0113a3cc39356c95",
+          "title": "芒果TV 视频VIP 年卡",
+          "shop_id": "8a4297ed16015ab2f3892893",
+          "shop_name": "小明同学",
+          "source_url": "https://wzyp.cn/item/ypouvb",
+          "purchase_price": 91.47,
+          "quote_verified_at": "2026-11-15T21:37:32.256Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "腾讯视频HD开发者 App Store 页面",
+          "url": "https://apps.apple.com/cn/app/id407925512",
+          "fact": "连续包月VIP25元、超级影视35元；年包238/348元。手机VIP与电视权益不可混比。",
+          "status": "官方开发者页面搜索结果"
+        },
+        {
+          "title": "爱奇艺开发者 App Store 页面",
+          "url": "https://apps.apple.com/cn/app/id393765873",
+          "fact": "公开说明黄金连续包月25元、白金35元、星钻45元；需分别对齐端口和权益。",
+          "status": "官方开发者页面搜索结果"
+        }
+      ]
+    },
+    {
+      "id": "overseas_video",
+      "name": "海外流媒体与YouTube会员",
+      "stage": "hold",
+      "offers": 1,
+      "position": "目录只有一条YouTube家庭月卡，供给薄且实际家庭资格影响使用。",
+      "subtypes": "当前样本为家庭会员CDK/月卡；不能推断存在Netflix、Disney等可卖库存。",
+      "customer": "经常看YouTube且重视会员体验的人；需满足实际地区和家庭组条件。",
+      "competition": "官方个人、学生与家庭计划是不同方案；未取得客户地区实际结算价，不用美国整组价格除人数来证明利润。",
+      "information": "套餐选择和开通便利存在价值，家庭资格和切组限制会直接影响体验。",
+      "operations": "同住要求、管理员控制、家庭组切换及暂停权益；这是实际可用性问题。",
+      "economics": "52元缓存成本缺少同资格官方到手价和成交价，无法证明价差；补席会占用客服。",
+      "repeat": "理论月复购，但跨家庭成员变化不稳定，不能先计入长期收益。",
+      "test": "暂不作为首批；先完成地区、资格、交付角色和售后说明。",
+      "channels": [
+        "暂缓：资格和管理员依赖尚未解决。",
+        "暂缓：具体准入和履约待核。",
+        "暂缓：样本少且权益条件复杂。",
+        "有条件内容：方案比较可做，未核实家庭卡暂不推荐。"
+      ],
+      "examples": [
+        {
+          "id": "41076ac24a79f278aae3414c",
+          "title": "YouTube premium会员CDK充值premium家庭会员--月卡",
+          "shop_id": "ee10b3759378a74a64fede28",
+          "shop_name": "WildCat",
+          "source_url": "https://wzyp.cn/item/vy9kyd",
+          "purchase_price": 52,
+          "quote_verified_at": "2026-11-15T17:36:58.859Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "YouTube 家庭方案实际资格",
+          "url": "https://support.google.com/youtube/answer/7507349",
+          "fact": "家庭成员须与管理员同住，并满足地区、家庭组切换等条件；不满足时可能暂停权益。",
+          "status": "官方帮助页检索"
+        }
+      ]
+    },
+    {
+      "id": "music_reading",
+      "name": "音乐、听书与阅读会员",
+      "stage": "addon",
+      "offers": 121,
+      "position": "音乐、听书与阅读更适合自然续费和顺手购买，普通月卡不适合单独承担获客成本。",
+      "subtypes": "网易云黑胶、QQ音乐、喜马拉雅、酷狗/酷我、咪咕阅读等；普通VIP、SVIP、音乐包和阅读权益不能合并。",
+      "customer": "已经使用某平台、需要特定曲库或内容的人；免费试听和其他内容源可能已足够。",
+      "competition": "网易云黑胶官方连续月15元，样本13.66元只差1.34元；年卡103.02元须对比当前年付和联合优惠，不能直接和15×12相减认定利润。其他品牌官方现价未逐个核实。",
+      "information": "到期提醒、权益选型、避免自动续费和方便付款可能有价值；低门槛比价使单纯差价不耐久。",
+      "operations": "曲库、音质、下载权限和专辑单购区别；充值前确认用户账号和已有会员叠加。",
+      "economics": "月卡很难覆盖一次人工售后。年卡可能改善单次贡献，但延长承诺与资金周期。",
+      "repeat": "本来就续费的客户最合适；当前没有稳定私域，不能用预想续费补贴高获客成本。",
+      "test": "仅保留清楚的月卡及一款年卡作附带，并核对客户真实可用活动。",
+      "channels": [
+        "附带销售：现有客户续费。",
+        "暂缓主推：标准商品价格竞争强。",
+        "附带销售：明确档位与期限。",
+        "暂缓专门获客：单卡贡献难支撑内容时间，相关内容可顺带。"
+      ],
+      "examples": [
+        {
+          "id": "54cddabc2b12d5cd58c87372",
+          "title": "网易云音乐 黑胶VIP 月卡",
+          "shop_id": "adf3d7316edae7bced3cccd1",
+          "shop_name": "12345",
+          "source_url": "https://wzyp.cn/item/bqeqai",
+          "purchase_price": 13.66,
+          "quote_verified_at": "2026-11-15T22:12:19.819Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "8e0d665d31ef28c2082eb01c",
+          "title": "网易云音乐 黑胶VIP 年卡",
+          "shop_id": "8a4297ed16015ab2f3892893",
+          "shop_name": "小明同学",
+          "source_url": "https://wzyp.cn/item/dmjhlr",
+          "purchase_price": 103.02,
+          "quote_verified_at": "2026-11-15T22:03:35.847Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "156a23a20fbda3bac0bbb1ff",
+          "title": "喜马拉雅 VIP会员 年卡",
+          "shop_id": "b838b8d556ff1676c2434c3d",
+          "shop_name": "Alice的小卖铺",
+          "source_url": "https://wzyp.cn/item/l3aoiz",
+          "purchase_price": 133.33,
+          "quote_verified_at": "2026-11-15T19:03:55.499Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "网易云开发者 App Store 页面",
+          "url": "https://apps.apple.com/cn/app/id590338362",
+          "fact": "黑胶VIP连续包月15元；不同于音乐包、SVIP。",
+          "status": "前序研究正文已读取"
+        }
+      ]
+    },
+    {
+      "id": "cloud_storage",
+      "name": "网盘与存储会员",
+      "stage": "addon",
+      "offers": 54,
+      "position": "有明确下载或存储任务时再卖，勿把免费空间与付费速度/容量混为一谈。",
+      "subtypes": "夸克、百度网盘超级会员，周/月/季/年卡；网盘助手软件另属效率工具。",
+      "customer": "资料存储、备份或大文件传输用户；只下载一次与长期存储应选不同期限。",
+      "competition": "夸克月卡16.95元；官方索引有单月25元、首月3.8后19.9元和年付158元，但当前资格未核实。年付月均13.17元需预付全年，免费空间也不等于会员下载能力。",
+      "information": "帮客户选择最短够用期限、设置备份、整理资料，可能胜过单纯卖容量。客户知道优惠后仍可能为省步骤付费。",
+      "operations": "到期后的容量处理、下载限速、叠加规则、账户安全；不把客户数据迁入卖方控制的账号。",
+      "economics": "对能领首月优惠的人，普通月卡价格没有优势；对无法领取或只要非续费卡的人仍可能有便利价值。年卡153.92元接近158元索引参考，纯差价偏薄。",
+      "repeat": "真实存储需求可能续费，单次下载用户低复购；分群后再估获客成本。",
+      "test": "分别验证一次性下载用户和长期备份用户；优先原号权益，资料服务单独报价。",
+      "channels": [
+        "附带销售：按实际任务选择期限。",
+        "暂缓主推：活动和标准化比价压缩空间。",
+        "附带销售：到期和账号叠加说明清楚。",
+        "有条件内容验证：整理与备份方法更有吸引力，卡券只做配套。"
+      ],
+      "examples": [
+        {
+          "id": "7bcf0cfea1ae1fe706a403d0",
+          "title": "夸克网盘 超级会员 月卡",
+          "shop_id": "33bc7a108d8998bca1931da9",
+          "shop_name": "【AI全品类源头仓】",
+          "source_url": "https://wzyp.cn/item/1005ye",
+          "purchase_price": 16.95,
+          "quote_verified_at": "2026-11-16T00:05:54.16Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "cfc9798b7ac93f3b206f7145",
+          "title": "夸克网盘 超级会员 年卡",
+          "shop_id": "33bc7a108d8998bca1931da9",
+          "shop_name": "【AI全品类源头仓】",
+          "source_url": "https://wzyp.cn/item/dmbrgx",
+          "purchase_price": 153.92,
+          "quote_verified_at": "2026-11-16T00:18:09.405Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "8744cd1326b02a7a2f026c01",
+          "title": "百度网盘 超级会员 月卡",
+          "shop_id": "8a4297ed16015ab2f3892893",
+          "shop_name": "小明同学",
+          "source_url": "https://wzyp.cn/item/s9adtl",
+          "purchase_price": 27.62,
+          "quote_verified_at": "2026-11-15T16:28:33.355Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "夸克官方会员活动页",
+          "url": "https://b.quark.cn/apps/Jb9Uh_njk/routes/zGqY9_o_X?uc_biz_str=S%3Acustom%7CC%3Atitlebar_hover_2&uc_param_str=dsdnfrpfbivesscpgimibtbmnijblauputogpintnwktprchmt",
+          "fact": "官方页面索引曾展示单月25元、首月3.8元后续19.9元、年付158元；动态正文与当前账户资格未确认。",
+          "status": "仅索引；优惠不可视为人人当前可领"
+        }
+      ]
+    },
+    {
+      "id": "productivity",
+      "name": "剪辑、办公、设计与效率软件",
+      "stage": "priority",
+      "offers": 95,
+      "position": "优先验证具体小工具与工作流帮助；国内普通剪映卡做配套，复杂授权号另看。",
+      "subtypes": "剪映/CapCut/醒图、Feishu-S3-XTools、Notion、Figma教育号、PDF/OCR、Procreate和安装指导。原号许可、设备许可、团队席位、下载密码不是同一商品。",
+      "customer": "有文件整理、设计、剪辑和文档处理任务的人；只对工具名称感兴趣的流量不等于购买意向。",
+      "competition": "剪映VIP月卡22.67元对公开连续月25元仅差2.33元；CapCut不是国内剪映。XTools月卡1元、永久19.9元，需核对开发者许可和实际激活；Figma教育版对符合条件者免费；Notion有Free，付费需按成员与工作区区分。DaVinci可替代部分基础剪辑。",
+      "information": "发现小工具、判断兼容性、安装和做成一次完整流程具有便利价值；客户知道1元卡费后仍愿付钱，取决于服务是否清楚独立。",
+      "operations": "设备数量、换机、版本更新、插件安全、文件兼容、真实授权和工作区数据导出。下载或激活工具不能直接当正式软件许可。",
+      "economics": "小工具低成本不意味着可以任意标价；应分列工具费和自己的服务费。Notion三个月46.35元需先验证席位角色；不能用整个工作区年价制造夸张折扣。",
+      "repeat": "设备许可可能一次购买，长期价值来自维护或新任务；永久卡可能直接削弱月卡复购。",
+      "test": "先用XTools或一个OCR/整理任务验证实际功能与支持时间；剪映月卡只作为相关客户的配套，CapCut另做规格表。",
+      "channels": [
+        "优先验证：按具体任务卖工具及帮助。",
+        "有条件小额试售：设备/席位标准化后按真实类目。",
+        "优先验证：小工具和限定配置服务较易验收。",
+        "优先验证：工作流前后对比适合内容，留资工具和行业权限另核。"
+      ],
+      "examples": [
+        {
+          "id": "ad150429fa3ee9f898a09ae8",
+          "title": "Feishu-S3-XTools月卡",
+          "shop_id": "0f89f15ba7af50fcb41acdc7",
+          "shop_name": "apollo",
+          "source_url": "https://wzyp.cn/item/i6kvve",
+          "purchase_price": 1,
+          "quote_verified_at": "2026-11-15T21:06:37.999Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "fc315ca9af94b4912182ddd2",
+          "title": "Feishu-S3-XTools永久卡",
+          "shop_id": "0f89f15ba7af50fcb41acdc7",
+          "shop_name": "apollo",
+          "source_url": "https://wzyp.cn/item/90cicy",
+          "purchase_price": 19.9,
+          "quote_verified_at": "2026-11-16T00:24:20.49Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "0fbf804226f905cfcf224ec8",
+          "title": "剪映  VIP会员 月卡",
+          "shop_id": "8a4297ed16015ab2f3892893",
+          "shop_name": "小明同学",
+          "source_url": "https://wzyp.cn/item/tnavd9",
+          "purchase_price": 22.67,
+          "quote_verified_at": "2026-11-15T23:44:16.567Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "1c0be4d0bb26e4801ec81599",
+          "title": "Notion 商业版（3个月）",
+          "shop_id": "43b9be470f1f67f1092c1628",
+          "shop_name": "硬核Mark",
+          "source_url": "https://wzyp.cn/item/7gfd24",
+          "purchase_price": 46.35,
+          "quote_verified_at": "2026-11-15T22:03:07.425Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "bf2942325fdfd63dd221331e",
+          "title": "CapCut 一个月 Pro｜成品号 | 650 积分 | CDK 兑换",
+          "shop_id": "9f103560e2589d3a1f0ed854",
+          "shop_name": "chiyu",
+          "source_url": "https://wzyp.cn/item/arl3n8",
+          "purchase_price": 12.98,
+          "quote_verified_at": "2026-11-15T16:39:13.657Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "剪映开发者 App Store 页面",
+          "url": "https://apps.apple.com/cn/app/id1458072671",
+          "fact": "公开内购列表含VIP连续包月25元、SVIP连续包月59元；这是公开iOS价格，非所有客户最优结算价。",
+          "status": "前序研究正文已读取"
+        },
+        {
+          "title": "Feishu-S3-XTools 开发者说明",
+          "url": "https://marketplace.visualstudio.com/items?itemName=apolloqi.feishu-s3-xtools",
+          "fact": "飞书文档、S3及开发辅助扩展；有试用、月度、永久许可，按设备授权。第三方密钥未实测。",
+          "status": "前序研究正文已读取"
+        },
+        {
+          "title": "Notion 官方价格",
+          "url": "https://www.notion.com/pricing",
+          "fact": "存在Free、Plus、Business；页面展示10/20美元每成员每月并提供年/月付切换，未确认所读数值对应的结算选项，不据此算精确差价。",
+          "status": "正文已读取；计费选项未确认"
+        },
+        {
+          "title": "Figma 教育版资格",
+          "url": "https://help.figma.com/hc/en-us/articles/360041061214-Figma-for-Education",
+          "fact": "教育版向符合条件并通过核验的学生和教育工作者免费提供相应权益；不能把教育成品号当成普通商业付费席位。",
+          "status": "官方帮助页检索"
+        },
+        {
+          "title": "DaVinci Resolve 官方页",
+          "url": "https://www.blackmagicdesign.com/cn/products/davinciresolve/",
+          "fact": "存在免费版；它替代部分剪辑需求，不等价于剪映付费模板和AI权益。",
+          "status": "前序研究官方页面"
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "name": "学习应用、课程与教程",
+      "stage": "trial",
+      "offers": 62,
+      "position": "学习应用可作小众附带；经过自己验证、能解决具体问题的教程服务比资料堆更有价值。",
+      "subtypes": "英语研、Duolingo、百度文库、运营教程、技术教程、AI陪跑和代理培训；高风险自动化教程不因归为教育就可推广。",
+      "customer": "有明确学习目标、时间限制或技术问题的人；没有稳定客户时，泛泛知识付费获客较难。",
+      "competition": "Duolingo有免费课程；付费体验不能等同保证学习结果。英语研白银9.8元缺少期限和权益，无法与官方档位比较。搜索、官方文档和公开视频是实际替代；地域付费现价未核实。",
+      "information": "系统整理、选择顺序、纠错反馈和督促可能有价值；纯复制信息容易失去溢价。",
+      "operations": "内容是否过时、应用档位、家庭/个人席位、可答疑次数、讲解者能力及成果范围。代理培训的收益说法没有交易证据。",
+      "economics": "把答疑和更新成本计入，不能将资料采购1元当整门课成本。7天陪跑29.61元只是上游报价，不证明服务能履约。",
+      "repeat": "会员续费与学习服务复购取决于实际使用；一次教程不宜假定长期复购。",
+      "test": "先选一项自己能讲清并演示的具体问题；分别测试纯资料和含答疑需求，不承诺收入或学习结果。",
+      "channels": [
+        "有条件小额试售：目标明确、可提供反馈。",
+        "有条件小额试售：按实际教育/数字内容资质和类目。",
+        "有条件小额试售：限定内容与答疑次数，资格仍待核。",
+        "优先验证内容：教会一个小问题；发布与培训获客资质分开核对。"
+      ],
+      "examples": [
+        {
+          "id": "b490db46ee7351214a2b00f7",
+          "title": "英语研白银会员",
+          "shop_id": "f171301844f95db8e0a998ef",
+          "shop_name": "black",
+          "source_url": "https://wzyp.cn/item/9u8w1o",
+          "purchase_price": 9.8,
+          "quote_verified_at": "2026-11-15T21:05:55.781Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "aa9dd1b83bb1876cac608cfa",
+          "title": "Duolingo Super - 12 个月 · 12月",
+          "shop_id": "8cf2583031cc708ebcf24b77",
+          "shop_name": "煎饼果子",
+          "source_url": "https://wzyp.cn/item/cs777e",
+          "purchase_price": 44.5,
+          "quote_verified_at": "2026-11-15T21:24:20.77Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "2defced8f37fe82bdebf7367",
+          "title": "【经验变现】AI陪跑7天体验",
+          "shop_id": "85d38605ac676d950f515b35",
+          "shop_name": "KingMax",
+          "source_url": "https://wzyp.cn/item/34d00b",
+          "purchase_price": 29.61,
+          "quote_verified_at": "2026-11-15T21:25:04.86Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "Duolingo 免费与订阅",
+          "url": "https://blog.duolingo.com/is-duolingo-free/",
+          "fact": "免费课程是实际替代；付费版主要增加体验和功能。具体地区价和本次目录的席位形式未确认。",
+          "status": "官方博客检索"
+        }
+      ]
+    },
+    {
+      "id": "assets",
+      "name": "素材、壁纸与资源下载",
+      "stage": "trial",
+      "offers": 94,
+      "position": "面向特定用途的整理包或定制成果可以验证；泛资源、壁纸和网盘密码不做主线。",
+      "subtypes": "壁纸、人物/动漫素材、视频素材、资源网、下载解压密码；资料能下载与适合客户用途是两回事。",
+      "customer": "需要省搜索和整理时间的创作者；泛收藏者购买意愿及复购都不确定。",
+      "competition": "免费素材、官方素材库、AI生成、自行整理均是替代。目录多数标题只到人物/作品名，无法按份数、分辨率和可用性比较。",
+      "information": "筛选、命名、尺寸适配、场景模板和检索速度能创造价值；只转发下载链接的信息差易消失。",
+      "operations": "失链、重复、低清晰度、内容不符、客户商用范围与作品权益可能带来返工；不承诺目录未证明的可商用属性。",
+      "economics": "8.88元下载类样本须加整理、预览、更新与售后；过期报价多，不能当当前拿货价。",
+      "repeat": "特定主题不断更新可能复购，散装壁纸大多一次性；要看目标用户的持续任务。",
+      "test": "先用一份样品做可见的清单与预览，核对分辨率、数量和客户所需用途；不囤资源库大包。",
+      "channels": [
+        "有条件小额试售：有清楚用途的素材整理。",
+        "有条件小额试售：内容与使用范围必须可说明。",
+        "有条件小额试售：带准确预览和交付清单。",
+        "有条件内容验证：实用模板比资源堆更易说明价值。"
+      ],
+      "examples": [
+        {
+          "id": "72b446255e7e7420f7dbc472",
+          "title": "刘亦菲-1",
+          "shop_id": "c7bc93326908abae5e83b78f",
+          "shop_name": "Magic交互壁纸",
+          "source_url": "https://wzyp.cn/item/elovck",
+          "purchase_price": 8.88,
+          "quote_verified_at": "2026-11-15T14:56:25.017Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "DaVinci Resolve 官方页",
+          "url": "https://www.blackmagicdesign.com/cn/products/davinciresolve/",
+          "fact": "存在免费版；它替代部分剪辑需求，不等价于剪映付费模板和AI权益。",
+          "status": "前序研究官方页面"
+        }
+      ]
+    },
+    {
+      "id": "food_vouchers",
+      "name": "餐饮、饮品与零售券",
+      "stage": "addon",
+      "offers": 130,
+      "position": "有需求但本目录并未表现出普遍低价；窄面额差不适合独立获客。",
+      "subtypes": "美团外卖红包、团购券、霸王茶姬/茶百道代金券、古茗单品券；面额券、满减券和指定饮品不是同价现金。",
+      "customer": "本来就要在适用门店消费的人；为了用券新增消费不一定省钱。",
+      "competition": "实际门店菜单、小程序活动、团购和银行优惠是竞争。目录美团10元红包9.58元、5元红包4.59元，面额差仅0.42/0.41元；有的券采购价超过面额。古茗单品缺当前门店实付价，不能凭饮品名判便宜。",
+      "information": "不知道活动或不愿找券的人可能买便利，但一张券省几毛难覆盖解释成本；真实大额组合或即时可用才有机会。",
+      "operations": "城市、门店、品类、时间、满减门槛、叠加、配送费、绑定与退款都影响实付。官方通用规则不能替代该张券详情。",
+      "economics": "若仅抵面额，面额减成本是乐观空间上限，再扣客服/费用；高于面额的普通券当前报价先淘汰，除非另有可证实附加权益。",
+      "repeat": "本来高频消费者会复购，但单单贡献低，需要低成本交付和已有群体。",
+      "test": "仅针对一种门店/券核对同订单有券无券的实际差额。没有明显节省与低售后，不单独开展。",
+      "channels": [
+        "附带销售：已有消费群体且自动交付。",
+        "暂缓主推：面额差和平台成本不匹配。",
+        "附带销售：仅适用规则清楚、实际省钱的券。",
+        "暂缓单独获客：可做消费比较，但本目录报价未形成优势。"
+      ],
+      "examples": [
+        {
+          "id": "8db2f87790aa98fa8a47ca7e",
+          "title": "美团外卖通用红包10元",
+          "shop_id": "8a4297ed16015ab2f3892893",
+          "shop_name": "小明同学",
+          "source_url": "https://wzyp.cn/item/az23q2",
+          "purchase_price": 9.58,
+          "quote_verified_at": "2026-11-15T22:03:30.09Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "11f005c2c3b37a109ce89b86",
+          "title": "美团外卖通用红包5元",
+          "shop_id": "8a4297ed16015ab2f3892893",
+          "shop_name": "小明同学",
+          "source_url": "https://wzyp.cn/item/k1qw3g",
+          "purchase_price": 4.59,
+          "quote_verified_at": "2026-11-15T22:03:32.946Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "dfec526cf4731b35a1517570",
+          "title": "美团团购代金券100元",
+          "shop_id": "b838b8d556ff1676c2434c3d",
+          "shop_name": "Alice的小卖铺",
+          "source_url": "https://wzyp.cn/item/f66m9b",
+          "purchase_price": 113.23,
+          "quote_verified_at": "2026-11-15T15:47:09.821Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "4415c12e2fbbde16d8ca049a",
+          "title": "古茗单品券 云岭茉莉白（中）",
+          "shop_id": "b838b8d556ff1676c2434c3d",
+          "shop_name": "Alice的小卖铺",
+          "source_url": "https://wzyp.cn/item/vmioxt",
+          "purchase_price": 17.92,
+          "quote_verified_at": "2026-11-15T19:03:46.213Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "霸王茶姬优惠券规则",
+          "url": "https://static.chagee.com/cdn-tools-transfer/chagee-fc-app-cn/privacy.html",
+          "fact": "账户电子券有使用与截止时间，逾期不补；目录未提供各券当前适用门店、门槛与叠加条件。",
+          "status": "官方协议检索"
+        }
+      ]
+    },
+    {
+      "id": "shopping_membership",
+      "name": "电商购物平台会员",
+      "stage": "hold",
+      "offers": 6,
+      "position": "当前仅京东PLUS年卡，需优先核对更便宜的站内和联合权益方案。",
+      "subtypes": "6条记录、同一类PLUS年卡标题；直充方式、开卡礼和联合权益仍未对齐。",
+      "customer": "本来就在京东频繁消费的人；低频购物者可能不需要会员。",
+      "competition": "目录105.63—120.53元；京东站内指引列85—86.5元参考卡价、另有99元联名卡线索，但未验证当前结算与资格。这些是需要比较的竞争证据，不能只用198元历史标价推利润。",
+      "information": "判断会员能否回本、找适用活动、开通便利有价值；客户若可直接更低价购买，纯卡差价很弱。",
+      "operations": "首开/续费、到账时长、开卡礼是否有、与现有会员叠加和联名权益领取；标题相同不保证权益相同。",
+      "economics": "在更低站内价可用时，本目录成本难做价格竞争；可用性未核实，不能把所有客户都判定能拿低价。",
+      "repeat": "年卡近期复购很低，无法快速摊销获客成本。",
+      "test": "先核对一个目标账户的实际可用方案；当前不囤年卡。",
+      "channels": [
+        "附带销售：仅确有便利需求且客户可用方案已比过。",
+        "暂缓：已有站内更低报价线索。",
+        "暂缓主推：缺乏供给优势。",
+        "有条件内容：会员回本与组合比较；不拿虚高原价造折扣。"
+      ],
+      "examples": [
+        {
+          "id": "38b1820cb63f60233d3e7ff2",
+          "title": "京东plus会员 年卡",
+          "shop_id": "8a4297ed16015ab2f3892893",
+          "shop_name": "小明同学",
+          "source_url": "https://wzyp.cn/item/sohsiu",
+          "purchase_price": 105.63,
+          "quote_verified_at": "2026-11-16T00:08:03.616Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "京东站内PLUS卡消费指引",
+          "url": "https://dir.jd.com/guide/jd-geo-guide-jing-dong-plus-hui-yuan-ka-v1",
+          "fact": "2026-10-29指引列85—86.5元参考报价；这是站内指引和商品报价线索，非本次官方结算价或已成交证据。",
+          "status": "站内索引；较弱价格证据"
+        },
+        {
+          "title": "京东站内联名卡指引",
+          "url": "https://dir.jd.com/guide/jd-geo-guide-jing-dong-plus-lian-ming-ka-v1",
+          "fact": "指引列PLUS+肯德基年卡99元参考；可作为联合权益竞争线索，活动可用性与具体权益未在结算验证。",
+          "status": "站内索引；较弱价格证据"
+        }
+      ]
+    },
+    {
+      "id": "mobility",
+      "name": "出行、骑行与生活权益",
+      "stage": "addon",
+      "offers": 67,
+      "position": "骑行卡可按真实通勤路线验证，打车面额券差价过薄。",
+      "subtypes": "滴滴/高德券、美团单车周卡、青桔单车次卡、电单车月季卡；单车与电单车、次数与时长分开。",
+      "customer": "路线固定、附近有车且本来骑行的人；频率低者按次付费可能更便宜。",
+      "competition": "滴滴10元券成本9.40元，20元券18.80元，仅有0.60/1.20元面额差；青桔30天30次17.91元需与客户城市App套餐比较。公开网页不能给全国统一最优骑行价。",
+      "information": "挑对车型、路线与次数包可省心；本地服务和活动信息可能有价值，但用户每天用App也容易发现优惠。",
+      "operations": "城市覆盖、每次免费时长、超时费、每日次数、跨区、停车附加费、绑定和过期。",
+      "economics": "按客户真实使用次数算每次成本，未用完不是节省。低面额券客服成本敏感；月卡有稍大空间也需实付比较。",
+      "repeat": "真实通勤客户有月复购；天气、季节和路线变化可能中断。",
+      "test": "只选一个城市一种卡，按一个典型通勤月核算；没有目标城市时不定全国售价。",
+      "channels": [
+        "附带销售：本地固定通勤群体。",
+        "暂缓全国铺货：地区规则与薄差价不利。",
+        "有条件小额试售：明确城市、车型、次数和时长。",
+        "有条件内容：真实通勤比较可获客，当前没有城市级成交证据。"
+      ],
+      "examples": [
+        {
+          "id": "80b5916591e5c3a79f392357",
+          "title": "滴滴出行快车券10元",
+          "shop_id": "8a4297ed16015ab2f3892893",
+          "shop_name": "小明同学",
+          "source_url": "https://wzyp.cn/item/uctqgo",
+          "purchase_price": 9.4,
+          "quote_verified_at": "2026-11-15T15:28:46.149Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "19ac2d1c123f2201465f1232",
+          "title": "滴滴出行快车券20元",
+          "shop_id": "8a4297ed16015ab2f3892893",
+          "shop_name": "小明同学",
+          "source_url": "https://wzyp.cn/item/hq9pam",
+          "purchase_price": 18.8,
+          "quote_verified_at": "2026-11-15T15:28:44.82Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "9b8f568cbacfe29b85e72042",
+          "title": "青桔单车 30天30次卡",
+          "shop_id": "33bc7a108d8998bca1931da9",
+          "shop_name": "【AI全品类源头仓】",
+          "source_url": "https://wzyp.cn/item/8n4vov",
+          "purchase_price": 17.91,
+          "quote_verified_at": "2026-11-15T23:24:54.177Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": []
+    },
+    {
+      "id": "game_goods",
+      "name": "游戏账号、内容与播放器授权",
+      "stage": "addon",
+      "offers": 7,
+      "position": "本类主要是小众播放器授权，不能把它当作成熟游戏点卡或大额充值业务。",
+      "subtypes": "ONSPlayer、Renpy、RPG、XP3播放器授权以及信息很少的小白号；应用授权、游戏内容与账号分开。",
+      "customer": "已经使用相应播放器且设备兼容的用户；目标群体小，通常会查教程比价。",
+      "competition": "开发者直接购买、免费播放器和兼容工具是替代；本次未取得各软件官方价格。没有Steam大类库存证据。",
+      "information": "兼容性选择、安装与格式解释可能有小额价值；不必然支撑纯卡密溢价。",
+      "operations": "平台、版本、设备数、重装/换机、授权失效与文件兼容；不要承诺授权码包含游戏内容。",
+      "economics": "2—5.55元样本客单低，需极低的交付和客服成本。",
+      "repeat": "多为一次性激活；依赖新客难扩展。",
+      "test": "仅在有真实用户提问时做附带，不为泛游戏市场囤货。",
+      "channels": [
+        "附带销售：已有软件用户。",
+        "暂缓主推：小众且低客单。",
+        "有条件小额试售：设备和授权范围明确。",
+        "暂缓广泛获客：目标过窄，先有具体问题再做内容。"
+      ],
+      "examples": [
+        {
+          "id": "f38e476156fcd10d9affc1d4",
+          "title": "ONSPlayer激活码",
+          "shop_id": "778c213ca0365a7d7c2acee6",
+          "shop_name": "青鸾资源库",
+          "source_url": "https://wzyp.cn/item/128dfu",
+          "purchase_price": 5.55,
+          "quote_verified_at": "2026-11-15T15:50:41.983Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "ae65d39bc2bde38e81c67658",
+          "title": "RenpyReader授权码",
+          "shop_id": "778c213ca0365a7d7c2acee6",
+          "shop_name": "青鸾资源库",
+          "source_url": "https://wzyp.cn/item/v59bc8",
+          "purchase_price": 1.99,
+          "quote_verified_at": "2026-11-15T15:50:37.98Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": []
+    },
+    {
+      "id": "game_tools",
+      "name": "游戏辅助、脚本与修改工具",
+      "stage": "hold",
+      "offers": 286,
+      "position": "修改工具和脚本用途复杂；带透视、自瞄、破坏对局功能的当前商品淘汰，不把普通辅助工具一概等同。",
+      "subtypes": "游戏脚本、修改器、模拟器配套、外挂，以及部分正常配置工具；名称归类不等于已确认全部功能。",
+      "customer": "不同游戏玩家与工作室；其对稳定性和更新要求高，不能套普通会员售后。",
+      "competition": "正常游戏功能、官方设置和合法插件可满足部分需求；未获得具体工具官方可比价。",
+      "information": "使用配置可能有价值，但依靠被游戏更新频繁打断的功能会持续增加维护成本。",
+      "operations": "版本更新、失效、误报、设备安全、账号处罚与用户资产损失；本次不提供绕过或对抗检测方案。",
+      "economics": "“一次卖卡”可能对应长期更新支持；高毛利标价未包括封禁争议和频繁替换。",
+      "repeat": "重复买卡可能只是失效后被迫更换，不能视为稳定复购。",
+      "test": "先排除明确作弊商品；正常工具以后按真实功能单独重新评价，当前不作为小额起步主线。",
+      "channels": [
+        "暂缓；明确作弊用途淘汰。",
+        "暂缓；准入和用户损失责任不清。",
+        "暂缓；不伪装成正常软件。",
+        "暂缓：获客内容容易与高风险功能绑定。"
+      ],
+      "examples": [],
+      "references": []
+    },
+    {
+      "id": "cloud_network",
+      "name": "云手机、主机与网络环境",
+      "stage": "trial",
+      "offers": 72,
+      "position": "可考虑明确用途的云设备或配置帮助，不把所有代理、节点和永久卡混成一个低价产品。",
+      "subtypes": "云手机/云电脑、主机、住宅IP、流量订阅、VPN类网络工具；机型、地区、带宽、期限不同。",
+      "customer": "有真实测试、远程设备或业务部署需求的人；技术支持能力是主要限制。",
+      "competition": "官方云设备、按需云主机、本地设备等是替代。VMOS英文续费表V08 30天4.99美元，其他页面价格不同；目录26.66元云手机未给具体型号，不可直接认定更便宜。",
+      "information": "选配置、部署和排错有长期价值；只卖节点链接易比价，且故障处理不一定受你控制。",
+      "operations": "机器权限、数据留存、资源性能、IP共享、续费、流量限制、服务可达性；“永久不限量”缺乏可验证容量承诺。",
+      "economics": "需计闲置时长、流量超额、备机及支持；目录102998.97元异常高报价不参与机会推荐。",
+      "repeat": "明确业务可能续费；把服务架在单个不可控供给上会放大停机损失。",
+      "test": "限定一种机型和一个非敏感用途，对照官方配置测可用性和完整成本；先不卖长期永久卡。",
+      "channels": [
+        "有条件小额试售：真实技术需求与支持能力匹配。",
+        "暂缓泛网络卡：不同业务准入和售后需分开。",
+        "有条件小额试售：明确云设备规格和服务范围。",
+        "有条件内容：技术使用案例，避免以保证可达/防封吸引用户。"
+      ],
+      "examples": [
+        {
+          "id": "8e680dfbe307967873a19c6e",
+          "title": "云手机~高配置→月卡(不含脚本卡密)",
+          "shop_id": "85d38605ac676d950f515b35",
+          "shop_name": "KingMax",
+          "source_url": "https://wzyp.cn/item/8w9bfn",
+          "purchase_price": 26.66,
+          "quote_verified_at": "2026-11-15T21:06:40.767Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "01c089e60ffe8d1461e3de39",
+          "title": "Cliproxy动态家宽代理，海外优质动态住宅代理解决方案，高效赋能全球业务（10G套餐包）",
+          "shop_id": "85d38605ac676d950f515b35",
+          "shop_name": "KingMax",
+          "source_url": "https://wzyp.cn/item/k63wr0",
+          "purchase_price": 41.46,
+          "quote_verified_at": "2026-11-15T23:08:52.221Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "VMOS Cloud 官方续费说明",
+          "url": "https://www.vmoscloud.com/help/how-to-purchase-and-renew-cloud-phones.html",
+          "fact": "英文表中30天V08起4.99美元；中文旧文档/新客活动价格不同，必须对齐机型、区域和结算资格。",
+          "status": "官方帮助页检索；多页面价格存在差异"
+        }
+      ]
+    },
+    {
+      "id": "marketing_tools",
+      "name": "营销与电商运营软件",
+      "stage": "trial",
+      "offers": 24,
+      "position": "只验证正常运营提效软件；伪造聊天证明和虚假效果工具淘汰。",
+      "subtypes": "发布/整理、视频处理、电商助手、自动化工具，以及聊天记录模拟等；正常工作流与虚假营销分开。",
+      "customer": "已经运营店铺或内容账号、重复劳动明确的人；零业务用户买工具未必有收益。",
+      "competition": "平台原生工作台、免费排程/整理工具、手动流程是替代。目录35元或20元工具不意味着可增加销量。",
+      "information": "工具选型、配置与节约时间有价值；拿“爆单”“去重”名称承诺流量会形成错误预期。",
+      "operations": "账号权限、批量误操作、软件更新、安全和平台功能限制；不以自动化保证规避风控。",
+      "economics": "用实际节省的可复用时间和完成率测试愿付价；配置和维护必须计成本。",
+      "repeat": "稳定正常工作流可有维护需求；依赖短期平台漏洞的工具持续性差。",
+      "test": "先选一项正常重复工作，记录使用前后时间；剔除虚构评价、聊天或效果证明用途。",
+      "channels": [
+        "有条件小额试售：客户已有真实运营工作。",
+        "有条件小额试售：真实功能和类目明确；虚假工具淘汰。",
+        "有条件小额试售：范围可验收，禁作销量保证。",
+        "有条件内容验证：正常提效案例；禁止把虚构效果当证据。"
+      ],
+      "examples": [
+        {
+          "id": "db984fa9c1557ac3d8775918",
+          "title": "小红书自动化工具季卡",
+          "shop_id": "85d38605ac676d950f515b35",
+          "shop_name": "KingMax",
+          "source_url": "https://wzyp.cn/item/gkn5qm",
+          "purchase_price": 41.46,
+          "quote_verified_at": "2026-11-15T22:09:06.019Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "47b5b887ed819e42a642a4d6",
+          "title": "Ks潘多拉带货手机版",
+          "shop_id": "8a4297ed16015ab2f3892893",
+          "shop_name": "小明同学",
+          "source_url": "https://wzyp.cn/item/oguwnt",
+          "purchase_price": 35,
+          "quote_verified_at": "2026-11-15T16:28:40.537Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "小红书聚光内容规范",
+          "url": "https://ad.xiaohongshu.com/next_help/docs/cfa457375a0dffd3bd04453f42b9731e",
+          "fact": "官方规范要求资质与推广业务一致，使用获客工具；对公开发布站外联系方式、链接等有约束。按其营销适用范围理解，不扩大为所有帐号的完整规则。",
+          "status": "官方帮助页检索"
+        }
+      ]
+    },
+    {
+      "id": "engagement",
+      "name": "粉丝、互动量与代刷服务",
+      "stage": "rejected",
+      "offers": 34,
+      "position": "虚假粉丝、播放、点赞和代刷不纳入当前经营方向。",
+      "subtypes": "买粉、刷赞、播放、收藏、带粉账号；真实推广投放与虚构互动不是同一种服务。",
+      "customer": "标题暗示买指标而非获得真实客户，这与经营有效获客的目标不一致。",
+      "competition": "真实内容、平台广告和客户服务是更可持续的替代；低价指标不能当成交线索估值。",
+      "information": "用指标数量制造效果感不形成可持续信息服务价值；掉量和无转化会产生纠纷。",
+      "operations": "真实性无法凭后台数字验证，掉量补量、账号处理和客户信任损失；不提供实施方式。",
+      "economics": "不以虚假指标的名义毛利排名；真实获客应按有效咨询和贡献衡量。",
+      "repeat": "补量产生的重复付款不是健康客户价值。",
+      "test": "从试售清单剔除；若研究运营服务，改测真实内容带来的咨询与成交。",
+      "channels": [
+        "淘汰当前用途。",
+        "淘汰当前用途。",
+        "淘汰当前用途。",
+        "淘汰当前用途；经营自有账号也不使用虚假互动。"
+      ],
+      "examples": [
+        {
+          "id": "470799cde1650e9eabd694a5",
+          "title": "快手播放量1000",
+          "shop_id": "f4714681e5318e908b9dffce",
+          "shop_name": "星宝网络",
+          "source_url": "https://wzyp.cn/item/snbjhm",
+          "purchase_price": 1.5,
+          "quote_verified_at": "2026-11-15T16:33:20.53Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "小红书聚光内容规范",
+          "url": "https://ad.xiaohongshu.com/next_help/docs/cfa457375a0dffd3bd04453f42b9731e",
+          "fact": "官方规范要求资质与推广业务一致，使用获客工具；对公开发布站外联系方式、链接等有约束。按其营销适用范围理解，不扩大为所有帐号的完整规则。",
+          "status": "官方帮助页检索"
+        },
+        {
+          "title": "小红书聚光获客工具",
+          "url": "https://ad.xiaohongshu.com/next_help/docs/7ca75785819462dc4e37003f69bd837c",
+          "fact": "提供私信、落地页等客资收集工具，具体账号和行业权限需核实；功能存在不代表所有商品获准推广。",
+          "status": "官方帮助页检索"
+        }
+      ]
+    },
+    {
+      "id": "technical_service",
+      "name": "技术配置与定制服务",
+      "stage": "priority",
+      "offers": 8,
+      "position": "最值得验证的是你自己能交付的小范围配置服务；目录中模糊定制点和代理费不能直接当可转售服务。",
+      "subtypes": "环境配置、定制点、工作室定制、软著材料、代理拿卡入口；结果、服务时长和责任并不统一。",
+      "customer": "有具体任务但不会配置的人或小团队；目标应是可复现、能在限定时间完成的问题。",
+      "competition": "官方文档、自助教程、其他服务者与客户自己操作；不存在统一官方价。免费文档不消除省时与排错价值。",
+      "information": "理解问题、选择路径、完成配置和后续解释是主要价值，客户知道步骤后仍可能愿意为省时付费。",
+      "operations": "先确认自己能做、可验收、可恢复；使用客户控制的账号和环境，限定支持次数。不可将上游模糊承诺原样转包。",
+      "economics": "报价按实际操作+沟通+返工+获客时间算；服务收入不等于无成本。样本49元账号+配置旧报价不是现成自营利润。",
+      "repeat": "可有后续维护或相关任务，但要观察真实需求，避免无限期免费售后。",
+      "test": "从你熟悉的一项工作做固定交付包，例如工具配置或文档整理；用演示验收清单验证，采购目录商品不是前提。",
+      "channels": [
+        "优先验证：边界清楚的小单服务。",
+        "有条件小额试售：标准化、类目和服务证明明确后。",
+        "优先验证：问题具体、交付可截图或录屏举证。",
+        "优先验证：展示解决问题过程；是否能留资取决于实际行业与工具权限。"
+      ],
+      "examples": [
+        {
+          "id": "d0387e3c280fb37fd12ef48f",
+          "title": "服务项目2：谷歌老号1个+配置",
+          "shop_id": "57c8fb4a46e4167d8948d232",
+          "shop_name": "ai不源头（看公告）",
+          "source_url": "https://wzyp.cn/item/9rmjyc",
+          "purchase_price": 49,
+          "quote_verified_at": "2026-11-13T23:33:24.614Z",
+          "minimum_quantity": 1
+        },
+        {
+          "id": "77000a6bfcd59debb4adde81",
+          "title": "定制多开工作室专用SKU",
+          "shop_id": "fa9b470747ca9afe89a66c07",
+          "shop_name": "顾辞的小店",
+          "source_url": "https://wzyp.cn/item/h09dpq",
+          "purchase_price": 296.64,
+          "quote_verified_at": "2026-11-15T22:21:04.573Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": [
+        {
+          "title": "Feishu-S3-XTools 开发者说明",
+          "url": "https://marketplace.visualstudio.com/items?itemName=apolloqi.feishu-s3-xtools",
+          "fact": "飞书文档、S3及开发辅助扩展；有试用、月度、永久许可，按设备授权。第三方密钥未实测。",
+          "status": "前序研究正文已读取"
+        },
+        {
+          "title": "Gmail 官方开户路径",
+          "url": "https://support.google.com/mail/answer/56256",
+          "fact": "官方提供个人账户创建入口；地区、验证及恢复步骤仍影响客户能否自行完成。",
+          "status": "官方帮助页检索"
+        }
+      ]
+    },
+    {
+      "id": "finance_hardware",
+      "name": "交易指标与金融工具",
+      "stage": "hold",
+      "offers": 1,
+      "position": "当前只有一款交易指标，缺少性能与客户需求证据，不适合作为首批商品。",
+      "subtypes": "通达信主图指标；这是软件工具，不是可验证收益产品。",
+      "customer": "知道指标局限并已有分析习惯的使用者；不能假设新手买指标就能获得收益。",
+      "competition": "交易软件自带指标、公开公式与官方学习资料是替代；没有取得该指标开发者可比价格。",
+      "information": "安装、读图和参数解释可能有服务价值，预测收益的宣传不能由商品名称证明。",
+      "operations": "兼容版本、重绘、回测与真实表现差异、更新和安装支持；不承诺收益。",
+      "economics": "49.90元缓存采购价不足以判断愿付价；解释和售后成本可能较高。",
+      "repeat": "一次安装为主，后续价值未验证。",
+      "test": "本轮暂缓；若以后研究，只按软件功能和可复现输出验收，不按盈利故事推广。",
+      "channels": [
+        "暂缓：缺少明确工具需求与性能证据。",
+        "暂缓：金融相关内容和类目要求需专门核对。",
+        "暂缓：不以收益暗示销售。",
+        "暂缓：不把工具演示写成投资结果承诺。"
+      ],
+      "examples": [
+        {
+          "id": "88bef840a167f85a7ecf5c9e",
+          "title": "通达信主图——双线擒牛器",
+          "shop_id": "b1ffa26401a1dbf01351d121",
+          "shop_name": "趋势观察站",
+          "source_url": "https://wzyp.cn/item/eplf97",
+          "purchase_price": 49.9,
+          "quote_verified_at": "2026-11-15T22:04:10.364Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": []
+    },
+    {
+      "id": "hardware_wallet",
+      "name": "硬件钱包",
+      "stage": "hold",
+      "offers": 1,
+      "position": "仅一条实物样本，真伪、保修和官方到手价未确认，不宜凭单价进入新业务。",
+      "subtypes": "KEYPAL Plus硬件钱包；与软件指标、支付卡分开。",
+      "customer": "需要自行管理数字资产设备的用户；购买决策更重视可靠性和售后，不能仅看差价。",
+      "competition": "制造商直接购买、其他型号和已有设备是替代。本次官网价格读取未成功，没有可信同规格官方到手价。",
+      "information": "型号、操作和本地交付可以有价值，但需要真实专业能力和可信来源。",
+      "operations": "设备真伪、封装、初始化状态、固件、物流和保修；客户自行保管密钥，不收取或接触恢复材料。",
+      "economics": "530.60元采购占用较大；运输、退货、检测和售后都要计入，没有售价证据就不能推出利润。",
+      "repeat": "硬件低频，不能按月复购摊销获客。",
+      "test": "暂不采购；以后有明确订单需求再对照制造商、规格与保修。",
+      "channels": [
+        "暂缓：可信度和设备售后能力未建立。",
+        "暂缓：实物类目和售后资质待核。",
+        "暂缓：单样本不足以形成可靠供给。",
+        "暂缓：不借资产收益话题推销设备。"
+      ],
+      "examples": [
+        {
+          "id": "f12ccbfb2b93a53fc46c1466",
+          "title": "keypal plus硬件钱包",
+          "shop_id": "57c8fb4a46e4167d8948d232",
+          "shop_name": "ai不源头（看公告）",
+          "source_url": "https://wzyp.cn/item/ccojbn",
+          "purchase_price": 530.6,
+          "quote_verified_at": "2026-11-15T15:44:09.177Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": []
+    },
+    {
+      "id": "account_automation",
+      "name": "账号注册、支付与登录自动化",
+      "stage": "hold",
+      "offers": 24,
+      "position": "账号注册与支付协议工具技术维护重，异常用途和资格绕过不进入试售。",
+      "subtypes": "注册机、协议支付、登录重提、链接提取、批量自动化；合法自有账户管理与破坏平台控制的功能必须区分。",
+      "customer": "专业开发者或工作室，售后要求远高于普通卡密；目前没有已确认客户。",
+      "competition": "官方工具、正常API、自建内部流程是替代；无同规格官方价，不按卡密天数估稳定性。",
+      "information": "集成和维护有技术价值，但一旦依赖经常变化的私有流程，更新成本持续存在。",
+      "operations": "凭据安全、误操作、支付失败、版本失效、身份条件；不提供伪造资格、绕过验证或滥用批量注册方案。",
+      "economics": "程序可卖很多次不等于维护免费；需计更新、支持、失败和客户环境差异。",
+      "repeat": "可能订阅续费，但客户多为技术人群且会比价，维护占用较大。",
+      "test": "本轮不列入货盘；正常自有流程的定制需求以后按具体任务单独审查和报价。",
+      "channels": [
+        "暂缓：专业支持与用途边界未建立。",
+        "暂缓：真实功能与准入不清。",
+        "暂缓：不以技术服务名称掩盖异常用途。",
+        "暂缓：内容获客与当前起步方向不匹配。"
+      ],
+      "examples": [
+        {
+          "id": "4f053c3834446a19658b4d6e",
+          "title": "G注册🐓 卡密 1天 (1CPU/1GB内存)",
+          "shop_id": "1ea482d80f16319211d64eeb",
+          "shop_name": "AI 小铺（全网最低价）",
+          "source_url": "https://wzyp.cn/item/tghg2d",
+          "purchase_price": 20.6,
+          "quote_verified_at": "2026-11-15T19:55:19.485Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": []
+    },
+    {
+      "id": "personal_service",
+      "name": "陪聊等人工服务",
+      "stage": "hold",
+      "offers": 1,
+      "position": "陪聊是人员服务而非标准化虚拟库存，当前目录不足以支撑转售。",
+      "subtypes": "心理安慰半小时；只按一般陪聊理解，不等同心理咨询或治疗。",
+      "customer": "寻求交流陪伴的人；服务者匹配、隐私和预约比价格更重要。",
+      "competition": "直接交流、客户自有社交支持与其他明确范围的陪伴服务；不存在统一官方参考价。",
+      "information": "匹配和预约便利可能有价值，但不能假定可把任意上游人员服务无损转包。",
+      "operations": "服务者真实能力、预约到场、沟通边界、隐私、迟到与退款；不承诺心理治疗效果。",
+      "economics": "6.66元/半小时报价未验证服务质量，协调和争议成本可能超过卡费；劳动产能无法无限复制。",
+      "repeat": "若匹配可能复购，也更依赖具体服务者；当前没有可依赖交付记录。",
+      "test": "暂不作为商品转售；需要单独定义服务范围、人员和预约后再评估。",
+      "channels": [
+        "暂缓：服务者和范围未验证。",
+        "暂缓：人员服务类目需另核。",
+        "暂缓：协调和隐私责任复杂。",
+        "暂缓：不能以专业心理效果吸引客户。"
+      ],
+      "examples": [
+        {
+          "id": "98eff0d8bf95f4ddfe06f052",
+          "title": "心理安慰单半小时",
+          "shop_id": "f4714681e5318e908b9dffce",
+          "shop_name": "星宝网络",
+          "source_url": "https://wzyp.cn/item/mchkx7",
+          "purchase_price": 6.66,
+          "quote_verified_at": "2026-11-15T16:33:03.426Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": []
+    },
+    {
+      "id": "non_product",
+      "name": "说明、售后入口与补差价",
+      "stage": "rejected",
+      "offers": 13,
+      "position": "售后入口、补差价和测试条目不计作可经营商品。",
+      "subtypes": "补差价、test、交流群、官网地址、售后入口、中文包等提示性记录。",
+      "customer": "通常服务于已有订单或店铺导航，没有独立可比较需求。",
+      "competition": "不适用；不能拿0.01元入口与正式商品比低价。",
+      "information": "不作为信息差商品。",
+      "operations": "保留来源便于追踪，不能把补差价金额视为正常产品成本。",
+      "economics": "不参与商品机会、利润和有效货盘推荐。",
+      "repeat": "不适用。",
+      "test": "在分析导出中保留并标记，不从原目录删除。",
+      "channels": [
+        "排除。",
+        "排除。",
+        "排除。",
+        "排除。"
+      ],
+      "examples": [
+        {
+          "id": "650156c983d5eae3d7b10a96",
+          "title": "补差价",
+          "shop_id": "329c828ae6981cf88bbbf398",
+          "shop_name": "荒 AI小铺",
+          "source_url": "https://wzyp.cn/item/61ga58",
+          "purchase_price": 125,
+          "quote_verified_at": "2026-11-15T18:40:22.801Z",
+          "minimum_quantity": 1
+        }
+      ],
+      "references": []
+    },
+    {
+      "id": "unresolved",
+      "name": "信息不足待识别",
+      "stage": "hold",
+      "offers": 85,
+      "position": "仍无法确认用途的记录明确单列，覆盖统计不等于强行认定商品类型。",
+      "subtypes": "匿名月卡/永久卡、多开卡、积分、内部品牌名、定制额度等；单靠标题不能判断实际权益。",
+      "customer": "未知；不能凭名称补造目标人群。",
+      "competition": "官方产品身份未识别，无法作同规格价格比较。异常高价也不用于推导市场规模。",
+      "information": "信息缺失是研究缺口，不是可出售的信息差。",
+      "operations": "缺产品名称、版本、权益、期限、计量、交付说明；本轮不重启店铺探测。",
+      "economics": "虽部分已有缓存报价，仍不计算商业利润或自动推荐。",
+      "repeat": "未知。",
+      "test": "保留85条待识别记录供后续有需求时补充；本次不扩大采集范围。",
+      "channels": [
+        "暂缓。",
+        "暂缓。",
+        "暂缓。",
+        "暂缓。"
+      ],
+      "examples": [],
+      "references": []
+    }
+  ]
+}

@@ -7,6 +7,7 @@ import admin from './admin'
 import misc from './misc'
 import publicAccountImport from './publicAccountImport'
 import publicAccountStatus from './publicAccountStatus'
+import productSelection from './productSelection'
 
 export default {
   ...landing,
@@ -18,4 +19,5 @@ export default {
   ...misc,
   ...publicAccountImport,
   ...publicAccountStatus,
+  ...productSelection,
 }

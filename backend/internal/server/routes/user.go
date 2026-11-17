@@ -43,6 +43,9 @@ func RegisterUserRoutes(
 			// The handler itself remains in the account service so it shares the
 			// public-group and account lifecycle rules with the admin importer.
 			user.POST("/account-import/upstream", h.Admin.Account.ImportPublicUpstreamAccount)
+			user.GET("/product-selections", h.Admin.Account.ListProductSelections)
+			user.POST("/product-selections", h.Admin.Account.CreateProductSelection)
+			user.PUT("/product-selections/:id", h.Admin.Account.UpdateProductSelection)
 
 			// 通知邮箱管理
 			notifyEmail := user.Group("/notify-email")

@@ -60,7 +60,7 @@
         </p>
       </div>
 
-      <div class="mb-6 grid grid-cols-3 border-b border-gray-200 dark:border-dark-700">
+      <div class="mb-6 grid grid-cols-4 border-b border-gray-200 dark:border-dark-700">
         <button
           v-for="tab in mainTabs"
           :key="tab.value"
@@ -796,6 +796,13 @@
             >{{ productQuotes.refreshCooldown(product) > 0
               ? t('publicAccountImport.priceRefreshCooldown', { seconds: productQuotes.refreshCooldown(product) })
               : t('publicAccountImport.refreshProductPrice') }}</button>
+            <button
+              v-if="isAuthenticated"
+              type="button"
+              :data-product-selection="product.id"
+              class="mx-4 mb-3 self-start rounded border border-primary-200 px-3 py-1.5 text-xs text-primary-600 hover:bg-primary-50 dark:border-primary-800 dark:text-primary-400"
+              @click="openProductSelection(product)"
+            >{{ t('productSelection.add') }}</button>
           </article>
         </div>
 
@@ -811,6 +818,12 @@
           </button>
         </div>
       </section>
+      <ProductSelectionPanel
+        v-if="selectionOpened"
+        v-show="activeMainTab === 'selection'"
+        :draft-product="selectionDraft"
+        @draft-consumed="selectionDraft = null"
+      />
     </main>
 
     <ConfirmDialog
@@ -828,6 +841,7 @@
 
 <script setup lang="ts">
 import PublicShopSchedule from '@/components/account/PublicShopSchedule.vue'
+import ProductSelectionPanel from '@/components/account/ProductSelectionPanel.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
@@ -941,7 +955,19 @@ const shopName = ref('')
 const shopUrl = ref('')
 const shopErrorMessage = ref('')
 const shopNoticeMessage = ref('')
-const activeMainTab = ref<'import' | 'shops' | 'products'>('import')
+type MainTab = 'import' | 'shops' | 'products' | 'selection'
+function tabFromHash(): MainTab {
+  const hash = window.location.hash.slice(1)
+  return hash === 'shops' || hash === 'products' || hash === 'selection' ? hash : 'import'
+}
+const activeMainTab = ref<MainTab>(tabFromHash())
+const selectionOpened = ref(activeMainTab.value === 'selection')
+const selectionDraft = ref<PublicAccountImportProduct | null>(null)
+function syncTabFromHash(): void { activeMainTab.value = tabFromHash() }
+function openProductSelection(product: PublicAccountImportProduct): void {
+  selectionDraft.value = product
+  activeMainTab.value = 'selection'
+}
 const shopPage = ref(1)
 const catalogProducts = ref<PublicAccountImportProduct[]>([])
 const productQuotes = usePublicProductQuotes(catalogProducts)
@@ -988,6 +1014,7 @@ const mainTabs = computed(() => [
   { value: 'import' as const, label: t('publicAccountImport.importModule') },
   { value: 'shops' as const, label: t('publicAccountImport.shopModule') },
   { value: 'products' as const, label: t('publicAccountImport.productModule') },
+  { value: 'selection' as const, label: t('productSelection.title') },
 ])
 function shopTrustRank(level: string | null | undefined): number {
   // Keep malformed/legacy values in the neutral bucket instead of allowing an
@@ -1041,6 +1068,7 @@ const additionalWarnings = computed(() => filterAdditionalResultMessages(result.
 
 onMounted(async () => {
   productCatalogMounted = true
+  window.addEventListener('hashchange', syncTabFromHash)
   void appStore.fetchPublicSettings()
   void loadPublicShops(true)
   void loadPublicProducts(true)
@@ -1061,6 +1089,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   productCatalogMounted = false
+  window.removeEventListener('hashchange', syncTabFromHash)
   clearTimeout(automaticQuoteTimer)
   clearTimeout(productSearchTimer)
   productQuotes.dispose()
@@ -1087,7 +1116,11 @@ watch([productPriceOrder, hideExpiredProducts], () => {
   productPage.value = 1
   scheduleAutomaticQuotes()
 })
-watch(activeMainTab, () => scheduleAutomaticQuotes())
+watch(activeMainTab, (tab) => {
+  if (tab === 'selection') selectionOpened.value = true
+  window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}#${tab}`)
+  scheduleAutomaticQuotes()
+})
 watch(shopPageCount, (count) => { shopPage.value = Math.min(shopPage.value, count) })
 watch(productPageCount, (count) => { productPage.value = Math.min(productPage.value, count) })
 

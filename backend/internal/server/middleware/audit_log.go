@@ -144,6 +144,8 @@ var auditActionOverrides = map[string]string{
 	"POST /api/v1/admin/prompt-audit/events/delete-preview":   "admin.prompt_audit.events.delete_preview",
 	"POST /api/v1/admin/prompt-audit/events/delete-by-filter": "admin.prompt_audit.events.filter_delete",
 	"POST /api/v1/user/account-import/upstream":               "user.account_import.upstream",
+	"POST /api/v1/user/product-selections":                    "user.product_selection.create",
+	"PUT /api/v1/user/product-selections/:id":                 "user.product_selection.update",
 }
 
 // auditBodyOmittedRoutes 请求体几乎整体由凭证构成的路由（如整块粘贴 auth JSON 的导入接口）。
@@ -160,6 +162,10 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	"POST /api/v1/admin/prompt-audit/events/delete-preview":     {},
 	"POST /api/v1/admin/prompt-audit/events/delete-by-filter":   {},
 	"POST /api/v1/user/account-import/upstream":                 {},
+	// Private commercial notes can contain customer information; audit the
+	// mutation metadata without duplicating the notes in the shared audit log.
+	"POST /api/v1/user/product-selections":    {},
+	"PUT /api/v1/user/product-selections/:id": {},
 }
 
 // NewAuditLogMiddleware 创建审计中间件。

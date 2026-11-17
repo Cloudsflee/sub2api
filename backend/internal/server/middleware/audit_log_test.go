@@ -225,3 +225,39 @@ func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {
 	require.Equal(t, "<credential-bearing body omitted>", logs[0].RequestBody)
 	require.NotContains(t, logs[0].RequestBody, "audit-canary")
 }
+
+func TestProductSelectionAuditKeepsNotesPrivate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &auditCaptureRepository{}
+	auditService := service.NewAuditLogService(repository, nil)
+	auditService.Start()
+	router := gin.New()
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(auditService)))
+	handle := func(c *gin.Context) {
+		var data map[string]string
+		require.NoError(t, c.ShouldBindJSON(&data))
+		require.Equal(t, "private-customer-note", data["notes"])
+		c.Status(http.StatusOK)
+	}
+	router.POST("/api/v1/user/product-selections", handle)
+	router.PUT("/api/v1/user/product-selections/:id", handle)
+	for _, method := range []string{"POST", "PUT"} {
+		path := "/api/v1/user/product-selections"
+		if method == "PUT" {
+			path += "/one"
+		}
+		r := httptest.NewRequest(method, path, bytes.NewBufferString(`{"notes":"private-customer-note"}`))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		require.Equal(t, http.StatusOK, w.Code)
+	}
+	auditService.Stop()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	require.Len(t, repository.logs, 2)
+	for _, entry := range repository.logs {
+		require.Contains(t, entry.Action, "user.product_selection.")
+		require.NotContains(t, entry.RequestBody, "private-customer-note")
+	}
+}

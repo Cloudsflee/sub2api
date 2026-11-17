@@ -31,6 +31,7 @@ func RegisterPublicAccountImportRoutes(v1 *gin.RouterGroup, h *handler.Handlers,
 }
 
 func registerAdminPublicAccountImportRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	admin.GET("/public-account-import/selection-research", h.Admin.Account.GetProductSelectionResearch)
 	shops := admin.Group("/public-account-import/shops")
 	{
 		shops.PATCH("/:id", h.Admin.Account.UpdatePublicAccountImportShopTrustLevel)
