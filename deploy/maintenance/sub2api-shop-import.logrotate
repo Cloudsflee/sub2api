@@ -1,0 +1,11 @@
+# Observation samples only. Import progress remains in state.json/report.json.
+# The dedicated hourly timer uses a separate state file from system logrotate.
+/opt/sub2api-shop-import-*/run/samples.jsonl {
+    size 64M
+    rotate 3
+    missingok
+    notifempty
+    compress
+    copytruncate
+    su root root
+}

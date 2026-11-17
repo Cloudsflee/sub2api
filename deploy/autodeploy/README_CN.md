@@ -33,6 +33,25 @@
 交付记录保留提交、镜像、槽位、备份位置和验证结果即可，避免重复报告及高频状态轮询。本约定不修改
 线上备份保留策略或发布器的健康、回退机制。
 
+## 宿主空间维护（2026-11-17）
+
+当前服务器采用本地构建；服务器源码目录的 `frontend/node_modules` 可在确认没有构建进程使用后删除，
+需要时按锁文件重新安装。镜像传输压缩包与 Docker 已加载镜像分开管理；整理旧压缩包时保留当前版本和
+上一版本，并保留发布目录内的脚本、版本记录与校验文件。旧日期目录可能仍被发布或采集服务引用，不能整目录清空。
+
+日志配置位于 `deploy/maintenance/`，由操作人单独安装到宿主机，不参与应用镜像发布：
+
+- `sub2api-shop-import.logrotate` 安装到 `/etc/sub2api-shop-import.logrotate`，只处理导入器的 `run/samples.jsonl`。
+  单文件超过 64 MiB 时轮转，保留 3 份压缩归档，使用 `copytruncate`；采样可能丢失复制与截断间极短时间的日志，
+  不影响独立的 `state.json`、`report.json` 和后台调度状态。首次轮转大文件前先确保有足够的临时磁盘空间。
+- 同名 `sub2api-shop-import-logrotate.service`、`.timer` 安装到 `/etc/systemd/system/`，启用 timer 每小时检查一次，
+  使用独立状态目录 `/var/lib/sub2api-logrotate/`；此 timer 与自动部署 timer 无关。
+- `60-sub2api-journal-retention.conf` 安装到 `/etc/systemd/journald.conf.d/`，限制系统日志目标占用为 512 MiB、
+  最长保留 7 天并尽量为宿主保留 2 GiB 空间。高日志量下会提前轮转；安装后重启 journald 并整理旧归档。
+
+清理前确认活动槽、容器引用和部署状态中的回滚镜像。备份保留规则、数据库及商品/选品数据、Worker 浏览器数据
+保持原样；不要使用无范围的 `docker system prune`。应用 Git 镜像继续遵守现有 `KEEP_IMAGES` 和受保护镜像规则。
+
 ## 蓝绿热切换
 
 生产安装使用宿主机 HAProxy 监听公网 `8080`，应用槽位只绑定回环地址：

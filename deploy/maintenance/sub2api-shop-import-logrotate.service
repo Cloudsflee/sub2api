@@ -1,0 +1,13 @@
+[Unit]
+Description=Rotate Sub2API shop import observation samples
+ConditionPathExists=/etc/sub2api-shop-import.logrotate
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate --state /var/lib/sub2api-logrotate/status /etc/sub2api-shop-import.logrotate
+StateDirectory=sub2api-logrotate
+StateDirectoryMode=0700
+UMask=0077
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=300

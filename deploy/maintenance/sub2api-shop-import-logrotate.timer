@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Sub2API shop import sample size hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
