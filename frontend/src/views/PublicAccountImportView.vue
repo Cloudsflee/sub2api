@@ -481,107 +481,141 @@
           {{ shopNoticeMessage }}
         </div>
 
+        <div class="my-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div class="min-w-0 sm:w-64">
+            <label for="public-shop-tier-filter" class="input-label">{{ t('publicAccountImport.shopTierFilter') }}</label>
+            <select id="public-shop-tier-filter" v-model="shopTierFilter" class="input" :disabled="loadingShops || loadingProducts">
+              <option value="all">{{ t('publicAccountImport.shopAllTiers') }} ({{ shops.length }})</option>
+              <option v-for="tier in PUBLIC_SHOP_TIERS" :key="tier" :value="tier">
+                {{ shopTierLabel(tier) }} ({{ shopTierCounts[tier] }})
+              </option>
+            </select>
+          </div>
+          <div class="min-w-0 sm:w-56">
+            <label for="public-shop-sort-order" class="input-label">{{ t('publicAccountImport.shopSortOrder') }}</label>
+            <select id="public-shop-sort-order" v-model="shopSortOrder" class="input">
+              <option value="desc">{{ t('publicAccountImport.shopSortDescending') }}</option>
+              <option value="asc">{{ t('publicAccountImport.shopSortAscending') }}</option>
+            </select>
+          </div>
+          <p class="text-xs text-gray-500 dark:text-dark-400 sm:ml-auto sm:pb-3" data-shop-filter-summary aria-live="polite">
+            {{ t('publicAccountImport.shopFilterSummary', { count: filteredShops.length, total: shops.length }) }}
+          </p>
+        </div>
+        <p class="mb-3 text-xs text-gray-500 dark:text-dark-400">{{ t('publicAccountImport.shopSortHint') }}</p>
+
         <div v-if="loadingShops" class="py-8 text-center text-sm text-gray-500 dark:text-dark-400">
           {{ t('publicAccountImport.loadingShops') }}
         </div>
         <div v-else-if="shops.length === 0" class="py-8 text-center text-sm text-gray-500 dark:text-dark-400">
           {{ t('publicAccountImport.noShops') }}
         </div>
-        <div v-else class="divide-y divide-gray-200 border-b border-gray-200 dark:divide-dark-700 dark:border-dark-700">
-          <div
-            v-for="shop in pagedShops"
-            :key="shop.id"
-            :data-shop-id="shop.id"
-            class="flex min-h-20 flex-wrap items-center gap-2 px-1 py-3 sm:flex-nowrap sm:px-3"
-          >
-            <a
-              :href="shopHref(shop.url)"
-              target="_blank"
-              rel="noopener noreferrer nofollow ugc"
-              class="flex min-w-0 basis-full items-center gap-3 text-gray-800 transition-colors hover:text-primary-700 dark:text-dark-100 dark:hover:text-primary-300 sm:basis-auto sm:flex-1"
-              :title="t('publicAccountImport.visitShop')"
-            >
-              <Icon name="link" size="sm" class="shrink-0 text-gray-400" />
-              <span class="min-w-0 flex-1">
-                <span class="flex flex-wrap items-center gap-2">
-                  <span class="break-words text-sm font-medium">{{ shop.name }}</span>
-                  <span
-                    class="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[11px] font-semibold"
-                    :class="shopTrustLevelClass(shop.trust_level)"
-                    :data-shop-trust-level="shop.trust_level"
-                  >
-                    {{ shopTrustLevelLabel(shop.trust_level) }}
-                  </span>
-                </span>
-                <span class="block break-all text-xs text-gray-500 dark:text-dark-400">
-                  {{ shop.url }}
-                </span>
-                <PublicShopSchedule
-                  v-if="shopProductSyncStatuses[shop.id]?.schedule"
-                  :schedule="shopProductSyncStatuses[shop.id]!.schedule!"
-                />
-              </span>
-              <Icon name="externalLink" size="sm" class="shrink-0 text-gray-400" />
-            </a>
-            <div v-if="supportsPublicShopProductSync(shop.url)" class="flex shrink-0 items-center gap-2">
-              <div class="w-28 text-right text-[11px] leading-4 text-gray-500 dark:text-dark-400 sm:w-36">
-                <span class="block">{{ shopProductUpdatedText(shop.id) }}</span>
-                <span
-                  v-if="shopProductStateText(shop.id)"
-                  class="block font-medium"
-                  :class="shopProductStateClass(shop.id)"
+        <div v-else-if="filteredShops.length === 0" class="py-8 text-center text-sm text-gray-500 dark:text-dark-400" data-shop-filter-empty>
+          {{ t('publicAccountImport.noMatchingShops') }}
+        </div>
+        <div v-else class="space-y-4">
+          <section v-for="group in pagedShopGroups" :key="group.tier" :data-shop-tier-group="group.tier" class="border-b border-gray-200 dark:border-dark-700">
+            <h3 class="flex flex-wrap items-center gap-2 rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700 dark:bg-dark-800 dark:text-dark-200">
+              {{ shopTierLabel(group.tier) }}
+              <span class="text-xs font-normal text-gray-500 dark:text-dark-400">{{ t('publicAccountImport.shopsCount', { count: shopTierCounts[group.tier] }) }}</span>
+            </h3>
+            <div class="divide-y divide-gray-200 dark:divide-dark-700">
+              <div
+                v-for="shop in group.shops"
+                :key="shop.id"
+                :data-shop-id="shop.id"
+                class="flex min-h-20 flex-wrap items-center gap-2 px-1 py-3 sm:flex-nowrap sm:px-3"
+              >
+                <a
+                  :href="shopHref(shop.url)"
+                  target="_blank"
+                  rel="noopener noreferrer nofollow ugc"
+                  class="flex min-w-0 basis-full items-center gap-3 text-gray-800 transition-colors hover:text-primary-700 dark:text-dark-100 dark:hover:text-primary-300 sm:basis-auto sm:flex-1"
+                  :title="t('publicAccountImport.visitShop')"
                 >
-                  {{ shopProductStateText(shop.id) }}
-                </span>
+                  <Icon name="link" size="sm" class="shrink-0 text-gray-400" />
+                  <span class="min-w-0 flex-1">
+                    <span class="flex flex-wrap items-center gap-2">
+                      <span class="break-words text-sm font-medium">{{ shop.name }}</span>
+                      <span
+                        class="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[11px] font-semibold"
+                        :class="shopTrustLevelClass(shop.trust_level)"
+                        :data-shop-trust-level="shop.trust_level"
+                      >
+                        {{ shopTrustLevelLabel(shop.trust_level) }}
+                      </span>
+                    </span>
+                    <span class="block break-all text-xs text-gray-500 dark:text-dark-400">
+                      {{ shop.url }}
+                    </span>
+                    <PublicShopSchedule
+                      v-if="shopProductSyncStatuses[shop.id]?.schedule"
+                      :schedule="shopProductSyncStatuses[shop.id]!.schedule!"
+                    />
+                  </span>
+                  <Icon name="externalLink" size="sm" class="shrink-0 text-gray-400" />
+                </a>
+                <div v-if="supportsPublicShopProductSync(shop.url)" class="flex shrink-0 items-center gap-2">
+                  <div class="w-28 text-right text-[11px] leading-4 text-gray-500 dark:text-dark-400 sm:w-36">
+                    <span class="block">{{ shopProductUpdatedText(shop.id) }}</span>
+                    <span
+                      v-if="shopProductStateText(shop.id)"
+                      class="block font-medium"
+                      :class="shopProductStateClass(shop.id)"
+                    >
+                      {{ shopProductStateText(shop.id) }}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-gray-300 text-gray-600 transition-colors hover:border-primary-400 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:text-dark-300 dark:hover:border-primary-600 dark:hover:bg-dark-800 dark:hover:text-primary-300"
+                    :disabled="shopProductRefreshIsDisabled(shop.id)"
+                    :title="shopProductRefreshLabel(shop.id)"
+                    :aria-label="shopProductRefreshLabel(shop.id)"
+                    :data-shop-product-refresh="shop.id"
+                    @click="handleShopProductRefresh(shop)"
+                  >
+                    <Icon
+                      name="refresh"
+                      size="sm"
+                      :class="{ 'animate-spin': shopProductRefreshIsSpinning(shop.id) }"
+                    />
+                  </button>
+                </div>
+                <div v-if="isAdmin" class="flex shrink-0 items-center gap-2" data-shop-admin-controls>
+                  <label class="sr-only" :for="`public-shop-trust-${shop.id}`">
+                    {{ t('publicAccountImport.shopTrustLevelLabel') }}
+                  </label>
+                  <select
+                    :id="`public-shop-trust-${shop.id}`"
+                    :value="shop.trust_level"
+                    class="h-10 w-28 rounded-md border border-gray-300 bg-white px-2 text-xs font-medium text-gray-700 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-800 dark:text-dark-200"
+                    :disabled="shopManagementIsDisabled(shop.id)"
+                    :data-shop-trust-select="shop.id"
+                    @change="handleShopTrustLevelChange(shop, $event)"
+                  >
+                    <option value="trusted">{{ t('publicAccountImport.shopTrustTrusted') }}</option>
+                    <option value="neutral">{{ t('publicAccountImport.shopTrustNeutral') }}</option>
+                    <option value="untrusted">{{ t('publicAccountImport.shopTrustUntrusted') }}</option>
+                  </select>
+                  <button
+                    type="button"
+                    class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-red-200 text-red-600 transition-colors hover:border-red-400 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:border-red-700 dark:hover:bg-red-950/30"
+                    :disabled="shopManagementIsDisabled(shop.id)"
+                    :title="t('publicAccountImport.deleteShop')"
+                    :aria-label="t('publicAccountImport.deleteShop')"
+                    :data-shop-delete="shop.id"
+                    @click="openShopDeleteDialog(shop)"
+                  >
+                    <Icon name="trash" size="sm" />
+                  </button>
+                </div>
               </div>
-              <button
-                type="button"
-                class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-gray-300 text-gray-600 transition-colors hover:border-primary-400 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:text-dark-300 dark:hover:border-primary-600 dark:hover:bg-dark-800 dark:hover:text-primary-300"
-                :disabled="shopProductRefreshIsDisabled(shop.id)"
-                :title="shopProductRefreshLabel(shop.id)"
-                :aria-label="shopProductRefreshLabel(shop.id)"
-                :data-shop-product-refresh="shop.id"
-                @click="handleShopProductRefresh(shop)"
-              >
-                <Icon
-                  name="refresh"
-                  size="sm"
-                  :class="{ 'animate-spin': shopProductRefreshIsSpinning(shop.id) }"
-                />
-              </button>
             </div>
-            <div v-if="isAdmin" class="flex shrink-0 items-center gap-2" data-shop-admin-controls>
-              <label class="sr-only" :for="`public-shop-trust-${shop.id}`">
-                {{ t('publicAccountImport.shopTrustLevelLabel') }}
-              </label>
-              <select
-                :id="`public-shop-trust-${shop.id}`"
-                :value="shop.trust_level"
-                class="h-10 w-28 rounded-md border border-gray-300 bg-white px-2 text-xs font-medium text-gray-700 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-600 dark:bg-dark-800 dark:text-dark-200"
-                :disabled="shopManagementIsDisabled(shop.id)"
-                :data-shop-trust-select="shop.id"
-                @change="handleShopTrustLevelChange(shop, $event)"
-              >
-                <option value="trusted">{{ t('publicAccountImport.shopTrustTrusted') }}</option>
-                <option value="neutral">{{ t('publicAccountImport.shopTrustNeutral') }}</option>
-                <option value="untrusted">{{ t('publicAccountImport.shopTrustUntrusted') }}</option>
-              </select>
-              <button
-                type="button"
-                class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-red-200 text-red-600 transition-colors hover:border-red-400 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:border-red-700 dark:hover:bg-red-950/30"
-                :disabled="shopManagementIsDisabled(shop.id)"
-                :title="t('publicAccountImport.deleteShop')"
-                :aria-label="t('publicAccountImport.deleteShop')"
-                :data-shop-delete="shop.id"
-                @click="openShopDeleteDialog(shop)"
-              >
-                <Icon name="trash" size="sm" />
-              </button>
-            </div>
-          </div>
+          </section>
         </div>
 
-        <div v-if="shopPageCount > 1" class="flex items-center justify-between py-4 text-sm">
+        <div v-if="shopPageCount > 1" class="flex items-center justify-between py-4 text-sm" data-shop-pagination>
           <button type="button" class="btn btn-secondary" :disabled="shopPage <= 1" @click="shopPage--">
             {{ t('publicAccountImport.previousPage') }}
           </button>
@@ -886,6 +920,10 @@ import {
 } from '@/utils/publicShopProductSync'
 import { sanitizeUrl } from '@/utils/url'
 import { usePublicProductQuotes } from '@/composables/usePublicProductQuotes'
+import {
+  buildPublicShopCatalog, filterAndSortPublicShops, PUBLIC_SHOP_TIERS, PUBLIC_SHOP_SIZE_TIERS,
+  type PublicShopTier, type PublicShopTierFilter, type PublicShopSortOrder,
+} from '@/utils/publicShopCatalog'
 
 const MAX_FILE_BYTES = 512 * 1024
 const MAX_TOTAL_JSON_BYTES = 2 * 1024 * 1024
@@ -969,6 +1007,8 @@ function openProductSelection(product: PublicAccountImportProduct): void {
   activeMainTab.value = 'selection'
 }
 const shopPage = ref(1)
+const shopTierFilter = ref<PublicShopTierFilter>('all')
+const shopSortOrder = ref<PublicShopSortOrder>('desc')
 const catalogProducts = ref<PublicAccountImportProduct[]>([])
 const productQuotes = usePublicProductQuotes(catalogProducts)
 const { products, status: productPriceStatus } = productQuotes
@@ -1016,20 +1056,33 @@ const mainTabs = computed(() => [
   { value: 'products' as const, label: t('publicAccountImport.productModule') },
   { value: 'selection' as const, label: t('productSelection.title') },
 ])
-function shopTrustRank(level: string | null | undefined): number {
-  // Keep malformed/legacy values in the neutral bucket instead of allowing an
-  // undefined comparator result to leave them in an arbitrary position.
-  if (level === 'trusted') return 0
-  if (level === 'untrusted') return 2
-  return 1
+function shopTierLabel(tier: PublicShopTier): string {
+  return PUBLIC_SHOP_SIZE_TIERS.some(value => value === tier)
+    ? t('publicAccountImport.shopSizeTier', { range: tier.replace('-', '–') })
+    : t(`publicAccountImport.shopTier_${tier}`)
 }
-const sortedShops = computed(() => [...shops.value].sort(
-  (left, right) => shopTrustRank(left.trust_level) - shopTrustRank(right.trust_level)
+const shopCatalog = computed(() => buildPublicShopCatalog(shops.value, shopProductSyncStatuses.value))
+const shopTierCounts = computed(() => {
+  const counts = Object.fromEntries(PUBLIC_SHOP_TIERS.map(tier => [tier, 0])) as Record<PublicShopTier, number>
+  for (const entry of shopCatalog.value) counts[entry.tier]++
+  return counts
+})
+const filteredShops = computed(() => filterAndSortPublicShops(
+  shopCatalog.value, shopTierFilter.value, shopSortOrder.value,
 ))
-const shopPageCount = computed(() => Math.max(1, Math.ceil(sortedShops.value.length / CATALOG_PAGE_SIZE)))
-const pagedShops = computed(() => {
+const shopPageCount = computed(() => Math.max(1, Math.ceil(filteredShops.value.length / CATALOG_PAGE_SIZE)))
+const pagedShopGroups = computed(() => {
   const start = (shopPage.value - 1) * CATALOG_PAGE_SIZE
-  return sortedShops.value.slice(start, start + CATALOG_PAGE_SIZE)
+  const groups: { tier: PublicShopTier; shops: PublicAccountImportShop[] }[] = []
+  for (const entry of filteredShops.value.slice(start, start + CATALOG_PAGE_SIZE)) {
+    let group = groups[groups.length - 1]
+    if (!group || group.tier !== entry.tier) {
+      group = { tier: entry.tier, shops: [] }
+      groups.push(group)
+    }
+    group.shops.push(entry.shop)
+  }
+  return groups
 })
 const shopsByID = computed(() => new Map(shops.value.map((shop) => [shop.id, shop])))
 const productSyncWorkerAvailableLaneCount = computed(() => productSyncWorkerStatus.value.lanes.filter(
@@ -1122,6 +1175,7 @@ watch(activeMainTab, (tab) => {
   scheduleAutomaticQuotes()
 })
 watch(shopPageCount, (count) => { shopPage.value = Math.min(shopPage.value, count) })
+watch([shopTierFilter, shopSortOrder], () => { shopPage.value = 1 })
 watch(productPageCount, (count) => { productPage.value = Math.min(productPage.value, count) })
 
 function createIdempotencyKey(): string {

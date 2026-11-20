@@ -352,6 +352,104 @@ describe('PublicAccountImportView expired snapshots', () => {
   })
 })
 
+describe('PublicAccountImportView shop tier filtering and sorting', () => {
+  let wrapper: VueWrapper | undefined
+  const shop = (id: string): PublicAccountImportShop => ({ ...shops[1], id, name: id, url: `https://wzyp.cn/shop/${id}` })
+  const tierStatus = (id: string, tier: NonNullable<PublicAccountImportProductSyncStatus['schedule']>['tier'], count: number | null) => ({
+    ...status(id), schedule: { tier, state: 'active' as const, effective_count: count, catalog_seconds: 3600, quote_seconds: 14400, tier_pending: false },
+  })
+  const rowIDs = () => wrapper!.findAll('[data-shop-id]').map(row => row.attributes('data-shop-id'))
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    window.history.replaceState({}, '', '/account-import#shops')
+    authState.isAdmin = false
+    getGroups.mockReset().mockResolvedValue([])
+    getShops.mockReset()
+    getProducts.mockReset()
+    requestRefresh.mockReset()
+    fetchPublicSettings.mockReset()
+  })
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = undefined
+    vi.clearAllTimers()
+    vi.useRealTimers()
+    window.history.replaceState({}, '', '/account-import')
+  })
+
+  it('renders separate groups by size, filters confirmed tiers, and handles unsupported shops', async () => {
+    const fixture = [shop('small'), shop('large-low'), shop('medium'), shop('large-high'), shop('boundary'), shops[2]]
+    fixture[0].trust_level = 'trusted'
+    fixture[3].trust_level = 'untrusted'
+    getShops.mockResolvedValue(fixture)
+    const boundary = tierStatus('boundary', '11-50', 51)
+    boundary.schedule.tier_pending = true
+    getProducts.mockResolvedValue(catalog([
+      tierStatus('small', '1-10', 10), tierStatus('large-low', '201-1000', 300),
+      tierStatus('medium', '51-200', 100), tierStatus('large-high', '201-1000', 800), boundary,
+    ]))
+    wrapper = mountView()
+    await flushPromises()
+    expect(rowIDs()).toEqual(['large-high', 'large-low', 'medium', 'boundary', 'small', 'other'])
+    expect(wrapper.findAll('[data-shop-tier-group]').map(group => group.attributes('data-shop-tier-group'))).toEqual([
+      '201-1000', '51-200', '11-50', '1-10', 'unsupported',
+    ])
+    await wrapper.get('#public-shop-tier-filter').setValue('11-50')
+    expect(rowIDs()).toEqual(['boundary'])
+    expect(wrapper.get('[data-shop-filter-summary]').text()).toContain('1 6')
+    await wrapper.get('#public-shop-tier-filter').setValue('unsupported')
+    expect(rowIDs()).toEqual(['other'])
+    expect(wrapper.get('#public-shop-tier-filter option[value="201-1000"]').text()).toContain('(2)')
+    expect(requestRefresh).not.toHaveBeenCalled()
+  })
+
+  it('filters before pagination, resets the page on either control, and shows an empty result', async () => {
+    const fixture = Array.from({ length: 12 }, (_, i) => shop(`big-${i}`)).concat([shop('small-1'), shop('small-2')])
+    getShops.mockResolvedValue(fixture)
+    getProducts.mockResolvedValue(catalog([
+      ...fixture.slice(0, 12).map((s, i) => tierStatus(s.id, '201-1000', 201 + i)),
+      tierStatus('small-1', '1-10', 1), tierStatus('small-2', '1-10', 2),
+    ]))
+    wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-shop-pagination] button:last-child').trigger('click')
+    expect(rowIDs()).toEqual(['big-1', 'big-0', 'small-2', 'small-1'])
+    await wrapper.get('#public-shop-tier-filter').setValue('1-10')
+    expect(rowIDs()).toEqual(['small-2', 'small-1'])
+    expect(wrapper.find('[data-shop-pagination]').exists()).toBe(false)
+    await wrapper.get('#public-shop-tier-filter').setValue('empty')
+    expect(rowIDs()).toEqual([])
+    expect(wrapper.get('[data-shop-filter-empty]').text()).toBe('publicAccountImport.noMatchingShops')
+    await wrapper.get('#public-shop-tier-filter').setValue('all')
+    await wrapper.get('[data-shop-pagination] button:last-child').trigger('click')
+    await wrapper.get('#public-shop-sort-order').setValue('asc')
+    expect(rowIDs()).toEqual(['small-1', 'small-2', ...fixture.slice(0, 8).map(s => s.id)])
+    expect(wrapper.get('[data-shop-pagination] button:first-child').attributes('disabled')).toBeDefined()
+    expect(getShops).toHaveBeenCalledTimes(1)
+    expect(getProducts).toHaveBeenCalledTimes(1)
+    expect(requestRefresh).not.toHaveBeenCalled()
+  })
+
+  it('updates tier counts and clamps pagination when the saved catalog confirms a new tier', async () => {
+    const fixture = Array.from({ length: 11 }, (_, i) => shop(`shop-${i}`))
+    getShops.mockResolvedValue(fixture)
+    getProducts.mockResolvedValue(catalog(fixture.map(s => tierStatus(s.id, '201-1000', 300))))
+    wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('#public-shop-tier-filter').setValue('201-1000')
+    await wrapper.get('[data-shop-pagination] button:last-child').trigger('click')
+    expect(rowIDs()).toEqual(['shop-10'])
+    getProducts.mockResolvedValue(catalog(fixture.map((s, i) => tierStatus(s.id, i < 2 ? '201-1000' : '11-50', i < 2 ? 300 : 30))))
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(rowIDs()).toEqual(['shop-0', 'shop-1'])
+    expect(wrapper.get('#public-shop-tier-filter option[value="201-1000"]').text()).toContain('(2)')
+    expect(wrapper.find('[data-shop-pagination]').exists()).toBe(false)
+    expect(requestRefresh).not.toHaveBeenCalled()
+  })
+})
+
 describe('PublicAccountImportView per-shop product refresh', () => {
   beforeEach(() => {
     getGroups.mockReset().mockResolvedValue([])
@@ -506,9 +604,9 @@ describe('PublicAccountImportView per-shop product refresh', () => {
     wrapper.unmount()
   })
 
-  it('sorts trusted shops first and untrusted shops last while preserving group order', async () => {
+  it('preserves trust and original order when shops have the same tier and count', async () => {
     getShops.mockResolvedValue([
-      { ...shops[2], id: 'untrusted-first', name: 'Untrusted first' },
+      { ...shops[2], id: 'untrusted-first', name: 'Untrusted first', url: shops[0].url },
       { ...shops[1], id: 'neutral-first', name: 'Neutral first' },
       // A legacy value must be treated as neutral by the view as a defensive
       // fallback even though the API normalizes it before returning.
@@ -516,7 +614,7 @@ describe('PublicAccountImportView per-shop product refresh', () => {
       { ...shops[0], id: 'trusted-first', name: 'Trusted first' },
       { ...shops[0], id: 'trusted-second', name: 'Trusted second' },
       { ...shops[1], id: 'neutral-second', name: 'Neutral second' },
-      { ...shops[2], id: 'untrusted-second', name: 'Untrusted second' },
+      { ...shops[2], id: 'untrusted-second', name: 'Untrusted second', url: shops[0].url },
     ])
     const wrapper = mountView()
     await flushPromises()

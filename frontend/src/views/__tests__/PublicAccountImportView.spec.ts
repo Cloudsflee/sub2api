@@ -25,7 +25,7 @@ describe('PublicAccountImportView product synchronization', () => {
   })
 
   it('keeps the shop link separate from the product refresh button', () => {
-    expect(source).toContain('<div\n            v-for="shop in pagedShops"')
+    expect(source).toContain('v-for="shop in group.shops"')
     expect(source).toContain('@click="handleShopProductRefresh(shop)"')
     expect(source).toContain(':aria-label="shopProductRefreshLabel(shop.id)"')
     expect(source).toContain('shopProductRefreshRequests.value = { ...shopProductRefreshRequests.value, [shop.id]: true }')
