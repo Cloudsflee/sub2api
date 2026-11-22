@@ -65,6 +65,18 @@ func TestProductSelectionRoutesIsolationAndValidation(t *testing.T) {
 		return w
 	}
 	path := "/user/product-selections"
+	for method, urls := range map[string][]string{
+		"GET":  {"", "/gpt", "/reports/audit", "/reports/offers"},
+		"POST": {"/reports/validate", "/reports/import"},
+		"PUT":  {"/gpt"},
+	} {
+		for _, suffix := range urls {
+			url := "/admin/public-account-import/solutions" + suffix
+			require.Equal(t, http.StatusUnauthorized, request(method, url, "", nil).Code)
+			require.Equal(t, http.StatusForbidden, request(method, url, "alice", nil).Code)
+		}
+	}
+	require.Equal(t, http.StatusOK, request("GET", "/admin/public-account-import/solutions", "admin", nil).Code)
 	d := productselection.Data{Title: "private note", Stage: "review", PriceBasis: "pending", MinimumQuantity: 1}
 	body := gin.H{"request_id": "test-1", "record": d}
 	for _, method := range []string{"GET", "POST", "PUT"} {

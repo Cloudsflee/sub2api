@@ -3,6 +3,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { CandidateProbes, candidateProbeHold, collectCandidateProbe } = require('./candidate-probes')
+const { ProductDetails } = require('./product-details')
 const { collectAuthoritativeSnapshot, collectProductQuote, collectCatalog, collectQuoteBatch } = require('./catalog-sync')
 const {
   AdaptiveRateLimiter,
@@ -99,6 +100,7 @@ const browserExecutablePath = browserEngine === 'camoufox' ? camoufoxPath : chro
 const browserType = browserEngine === 'camoufox' ? firefox : chromium
 const statusFile = process.env.STATUS_FILE || '/data/status.json'
 const candidateProbes = new CandidateProbes(path.dirname(statusFile))
+const productDetails = new ProductDetails(path.dirname(statusFile))
 const challengeSessionDirectory = process.env.PRODUCT_SYNC_CHALLENGE_SESSION_DIR || '/data/challenge-sessions'
 const browserProfileDirectory = process.env.PRODUCT_SYNC_BROWSER_PROFILE_DIR || '/data/browser-profiles'
 const camoufoxWindow = { width: 1024, height: 824 }
@@ -1684,10 +1686,23 @@ async function runLane(lane) {
       })
       if (!job) {
         try {
-          await runCandidateProbe(lane)
+          if (!await runCandidateProbe(lane)) {
+            const signal = workerStopController.signal
+            await productDetails.run({
+              signal,
+              control: () => backend('/api/v1/public/account-import/products/sync-control'),
+              take: async () => {
+                await lane.requestLimiter.take(signal)
+                await globalRequestLimiter.take(signal, Date.now() + 60_000, { automatic: true, probe: true })
+              },
+              pressure: (result) => {
+                if (result.state === 'retry') globalRequestLimiter.recordRatePressure('rate_limit', { retryAfterMilliseconds: result.retry_ms })
+              },
+            })
+          }
         } catch (error) {
           if (error?.restartLane || error?.restartBrowser) throw error
-          console.warn(`${new Date().toISOString()} candidate probe skipped: ${errorMessage(error)}`)
+          console.warn(`${new Date().toISOString()} idle collection skipped: ${errorMessage(error)}`)
         }
         await sleep(idlePollMilliseconds)
         continue

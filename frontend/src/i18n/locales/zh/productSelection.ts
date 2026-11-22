@@ -1,4 +1,7 @@
+import solutions from './solutions'
+
 export default {
+  solutions,
   productSelection: {
   "title": "选品记录",
   "hint": "保存商品、选品判断和试售进展。记录跟随登录账号，在不同设备间同步。",

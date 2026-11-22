@@ -32,6 +32,13 @@ func RegisterPublicAccountImportRoutes(v1 *gin.RouterGroup, h *handler.Handlers,
 
 func registerAdminPublicAccountImportRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.GET("/public-account-import/selection-research", h.Admin.Account.GetProductSelectionResearch)
+	library := admin.Group("/public-account-import/solutions")
+	library.GET("", h.Admin.Account.ListSolutions)
+	library.GET("/reports/audit", h.Admin.Account.GetSolutionAudit)
+	library.GET("/reports/offers", h.Admin.Account.GetSolutionOffers)
+	library.POST("/reports/:action", h.Admin.Account.ProcessSolutionReport)
+	library.GET("/:id", h.Admin.Account.GetSolution)
+	library.PUT("/:id", h.Admin.Account.EditSolution)
 	shops := admin.Group("/public-account-import/shops")
 	{
 		shops.PATCH("/:id", h.Admin.Account.UpdatePublicAccountImportShopTrustLevel)

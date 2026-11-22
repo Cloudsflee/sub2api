@@ -852,7 +852,7 @@
           </button>
         </div>
       </section>
-      <ProductSelectionPanel
+      <SelectionWorkspace
         v-if="selectionOpened"
         v-show="activeMainTab === 'selection'"
         :draft-product="selectionDraft"
@@ -875,7 +875,7 @@
 
 <script setup lang="ts">
 import PublicShopSchedule from '@/components/account/PublicShopSchedule.vue'
-import ProductSelectionPanel from '@/components/account/ProductSelectionPanel.vue'
+import SelectionWorkspace from '@/components/account/SelectionWorkspace.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
@@ -1054,7 +1054,7 @@ const mainTabs = computed(() => [
   { value: 'import' as const, label: t('publicAccountImport.importModule') },
   { value: 'shops' as const, label: t('publicAccountImport.shopModule') },
   { value: 'products' as const, label: t('publicAccountImport.productModule') },
-  { value: 'selection' as const, label: t('productSelection.title') },
+  { value: 'selection' as const, label: isAdmin.value ? t('solutions.nav') : t('productSelection.title') },
 ])
 function shopTierLabel(tier: PublicShopTier): string {
   return PUBLIC_SHOP_SIZE_TIERS.some(value => value === tier)

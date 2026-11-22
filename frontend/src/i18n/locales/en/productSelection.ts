@@ -1,4 +1,7 @@
+import solutions from './solutions'
+
 export default {
+  solutions,
   productSelection: {
   "title": "Product selections",
   "hint": "Keep product decisions, sales channels and trial progress in your account across devices.",
