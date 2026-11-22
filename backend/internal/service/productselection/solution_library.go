@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -329,6 +330,8 @@ func (l Library) Import(r *SolutionReport) (bool, error) {
 			e := idx.Entries[s.ID]
 			e.Revision++
 			if len(e.Edits) > 0 {
+				previousEdits, previousConflicts := e.Edits, e.Conflicts
+				e.Edits, e.Conflicts = maps.Clone(e.Edits), slices.Clone(e.Conflicts)
 				old, err := cache.load(l, *idx, e.Report)
 				if err != nil {
 					return false, err
@@ -355,6 +358,7 @@ func (l Library) Import(r *SolutionReport) (bool, error) {
 				if validateSolution(merged, refs) != nil {
 					// Preserve the old source and its evidence while an editor
 					// reconciles removed products or changed dependencies.
+					e.Edits, e.Conflicts = previousEdits, previousConflicts
 					e.PendingReport = r.Version
 					e.Summary.Review = true
 					e.Summary.Retired = false

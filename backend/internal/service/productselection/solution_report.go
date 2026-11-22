@@ -277,7 +277,8 @@ func (r *SolutionReport) Validate() error {
 	ids := make([]string, 0, len(r.Offers))
 	for _, o := range r.Offers {
 		if !idPattern.MatchString(o.ID) || !idPattern.MatchString(o.ShopID) || !urlOK(o.URL) || !hasText(o.Name, o.Shop, o.Type, o.Reason) ||
-			!oneOf(o.Disposition, "component", "backup", "pending", "unsuitable") || o.Minimum < 1 || !priceOK(o.Cost) ||
+			!oneOf(o.Disposition, "component", "backup", "pending", "unsuitable") || o.Minimum < 0 || !priceOK(o.Cost) ||
+			(o.Minimum == 0 && (o.Cost != nil || oneOf(o.Disposition, "component", "backup"))) ||
 			(o.Cost != nil && !dateOK(o.QuoteAt)) || (o.Cost == nil && o.QuoteAt != "") ||
 			!oneOf(o.DetailState, "read", "missing", "failed", "blocked", "pending") || (o.DetailAt != "" && !dateOK(o.DetailAt)) ||
 			(o.DetailState == "read" && (!dateOK(o.DetailAt) || !hasText(o.Original))) ||
