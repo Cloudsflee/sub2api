@@ -59,6 +59,7 @@ type Component struct {
 	Kind      string   `json:"kind"`
 	Status    string   `json:"status"`
 	Condition string   `json:"condition"`
+	Solves    string   `json:"solves,omitempty"`
 	DependsOn []string `json:"depends_on"`
 	Offers    []string `json:"offers"` // First offer is the representative cost basis.
 }
@@ -96,6 +97,7 @@ type Solution struct {
 	PathKey      string      `json:"path_key"`
 	Name         string      `json:"name"`
 	Purpose      string      `json:"purpose"`
+	Assembly     string      `json:"assembly,omitempty"`
 	Customer     string      `json:"customer"`
 	Difference   string      `json:"difference"`
 	Prerequisite string      `json:"prerequisite"`

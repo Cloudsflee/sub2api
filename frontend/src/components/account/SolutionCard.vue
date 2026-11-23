@@ -1,11 +1,10 @@
 <template>
-  <article class="min-w-0 space-y-2 rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900" :data-solution="row.id">
+  <article :id="'service-' + row.id" ref="article" tabindex="-1" class="min-w-0 scroll-mt-4 space-y-2 rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900" :data-solution="row.id">
     <div class="flex flex-wrap items-baseline justify-between gap-2">
       <h3 class="font-semibold">{{ row.name }}</h3>
       <span class="text-xs text-primary-700 dark:text-primary-300">{{ [row.retired && t('solutions.retired'), row.review && t('solutions.needsReview'), row.incomplete && t('solutions.incomplete'), t('solutions.' + row.stage), t('solutions.' + row.delivery)].filter(Boolean).join(' · ') }}</span>
     </div>
-    <p class="text-sm">{{ row.purpose }}</p>
-    <p class="text-sm text-gray-600 dark:text-dark-300">{{ row.parts.join(' · ') }}</p>
+    <p class="text-sm leading-relaxed">{{ row.assembly || row.purpose }}</p>
     <p class="text-sm">{{ t('solutions.baseCost') }} {{ money(row.base_cost) }} · {{ t('solutions.target') }} {{ money(row.target) }}</p>
     <p class="text-xs text-gray-600 dark:text-dark-300">{{ t('solutions.prerequisite') }} · {{ row.prerequisite }}</p>
     <p class="text-xs text-amber-700 dark:text-amber-300">{{ t('solutions.gap') }} · {{ row.gap }}</p>
@@ -14,8 +13,8 @@
       <p v-if="error" role="alert">{{ t('solutions.loadFailed') }} <button class="underline" @click="load">{{ t('solutions.retry') }}</button></p>
       <p v-else-if="!d">{{ t('solutions.loading') }}</p>
       <template v-if="d && s">
-        <p>{{ s.customer }} · {{ s.difference }}</p>
         <details open><summary>{{ t('solutions.journey') }}</summary><dl class="space-y-2 pl-3 pt-2"><div v-for="key in journeyFields" :key="key"><dt>{{ t('solutions.'+key) }}</dt><dd>{{ s.journey[key] }}</dd></div></dl></details>
+        <p>{{ s.customer }} · {{ s.difference }}</p>
         <details><summary>{{ t('solutions.problems') }} ({{ s.problems.length }})</summary>
           <div v-for="(p,i) in s.problems" :key="i" class="ml-3 space-y-1 border-l pl-3 pt-2">
             <h4 class="font-medium">{{ p.trigger }}</h4>
@@ -27,6 +26,7 @@
         <details><summary>{{ t('solutions.components') }} ({{ s.components.length }})</summary>
           <div v-for="item in s.components" :key="item.id" class="ml-3 space-y-1 py-2">
             <h4 class="font-semibold">{{ item.name }} · {{ t('solutions.'+item.role) }}</h4>
+            <p v-if="item.solves">{{ item.solves }}</p>
             <p>{{ item.condition }} · {{ t('solutions.'+item.status) }}</p>
             <p v-if="item.depends_on?.length">{{ t('solutions.depends') }} · {{ item.depends_on.map(id => s?.components.find(c => c.id === id)?.name).join('、') }}</p>
             <details v-if="item.offers?.length" @toggle="openSources($event, item.id)"><summary>{{ t('solutions.sources') }} ({{ item.offers.length }})</summary>
@@ -63,6 +63,7 @@ import SolutionEditor from './SolutionEditor.vue'
 const props = defineProps<{ row: SolutionSummary }>()
 const emit = defineEmits<{ (e: 'saved'): void }>()
 const { t } = useI18n()
+const article = ref<HTMLElement>()
 const open = ref(false)
 const editing = ref(false)
 const payload = ref<LibraryDetail>()
@@ -82,6 +83,13 @@ async function load() {
   finally { busy.value = false }
 }
 function toggle() { open.value = !open.value; if (open.value && !d.value) void load() }
+function showService() {
+  open.value = true
+  if (!d.value) void load()
+  article.value?.focus({ preventScroll: true })
+  article.value?.scrollIntoView?.({ block: 'start' })
+}
+defineExpose({ showService })
 function afterSave() { editing.value = false; void load(); emit('saved') }
 </script>
 

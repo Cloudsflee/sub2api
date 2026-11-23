@@ -53,6 +53,40 @@ func TestSolutionReportCoverageAndCost(t *testing.T) {
 	require.ErrorContains(t, r.Validate(), "cyclic")
 }
 
+func TestProductChoicesFollowSourcesAndOperatorEdits(t *testing.T) {
+	l := Library{Dir: t.TempDir()}
+	r := gptReport()
+	_, err := l.Import(r)
+	require.NoError(t, err)
+	// Reproduce an index written before choices were stored.
+	err = l.mutate(func(idx *libraryIndex) (bool, error) {
+		e := idx.Entries["gpt"]
+		e.Summary.Choices = nil
+		idx.Entries["gpt"] = e
+		return true, nil
+	})
+	require.NoError(t, err)
+	list, err := l.List()
+	require.NoError(t, err)
+	require.Len(t, list.Solutions[0].Choices, 1)
+	require.Equal(t, r.Offers[0].Name, list.Solutions[0].Choices[0].Name)
+	d, err := l.Detail("gpt")
+	require.NoError(t, err)
+	d.Solution.Components[0].Solves = "免费额度不足时处理文件"
+	d.Solution.Assembly = "开通原号，再用客户的样本验收。"
+	require.NoError(t, l.Edit("gpt", SolutionEdit{Revision: d.Revision, Solution: d.Solution}))
+	list, err = l.List()
+	require.NoError(t, err)
+	require.Equal(t, d.Solution.Assembly, list.Solutions[0].Assembly)
+	require.Equal(t, []ProductChoice{{OfferID: "offer", Name: "个人订阅", Listing: "原号订阅", Role: "required",
+		Solves: "免费额度不足时处理文件", Condition: "已登录自有账号", Status: "merchant"}}, list.Solutions[0].Choices)
+	base := d.Solution
+	d.Solution.Assembly = ""
+	edited, err := applyEdits(base, differences(base, d.Solution))
+	require.NoError(t, err)
+	require.Empty(t, edited.Assembly)
+}
+
 func TestSolutionLibraryAtomicImportEditAndConflict(t *testing.T) {
 	l := Library{Dir: t.TempDir()}
 	r := gptReport()

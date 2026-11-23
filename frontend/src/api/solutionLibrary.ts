@@ -1,14 +1,18 @@
 import { apiClient } from './client'
 import type { SelectionChannel } from './productSelections'
 
+export interface ProductChoice {
+  offer_id: string; name: string; listing: string; role: string; solves: string; condition: string; status: string
+}
 export interface SolutionSummary {
   id: string; name: string; purpose: string; parts: string[]; prerequisite: string; gap: string
+  choices: ProductChoice[]; assembly: string
   stage: string; delivery: string; priority: number; channels: SelectionChannel[]; types: string[]
   base_cost: number | null; target: number | null; incomplete: boolean; review: boolean; retired: boolean
 }
 export interface SolutionItem {
   id: string; name: string; role: string; kind: string; status: string; condition: string
-  depends_on: string[]; offers: string[]
+  solves?: string; depends_on: string[]; offers: string[]
 }
 export interface SolutionProblem {
   trigger: string; check: string; action: string; fallback: string; component: string; status: string; offer?: string
@@ -19,6 +23,7 @@ export const stages = ['priority', 'trial', 'review', 'hold'] as const
 export const dispositions = ['component', 'backup', 'pending', 'unsuitable'] as const
 export interface Solution {
   id: string; goal_key: string; path_key: string; name: string; purpose: string; customer: string
+  assembly?: string
   difference: string; prerequisite: string; gap: string; stage: string; delivery: string; priority: number
   channels: SelectionChannel[]; target: number | null; observed: number | null
   journey: Record<typeof journeyFields[number], string>; commercial: Record<typeof commercialFields[number], string>

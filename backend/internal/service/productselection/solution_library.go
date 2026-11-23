@@ -16,28 +16,74 @@ import (
 
 var ErrReport = errors.New("invalid solution report or edit")
 
+type ProductChoice struct {
+	OfferID   string `json:"offer_id"`
+	Name      string `json:"name"`
+	Listing   string `json:"listing"`
+	Role      string `json:"role"`
+	Solves    string `json:"solves"`
+	Condition string `json:"condition"`
+	Status    string `json:"status"`
+}
+
 type SolutionSummary struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Purpose      string   `json:"purpose"`
-	Parts        []string `json:"parts"`
-	Prerequisite string   `json:"prerequisite"`
-	Gap          string   `json:"gap"`
-	Stage        string   `json:"stage"`
-	Delivery     string   `json:"delivery"`
-	Priority     int      `json:"priority"`
-	Channels     []string `json:"channels"`
-	Types        []string `json:"types"`
-	BaseCost     *float64 `json:"base_cost"`
-	Target       *float64 `json:"target"`
-	Incomplete   bool     `json:"incomplete"`
-	Review       bool     `json:"review"`
-	Retired      bool     `json:"retired"`
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Purpose      string          `json:"purpose"`
+	Parts        []string        `json:"parts"`
+	Choices      []ProductChoice `json:"choices"`
+	Assembly     string          `json:"assembly"`
+	Prerequisite string          `json:"prerequisite"`
+	Gap          string          `json:"gap"`
+	Stage        string          `json:"stage"`
+	Delivery     string          `json:"delivery"`
+	Priority     int             `json:"priority"`
+	Channels     []string        `json:"channels"`
+	Types        []string        `json:"types"`
+	BaseCost     *float64        `json:"base_cost"`
+	Target       *float64        `json:"target"`
+	Incomplete   bool            `json:"incomplete"`
+	Review       bool            `json:"review"`
+	Retired      bool            `json:"retired"`
+}
+
+// One representative listing per purchasing decision. Other merchants and
+// unassessed variants remain accessible in the detailed component sources.
+func productChoices(s Solution, refs reportRefs) []ProductChoice {
+	curated := slices.ContainsFunc(s.Components, func(c Component) bool {
+		return c.Solves != "" && len(c.Offers) > 0
+	})
+	hasPrimary := slices.ContainsFunc(s.Components, func(c Component) bool {
+		return c.Role != "backup" && len(c.Offers) > 0
+	})
+	choices := []ProductChoice{}
+	for _, c := range s.Components {
+		if len(c.Offers) == 0 || (curated && c.Solves == "") || (!curated && hasPrimary && c.Role == "backup") {
+			continue
+		}
+		offer := refs.offers[c.Offers[0]]
+		if offer == nil {
+			continue
+		}
+		name, solves := c.Name, c.Solves
+		if solves == "" {
+			name, solves = offer.Name, s.Purpose
+			for _, p := range s.Problems {
+				if p.Component == c.ID {
+					solves = p.Trigger
+					break
+				}
+			}
+		}
+		choices = append(choices, ProductChoice{OfferID: offer.ID, Name: name, Listing: offer.Name,
+			Role: c.Role, Solves: solves, Condition: c.Condition, Status: c.Status})
+	}
+	return choices
 }
 
 func summarize(s Solution, refs reportRefs) SolutionSummary {
 	v := SolutionSummary{ID: s.ID, Name: s.Name, Purpose: s.Purpose, Prerequisite: s.Prerequisite, Gap: s.Gap, Stage: s.Stage,
-		Delivery: s.Delivery, Priority: s.Priority, Channels: s.Channels, Target: s.Target}
+		Delivery: s.Delivery, Priority: s.Priority, Channels: s.Channels, Target: s.Target, Choices: productChoices(s, refs), Assembly: s.Assembly}
 	items := map[string]Component{}
 	types := map[string]bool{}
 	for _, c := range s.Components {
@@ -197,7 +243,30 @@ func (l Library) List() (LibraryList, error) {
 	if err != nil {
 		return list, err
 	}
+	// Indexes written before product choices were introduced contain only parts.
+	// Derive the missing summaries from the same report and operator edits.
+	reports := reportCache{}
+	refs := map[string]reportRefs{}
 	for _, e := range idx.Entries {
+		if e.Summary.Choices == nil {
+			r, err := reports.load(l, idx, e.Report)
+			if err != nil {
+				return list, err
+			}
+			if _, ok := refs[e.Report]; !ok {
+				refs[e.Report] = r.references()
+			}
+			s, err := findSolution(r, e.Summary.ID)
+			if err != nil {
+				return list, err
+			}
+			s, err = applyEdits(s, e.Edits)
+			if err != nil {
+				return list, err
+			}
+			e.Summary.Choices = productChoices(s, refs[e.Report])
+			e.Summary.Assembly = s.Assembly
+		}
 		list.Solutions = append(list.Solutions, e.Summary)
 	}
 	sort.Slice(list.Solutions, func(i, j int) bool {
@@ -265,6 +334,9 @@ func fields(s Solution) map[string]json.RawMessage {
 	b, _ := json.Marshal(s)
 	var out map[string]json.RawMessage
 	_ = json.Unmarshal(b, &out)
+	// Clearing an optional assembly is an edit too. Keep it present for
+	// comparisons while leaving historical report serialization unchanged.
+	out["assembly"], _ = json.Marshal(s.Assembly)
 	return out
 }
 

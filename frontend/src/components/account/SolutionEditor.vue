@@ -7,6 +7,7 @@
       </p>
       <p v-if="error" role="alert" class="text-red-600">{{ error }}</p>
       <label v-for="key in ['name','purpose','customer','difference','prerequisite','gap'] as const" :key="key">{{ t('solutions.'+key) }}<textarea v-model.trim="draft[key]" required class="input" rows="2" /></label>
+      <label>{{ t('solutions.assembly') }}<textarea v-model.trim="draft.assembly" class="input" rows="3" /></label>
       <div class="grid gap-3 sm:grid-cols-3">
         <label>{{ t('solutions.stage') }}<select v-model="draft.stage" class="input"><option v-for="v in stages" :key="v" :value="v">{{ t('solutions.'+v) }}</option></select></label>
         <label>{{ t('solutions.delivery') }}<select v-model="draft.delivery" class="input"><option v-for="v in ['untested','verified','failed']" :key="v" :value="v">{{ t('solutions.'+v) }}</option></select></label>
@@ -23,6 +24,7 @@
           <div class="grid gap-2 sm:grid-cols-3"><label v-for="k in ['role','kind','status'] as const" :key="k">{{ t('solutions.'+k) }}
             <select v-model="item[k]" class="input"><option v-for="v in choices[k]" :key="v" :value="v">{{ t('solutions.'+v) }}</option></select>
           </label></div>
+          <label>{{ t('solutions.choiceProblem') }}<textarea v-model.trim="item.solves" class="input" rows="2" :placeholder="t('solutions.choiceProblemHint')" /></label>
           <label>{{ t('solutions.condition') }}<textarea v-model.trim="item.condition" class="input" rows="2" /></label>
           <label>{{ t('solutions.depends') }}<select v-model="item.depends_on" class="input" multiple><option v-for="other in draft.components.filter(c => c.id !== item.id)" :key="other.id" :value="other.id">{{ other.name }}</option></select></label>
           <label>{{ t('solutions.sourceIds') }}<textarea :value="item.offers?.join('\n')" class="input font-mono" rows="3" @change="item.offers = ids($event)" /></label>

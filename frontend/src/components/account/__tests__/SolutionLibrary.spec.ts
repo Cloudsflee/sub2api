@@ -11,6 +11,8 @@ vi.mock('vue-i18n', async () => ({ ...await vi.importActual<typeof import('vue-i
 vi.mock('@/api/solutionLibrary',async () => ({...await vi.importActual<typeof import('@/api/solutionLibrary')>('@/api/solutionLibrary'),
   listSolutions:vi.fn(),getSolution:vi.fn(),getSolutionAudit:vi.fn(),getSolutionOffers:vi.fn()}))
 const row:SolutionSummary={id:'gpt',name:'GPT',purpose:'处理文件',parts:['订阅'],prerequisite:'自有账号',gap:'工时',stage:'priority',
+  assembly:'先识别，再用样本验收。', choices:[{offer_id:'one',name:'扫描件 OCR',listing:'离线识别工具',role:'optional',
+    solves:'扫描页不能搜索',condition:'仅在没有文本层时搭配',status:'untested'}],
   delivery:'untested',priority:1,channels:[selectionChannels[0]],types:['订阅'],base_cost:null,target:null,incomplete:false,review:false,retired:false}
 beforeEach(()=>{vi.clearAllMocks();auth.isAdmin=true;vi.mocked(listSolutions).mockResolvedValue({version:'v1',solutions:[row]})})
 describe('admin solution library',()=>{
@@ -22,9 +24,16 @@ describe('admin solution library',()=>{
     const w=mount(SolutionLibrary)
     await flushPromises()
     expect(getSolution).not.toHaveBeenCalled()
+    const group=w.get('[data-choice-group]')
+    expect(group.text()).toContain('扫描件 OCR')
+    expect(group.text()).toContain('扫描页不能搜索')
+    expect(group.text()).toContain('仅在没有文本层时搭配')
+    expect(group.element.compareDocumentPosition(w.get('article').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(w.get('article').text()).toContain(row.assembly)
     expect(w.text()).toContain('solutions.unknown')
     await w.get('input[type=search]').setValue('other');expect(w.find('article').exists()).toBe(false)
-    await w.get('input[type=search]').setValue('文件');await w.get('article > button').trigger('click');await flushPromises()
+    await w.get('input[type=search]').setValue('ocr')
+    await w.get('[data-choice-group] button').trigger('click');await flushPromises()
     expect(getSolution).toHaveBeenCalledOnce()
     const source=w.findAll('details').find(e=>e.element.querySelector(':scope > summary')?.textContent?.includes('solutions.sources'))!
     source.element.open=true;await source.trigger('toggle')
@@ -32,6 +41,20 @@ describe('admin solution library',()=>{
     expect(w.find('a[href^="javascript:"]').exists()).toBe(false)
     await w.get('article > button').trigger('click');await w.get('article > button').trigger('click')
     expect(getSolution).toHaveBeenCalledOnce();w.unmount()
+  })
+  it('keeps the products and their services together when paging and searching',async()=>{
+    const scenarios=Array.from({length:4},(_,i)=>({...row,id:'use-'+i,name:'场景 '+i}))
+    vi.mocked(listSolutions).mockResolvedValue({version:'v1',solutions:scenarios})
+    const w=mount(SolutionLibrary)
+    await flushPromises()
+    expect(w.findAll('[data-choice-group]')).toHaveLength(3)
+    await w.get('nav button:last-child').trigger('click')
+    expect(w.get('[data-choice-group]').attributes('data-choice-group')).toBe('use-3')
+    expect(w.get('article').attributes('data-solution')).toBe('use-3')
+    await w.get('input[type=search]').setValue('场景 0')
+    expect(w.get('[data-choice-group]').attributes('data-choice-group')).toBe('use-0')
+    expect(getSolution).not.toHaveBeenCalled()
+    w.unmount()
   })
   it('mounts personal records for ordinary users without requesting admin data',async()=>{
     auth.isAdmin=false
